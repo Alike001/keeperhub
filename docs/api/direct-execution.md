@@ -419,6 +419,47 @@ Call any smart contract function. Automatically detects read vs write operations
 - `value` (optional): Native value to send with the call, as a decimal string in ether units (e.g. `0.1`) (for payable functions)
 - `gasLimitMultiplier` (optional): Gas limit multiplier
 
+### Raw calldata
+
+Callers that already hold encoded calldata (execution frameworks, transaction
+builders, replayed transactions) may send `data` instead of `functionName` and
+`functionArgs`:
+
+```json
+{
+  "contractAddress": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  "chainId": 8453,
+  "data": "0x095ea7b3000000000000000000000000c1256ae5ff1cf2719d4937adb3bbccab2e00a2ca00000000000000000000000000000000000000000000000000000000004c4b40",
+  "abi": "[{...}]",
+  "simulate": true
+}
+```
+
+The route decodes `data` against the ABI, either the `abi` in the body or the
+explorer-verified ABI it fetches when `abi` is omitted, into the canonical
+function key (`approve(address,uint256)`) and a typed `functionArgs` array, and
+then continues exactly as a typed request: read functions return their result,
+`simulate` dry-runs, writes reserve against the spending caps and the
+stablecoin limit, and the execution record carries the decoded function and
+arguments rather than opaque bytes.
+
+Nothing is inferred. A selector the ABI does not contain is rejected with
+`400` on field `data`; supply the contract's ABI or the typed fields instead.
+No signature database is consulted, so a guessed signature can never reach the
+signing path. `data` must be 0x-prefixed hex of whole bytes carrying at least
+the 4-byte selector; plain value transfers use [Transfer Funds](#transfer-funds).
+
+The decode must be lossless. The transaction that is broadcast is rebuilt from
+the decoded function and arguments, not from the bytes you sent, so calldata is
+re-encoded and compared against `data`, and anything that does not survive the
+round trip - trailing bytes past the arguments (an ERC-2771 appended sender,
+for example), non-minimal offsets, non-canonical padding - is rejected with
+`400` on field `data` rather than dropped silently.
+
+When `functionName` (or `abiFunction`) is present alongside `data`, the typed
+fields win and `data` is ignored; it is still checked for shape.
+`check-and-execute` does not accept `data`.
+
 **Direct execution vs. workflow node field names**
 
 The same values carry different field names depending on which surface you're

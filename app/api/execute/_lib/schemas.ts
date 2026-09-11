@@ -73,6 +73,44 @@ function functionNameConflict(
   };
 }
 
+// Checked here because a missing function key short-circuits this schema, so
+// nothing downstream would ever see `data`.
+const CALLDATA_REGEX = /^0x[\da-fA-F]*$/;
+const SELECTOR_HEX_LENGTH = 10; // "0x" + 4 bytes
+
+function hasRawCalldataInput(record: Record<string, unknown>): boolean {
+  return "data" in record;
+}
+
+function rawCalldataError(
+  record: Record<string, unknown>
+): ExecuteErrorResponse | null {
+  const data = record.data;
+  if (typeof data !== "string" || !CALLDATA_REGEX.test(data)) {
+    return {
+      error: "Invalid field type",
+      field: "data",
+      details: "data must be a 0x-prefixed hex string",
+    };
+  }
+  if (data.length % 2 !== 0) {
+    return {
+      error: "Invalid field value",
+      field: "data",
+      details: "data must contain whole bytes (an even number of hex digits)",
+    };
+  }
+  if (data.length < SELECTOR_HEX_LENGTH) {
+    return {
+      error: "Invalid field value",
+      field: "data",
+      details:
+        "data must carry at least a 4-byte function selector; a plain value transfer belongs on /api/execute/transfer",
+    };
+  }
+  return null;
+}
+
 function requiredFieldError(field: string): ExecuteErrorResponse {
   return {
     error: "Missing required field",
@@ -186,7 +224,15 @@ export const contractCallInputSchema = objectBase.superRefine((record, ctx) => {
     addError(ctx, chainFieldError);
     return;
   }
-  if (!hasFunctionNameInput(record)) {
+  // Validated whenever present, but only stands in for the function key when
+  // none was sent.
+  if (hasRawCalldataInput(record)) {
+    const dataError = rawCalldataError(record);
+    if (dataError) {
+      addError(ctx, dataError);
+      return;
+    }
+  } else if (!hasFunctionNameInput(record)) {
     addError(ctx, requiredFieldError("functionName"));
     return;
   }
