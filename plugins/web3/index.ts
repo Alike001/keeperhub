@@ -1751,6 +1751,11 @@ const web3Plugin: IntegrationPlugin = {
             "Number of supplied pairs whose spender matched at least one incident on the selected chain",
         },
         {
+          field: "chainCoverage",
+          description:
+            "Coverage of the selected chain in the retrieved source revision: chainId, incidentCount, and unique listedAddressCount. Zero counts mean the source has no entries for that chain, so not_listed provides no chain-specific evidence.",
+        },
+        {
           field: "source",
           description:
             "Revoke.cash exploit-list repository, exact commit revision, and retrieval time",
