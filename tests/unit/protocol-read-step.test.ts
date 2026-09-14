@@ -413,6 +413,40 @@ describe("protocolReadStep", () => {
       ]);
     });
 
+    it("preserves JSON array inputs for ABI encoding", async () => {
+      const metaWithArray: ProtocolMeta = {
+        protocolSlug: "compound",
+        contractKey: "comet",
+        functionName: "getMany",
+        actionType: "read",
+      };
+      const protocolWithArray = {
+        ...COMPOUND_PROTOCOL,
+        actions: [
+          {
+            slug: "get-many",
+            label: "Get Many",
+            type: "read" as const,
+            contract: "comet",
+            function: "getMany",
+            inputs: [
+              { name: "requestIds", type: "uint256[]", label: "Request IDs" },
+            ],
+          },
+        ],
+      };
+
+      mockResolveProtocolMeta.mockReturnValue(metaWithArray);
+      mockGetProtocol.mockReturnValue(protocolWithArray);
+      mockResolveAbi.mockResolvedValue({ abi: "[]" });
+      mockReadContractCore.mockResolvedValue({ success: true, result: [] });
+
+      await protocolReadStep(makeInput({ requestIds: '["12","34"]' }));
+
+      const coreCall = (mockReadContractCore as Mock).mock.calls[0][0];
+      expect(JSON.parse(coreCall.functionArgs)).toEqual([["12", "34"]]);
+    });
+
     it("omits _context when input has no _context", async () => {
       mockResolveProtocolMeta.mockReturnValue(COMPOUND_META);
       mockGetProtocol.mockReturnValue(COMPOUND_PROTOCOL);

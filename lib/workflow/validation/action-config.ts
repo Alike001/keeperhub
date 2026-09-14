@@ -435,6 +435,7 @@ function validateFieldValue(
         (valueContainsTemplate(value) || DECIMAL_PATTERN.test(value))
         ? { valid: true }
         : { valid: false, expected: "decimal ETH amount", received: value };
+    case "protocol-array":
     case "protocol-tuple-array":
       return Array.isArray(value) ||
         valueContainsTemplate(value) ||

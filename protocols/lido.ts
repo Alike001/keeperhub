@@ -89,6 +89,126 @@ const STETH_ABI = JSON.stringify([
   },
 ]);
 
+const WITHDRAWAL_QUEUE_ABI = JSON.stringify([
+  {
+    type: "function",
+    name: "requestWithdrawals",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "_amounts", type: "uint256[]" },
+      { name: "_owner", type: "address" },
+    ],
+    outputs: [{ name: "requestIds", type: "uint256[]" }],
+  },
+  {
+    type: "function",
+    name: "requestWithdrawalsWstETH",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "_amounts", type: "uint256[]" },
+      { name: "_owner", type: "address" },
+    ],
+    outputs: [{ name: "requestIds", type: "uint256[]" }],
+  },
+  {
+    type: "function",
+    name: "getWithdrawalRequests",
+    stateMutability: "view",
+    inputs: [{ name: "_owner", type: "address" }],
+    outputs: [{ name: "requestsIds", type: "uint256[]" }],
+  },
+  {
+    type: "function",
+    name: "getWithdrawalStatus",
+    stateMutability: "view",
+    inputs: [{ name: "_requestIds", type: "uint256[]" }],
+    outputs: [
+      {
+        name: "statuses",
+        type: "tuple[]",
+        components: [
+          { name: "amountOfStETH", type: "uint256" },
+          { name: "amountOfShares", type: "uint256" },
+          { name: "owner", type: "address" },
+          { name: "timestamp", type: "uint256" },
+          { name: "isFinalized", type: "bool" },
+          { name: "isClaimed", type: "bool" },
+        ],
+      },
+    ],
+  },
+  {
+    type: "function",
+    name: "getLastCheckpointIndex",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "lastCheckpointIndex", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "findCheckpointHints",
+    stateMutability: "view",
+    inputs: [
+      { name: "_requestIds", type: "uint256[]" },
+      { name: "_firstIndex", type: "uint256" },
+      { name: "_lastIndex", type: "uint256" },
+    ],
+    outputs: [{ name: "hints", type: "uint256[]" }],
+  },
+  {
+    type: "function",
+    name: "getClaimableEther",
+    stateMutability: "view",
+    inputs: [
+      { name: "_requestIds", type: "uint256[]" },
+      { name: "_hints", type: "uint256[]" },
+    ],
+    outputs: [{ name: "claimableEther", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "claimWithdrawals",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "_requestIds", type: "uint256[]" },
+      { name: "_hints", type: "uint256[]" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "event",
+    name: "WithdrawalRequested",
+    inputs: [
+      { name: "requestId", type: "uint256", indexed: true },
+      { name: "requestor", type: "address", indexed: true },
+      { name: "owner", type: "address", indexed: true },
+      { name: "amountOfSTETH", type: "uint256", indexed: false },
+      { name: "amountOfShares", type: "uint256", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "WithdrawalsFinalized",
+    inputs: [
+      { name: "from", type: "uint256", indexed: false },
+      { name: "to", type: "uint256", indexed: false },
+      { name: "amountOfETHLocked", type: "uint256", indexed: false },
+      { name: "sharesToBurn", type: "uint256", indexed: false },
+      { name: "timestamp", type: "uint256", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "WithdrawalClaimed",
+    inputs: [
+      { name: "requestId", type: "uint256", indexed: true },
+      { name: "owner", type: "address", indexed: true },
+      { name: "receiver", type: "address", indexed: false },
+      { name: "amountOfETH", type: "uint256", indexed: false },
+    ],
+  },
+]);
+
 export default defineAbiProtocol({
   name: "Lido",
   slug: "lido",
@@ -101,7 +221,7 @@ export default defineAbiProtocol({
     "1": {
       setup: {
         minNativeHuman: "0.01",
-        requiredTokens: [],
+        requiredTokens: [{ symbol: "WSTETH", human: "1" }],
         approvals: [],
       },
       actions: {
@@ -113,11 +233,29 @@ export default defineAbiProtocol({
         "get-wsteth-total-supply": {},
         "get-steth-balance": { account: wallet() },
         "approve-steth": { spender: wallet() },
+        "get-withdrawal-requests": { owner: wallet() },
+        "get-last-checkpoint-index": {},
+        "get-withdrawal-status": { requestIds: '["135184"]' },
+        "find-checkpoint-hints": {
+          requestIds: '["135184"]',
+          firstIndex: "1",
+          lastIndex: "1216",
+        },
+        "get-claimable-ether": {
+          requestIds: '["135184"]',
+          hints: '["1216"]',
+        },
       },
       skipped: {
         wrap: "requires stETH balance - not provisioned in fork setup (stETH's share-derived balanceOf defeats slot fabrication; needs a whale entry)",
         unwrap:
           "requires wstETH balance - not provisioned in fork setup (wrap is skipped, so no wstETH position exists)",
+        "request-withdrawals":
+          "requires a separately approved stETH balance; the focused fixture provisions wstETH for the canonical queue write instead",
+        "request-withdrawals-wsteth":
+          "requires an approval of the Withdrawal Queue after the fixture's wstETH funding step; added once the queue request receipt is covered",
+        "claim-withdrawals":
+          "requires an oracle-finalized request owned by the test wallet; unit tests cover the owner-only ABI shape",
       },
       // Chain invariants (unnamed outputs, so no field): the wstETH<->stETH
       // exchange rates only ratchet up from 1e18, the 1-unit conversions are
@@ -146,6 +284,106 @@ export default defineAbiProtocol({
   },
 
   contracts: {
+    withdrawalQueue: {
+      label: "Lido Withdrawal Queue",
+      abi: WITHDRAWAL_QUEUE_ABI,
+      addresses: {
+        // Ethereum Mainnet -- proxy
+        "1": "0x889edC2eDab5f40e902b864aD4d7AdE8E412F9B1",
+      },
+      overrides: {
+        requestWithdrawals: {
+          slug: "request-withdrawals",
+          label: "Request stETH Withdrawal",
+          description:
+            "Lock one or more stETH amounts in Lido's queue and mint the withdrawal NFT to the specified owner.",
+          inputs: {
+            _amounts: { name: "amounts", label: "stETH Amounts (wei)" },
+            _owner: { name: "owner", label: "Withdrawal NFT Owner" },
+          },
+        },
+        requestWithdrawalsWstETH: {
+          slug: "request-withdrawals-wsteth",
+          label: "Request wstETH Withdrawal",
+          description:
+            "Lock one or more wstETH amounts in Lido's queue and mint the withdrawal NFT to the specified owner.",
+          inputs: {
+            _amounts: { name: "amounts", label: "wstETH Amounts (wei)" },
+            _owner: { name: "owner", label: "Withdrawal NFT Owner" },
+          },
+        },
+        getWithdrawalRequests: {
+          slug: "get-withdrawal-requests",
+          label: "Get Withdrawal Requests",
+          description: "List withdrawal request IDs owned by an address.",
+          inputs: { _owner: { name: "owner", label: "Withdrawal NFT Owner" } },
+        },
+        getWithdrawalStatus: {
+          slug: "get-withdrawal-status",
+          label: "Get Withdrawal Status",
+          description:
+            "Read the owner, locked amount, and finalization state for withdrawal request IDs.",
+          inputs: { _requestIds: { name: "requestIds", label: "Request IDs" } },
+        },
+        getLastCheckpointIndex: {
+          slug: "get-last-checkpoint-index",
+          label: "Get Last Checkpoint Index",
+          description:
+            "Read the final checkpoint index used to calculate claim hints.",
+        },
+        findCheckpointHints: {
+          slug: "find-checkpoint-hints",
+          label: "Find Withdrawal Checkpoint Hints",
+          description: "Calculate claim hints for withdrawal request IDs.",
+          inputs: {
+            _requestIds: { name: "requestIds", label: "Request IDs" },
+            _firstIndex: {
+              name: "firstIndex",
+              label: "First Checkpoint Index",
+            },
+            _lastIndex: { name: "lastIndex", label: "Last Checkpoint Index" },
+          },
+        },
+        getClaimableEther: {
+          slug: "get-claimable-ether",
+          label: "Get Claimable ETH",
+          description:
+            "Read the ETH currently claimable for finalized withdrawal requests.",
+          inputs: {
+            _requestIds: { name: "requestIds", label: "Request IDs" },
+            _hints: { name: "hints", label: "Checkpoint Hints" },
+          },
+        },
+        claimWithdrawals: {
+          slug: "claim-withdrawals",
+          label: "Claim Finalized Withdrawals",
+          description:
+            "Claim finalized requests to the request owner. This action has no arbitrary recipient field.",
+          inputs: {
+            _requestIds: { name: "requestIds", label: "Request IDs" },
+            _hints: { name: "hints", label: "Checkpoint Hints" },
+          },
+        },
+      },
+      events: {
+        WithdrawalRequested: {
+          slug: "withdrawal-requested",
+          label: "Withdrawal Requested",
+          description: "Fires when Lido creates a withdrawal request NFT.",
+        },
+        WithdrawalsFinalized: {
+          slug: "withdrawals-finalized",
+          label: "Withdrawals Finalized",
+          description:
+            "Fires when a range of Lido withdrawal requests becomes claimable.",
+        },
+        WithdrawalClaimed: {
+          slug: "withdrawal-claimed",
+          label: "Withdrawal Claimed",
+          description: "Fires when a finalized withdrawal request is claimed.",
+        },
+      },
+    },
     wsteth: {
       label: "wstETH (Wrapped stETH)",
       abi: WSTETH_ABI,

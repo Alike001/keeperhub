@@ -184,6 +184,19 @@ function findProtocolAction(meta: ProtocolMeta): ProtocolAction | undefined {
   );
 }
 
+function normalizeProtocolInput(raw: unknown, solidityType: string): unknown {
+  if (!solidityType.endsWith("]") || typeof raw !== "string") {
+    return raw;
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : raw;
+  } catch {
+    return raw;
+  }
+}
+
 function buildFunctionArgs(
   input: ProtocolWriteInput,
   meta: ProtocolMeta
@@ -198,7 +211,7 @@ function buildFunctionArgs(
     if (raw === undefined || raw === "") {
       return { name: inp.name, value: inp.default ?? "" };
     }
-    const value = typeof raw === "object" ? JSON.stringify(raw) : String(raw);
+    const value = normalizeProtocolInput(raw, inp.type);
     return { name: inp.name, value };
   });
 

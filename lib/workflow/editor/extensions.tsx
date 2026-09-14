@@ -30,6 +30,8 @@ import {
   registerIntegrationFormHandler,
 } from "@/lib/workflow/editor/extension-registry";
 
+const ARRAY_SUFFIX_RE = /\[\d*\]$/;
+
 // ============================================================================
 // Register Custom Field Renderers
 // ============================================================================
@@ -535,6 +537,42 @@ registerFieldRenderer(
  * Delegates to ArrayInputField + TupleInputField for add/remove items with
  * per-component typed fields instead of raw JSON text input.
  */
+registerFieldRenderer(
+  "protocol-array",
+  ({ field, config, onUpdateConfig, disabled }) => {
+    const { ArrayInputField } =
+      require("@/components/workflow/config/array-input-field") as typeof import("@/components/workflow/config/array-input-field");
+
+    const rawValue = config[field.key];
+    let value: unknown = rawValue;
+    if (typeof rawValue === "string" && rawValue.trim() !== "") {
+      try {
+        value = JSON.parse(rawValue);
+      } catch {
+        value = rawValue;
+      }
+    }
+
+    const itemType =
+      field.solidityType?.replace(ARRAY_SUFFIX_RE, "") ?? "value";
+
+    return (
+      <div className="space-y-2" key={field.key}>
+        <ProtocolFieldLabel field={field} />
+        <ArrayInputField
+          disabled={disabled}
+          fieldKey={field.key}
+          itemType={itemType}
+          onChange={(val: unknown[]) =>
+            onUpdateConfig(field.key, JSON.stringify(val))
+          }
+          value={value}
+        />
+      </div>
+    );
+  }
+);
+
 registerFieldRenderer(
   "protocol-tuple-array",
   ({ field, config, onUpdateConfig, disabled }) => {

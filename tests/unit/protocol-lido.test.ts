@@ -74,19 +74,19 @@ describe("Lido Protocol Definition", () => {
     }
   });
 
-  it("has exactly 10 actions", () => {
-    expect(lidoDef.actions).toHaveLength(10);
+  it("has exactly 18 actions", () => {
+    expect(lidoDef.actions).toHaveLength(18);
   });
 
-  it("has 3 write actions and 7 read actions", () => {
+  it("has 6 write actions and 12 read actions", () => {
     const readActions = lidoDef.actions.filter((a) => a.type === "read");
     const writeActions = lidoDef.actions.filter((a) => a.type === "write");
-    expect(writeActions).toHaveLength(3);
-    expect(readActions).toHaveLength(7);
+    expect(writeActions).toHaveLength(6);
+    expect(readActions).toHaveLength(12);
   });
 
-  it("has 2 contracts", () => {
-    expect(Object.keys(lidoDef.contracts)).toHaveLength(2);
+  it("has 3 contracts", () => {
+    expect(Object.keys(lidoDef.contracts)).toHaveLength(3);
   });
 
   it("wsteth contract is available on Mainnet, Base, and Sepolia", () => {
@@ -154,8 +154,17 @@ describe("Lido Protocol Definition", () => {
     expect(action?.outputs?.[0]?.name).toBe("totalSupply");
   });
 
-  it("has 1 event", () => {
-    expect(lidoDef.events).toHaveLength(1);
+  it("has 4 events", () => {
+    expect(lidoDef.events).toHaveLength(4);
+  });
+
+  it("exposes only owner-directed withdrawal claims", () => {
+    expect(lidoDef.actions.map((action) => action.slug)).toContain(
+      "claim-withdrawals"
+    );
+    expect(lidoDef.actions.map((action) => action.slug)).not.toContain(
+      "claim-withdrawals-to"
+    );
   });
 
   it("all event slugs are valid kebab-case", () => {
