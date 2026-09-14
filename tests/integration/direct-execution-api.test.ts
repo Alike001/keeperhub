@@ -363,6 +363,70 @@ describe("Direct Execution API", () => {
       expect(mocks.transferFundsCore).not.toHaveBeenCalled();
     });
 
+    it("forwards gasLimitMultiplier on a native transfer (#1973)", async () => {
+      setupPassingGuards();
+      mocks.transferFundsCore.mockResolvedValue({
+        success: true,
+        transactionHash: "0xabc",
+      });
+
+      const response = await transferPOST(
+        postRequest("/transfer", {
+          ...validBody,
+          gasLimitMultiplier: "1.5",
+        })
+      );
+
+      expect(response.status).toBe(202);
+      expect(mocks.transferFundsCore).toHaveBeenCalledWith(
+        expect.objectContaining({ gasLimitMultiplier: "1.5" })
+      );
+    });
+
+    it("forwards gasLimitMultiplier on an ERC-20 transfer (#1973)", async () => {
+      setupPassingGuards();
+      mocks.transferTokenCore.mockResolvedValue({
+        success: true,
+        transactionHash: "0xdef",
+      });
+
+      const response = await transferPOST(
+        postRequest("/transfer", {
+          ...validBody,
+          tokenAddress: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+          gasLimitMultiplier: "1.5",
+        })
+      );
+
+      expect(response.status).toBe(202);
+      expect(mocks.transferTokenCore).toHaveBeenCalledWith(
+        expect.objectContaining({ gasLimitMultiplier: "1.5" })
+      );
+    });
+
+    it("forwards the maxGasLimit object as a string the cores already parse (#1973)", async () => {
+      setupPassingGuards();
+      mocks.transferFundsCore.mockResolvedValue({
+        success: true,
+        transactionHash: "0xabc",
+      });
+      const maxGasLimit = { mode: "maxGasLimit", value: "500000" };
+
+      const response = await transferPOST(
+        postRequest("/transfer", {
+          ...validBody,
+          gasLimitMultiplier: maxGasLimit,
+        })
+      );
+
+      expect(response.status).toBe(202);
+      expect(mocks.transferFundsCore).toHaveBeenCalledWith(
+        expect.objectContaining({
+          gasLimitMultiplier: JSON.stringify(maxGasLimit),
+        })
+      );
+    });
+
     it("charges the native amount (wei) against the value cap", async () => {
       setupPassingGuards();
       mocks.transferFundsCore.mockResolvedValue({
