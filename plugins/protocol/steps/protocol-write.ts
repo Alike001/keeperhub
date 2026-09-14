@@ -209,7 +209,10 @@ function buildFunctionArgs(
   const rawInputs = protocolAction.inputs.map((inp) => {
     const raw = input[inp.name];
     if (raw === undefined || raw === "") {
-      return { name: inp.name, value: inp.default ?? "" };
+      return {
+        name: inp.name,
+        value: normalizeProtocolInput(inp.default ?? "", inp.type),
+      };
     }
     const value = normalizeProtocolInput(raw, inp.type);
     return { name: inp.name, value };

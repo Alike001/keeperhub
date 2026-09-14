@@ -163,7 +163,7 @@ const WITHDRAWAL_QUEUE_ABI = JSON.stringify([
       { name: "_requestIds", type: "uint256[]" },
       { name: "_hints", type: "uint256[]" },
     ],
-    outputs: [{ name: "claimableEther", type: "uint256" }],
+    outputs: [{ name: "claimableEther", type: "uint256[]" }],
   },
   {
     type: "function",
@@ -182,7 +182,7 @@ const WITHDRAWAL_QUEUE_ABI = JSON.stringify([
       { name: "requestId", type: "uint256", indexed: true },
       { name: "requestor", type: "address", indexed: true },
       { name: "owner", type: "address", indexed: true },
-      { name: "amountOfSTETH", type: "uint256", indexed: false },
+      { name: "amountOfStETH", type: "uint256", indexed: false },
       { name: "amountOfShares", type: "uint256", indexed: false },
     ],
   },
@@ -190,8 +190,8 @@ const WITHDRAWAL_QUEUE_ABI = JSON.stringify([
     type: "event",
     name: "WithdrawalsFinalized",
     inputs: [
-      { name: "from", type: "uint256", indexed: false },
-      { name: "to", type: "uint256", indexed: false },
+      { name: "from", type: "uint256", indexed: true },
+      { name: "to", type: "uint256", indexed: true },
       { name: "amountOfETHLocked", type: "uint256", indexed: false },
       { name: "sharesToBurn", type: "uint256", indexed: false },
       { name: "timestamp", type: "uint256", indexed: false },
@@ -203,7 +203,7 @@ const WITHDRAWAL_QUEUE_ABI = JSON.stringify([
     inputs: [
       { name: "requestId", type: "uint256", indexed: true },
       { name: "owner", type: "address", indexed: true },
-      { name: "receiver", type: "address", indexed: false },
+      { name: "receiver", type: "address", indexed: true },
       { name: "amountOfETH", type: "uint256", indexed: false },
     ],
   },
@@ -279,7 +279,16 @@ export default defineAbiProtocol({
       // stETH.submit stakes ETH for stETH and emits Submitted; the event
       // harness covers it with a targeted submit (needs only native gas,
       // unlike wrap/unwrap which stay skipped pending a stETH whale).
-      events: {},
+      events: {
+        skipped: {
+          "withdrawal-requested":
+            "requires a funded and approved stETH or wstETH balance for the Withdrawal Queue on the mainnet fork",
+          "withdrawals-finalized":
+            "requires Lido oracle finalization privileges and a funded finalization transaction",
+          "withdrawal-claimed":
+            "requires an oracle-finalized withdrawal NFT owned by the fork test wallet",
+        },
+      },
     },
   },
 
