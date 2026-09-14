@@ -416,6 +416,13 @@ Call any smart contract function. Automatically detects read vs write operations
   with a 400 naming both values.
 - `functionArgs` (optional): JSON array string of function arguments (e.g., `"[\"0x...\", \"1000\"]"`)
 - `abi` (optional): Contract ABI as JSON string. Auto-fetched from block explorer if omitted.
+- `errorAbis` (optional): JSON array of ABI documents whose `error` entries join
+  revert decoding, after the ABI above. Decoding only: `abi` still encodes the
+  call, so the extra documents cannot change the calldata. Use it when the
+  revert is raised somewhere other than the call target, such as a hook the
+  target calls or an implementation behind a proxy. At most 4 documents, 16 KB
+  each; a document declaring no error the decoder can build is rejected with a
+  400 rather than accepted and ignored.
 - `value` (optional): Native value to send with the call, as a decimal string in ether units (e.g. `0.1`) (for payable functions)
 - `gasLimitMultiplier` (optional): Gas limit multiplier
 
@@ -546,6 +553,7 @@ Read a contract value, evaluate a condition, and conditionally execute a write o
   "functionName": "balanceOf",
   "functionArgs": "[\"0x742d35Cc6634C0532925a3b844Bc454e4438f44e\"]",
   "abi": "[{...}]",
+  "errorAbis": ["[{...}]"],
   "condition": {
     "operator": "gt",
     "value": "1000000000000000000"
@@ -559,6 +567,10 @@ Read a contract value, evaluate a condition, and conditionally execute a write o
   }
 }
 ```
+
+`errorAbis` (optional) is the same field the contract-call route accepts, and it
+sits at the top level rather than inside `action` so one list covers both calls
+this route makes: the check read and the action write. Decoding only, for both.
 
 **Condition Operators:**
 
@@ -696,7 +708,7 @@ When the chain would have rejected the transaction, the endpoint returns HTTP 40
 - `wouldRevert`: `true` on this failure path; use it together with `failureKind`, not as
   a revert discriminator by itself
 
-Revert decoding tries (in order): the contract's own ABI custom errors, common OpenZeppelin / standard errors, then the standard `Error(string)` revert (which is surfaced as `Error(<message>)`). If none match, the failure is either attributed to a funding shortfall (see below) or the raw RPC error message is surfaced.
+Revert decoding tries (in order): custom errors in the ABI the request supplied, custom errors in any of its `errorAbis` documents, common OpenZeppelin / standard errors, then the standard `Error(string)` revert (which is surfaced as `Error(<message>)`). If none match, the failure is either attributed to a funding shortfall (see below) or the raw RPC error message is surfaced. A revert raised in a contract other than the call target - a hook, a proxy implementation, a router - is only decodable through `errorAbis`, because the ABI that encodes the call is the target's own.
 
 ### Response — underfunded sender
 
