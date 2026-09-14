@@ -113,10 +113,9 @@ describe("renderTemplateValue depth against the post-scan's limit", () => {
   it("fails the step for an unresolved token that deep", () => {
     const tracker = createTracker();
     const rendered = processTemplates(
-      { functionArgs: nest(14, "{{@trigger:Trigger.does.not.exist}}") } as Record<
-        string,
-        unknown
-      >,
+      {
+        functionArgs: nest(14, "{{@trigger:Trigger.does.not.exist}}"),
+      } as Record<string, unknown>,
       baseOutputs,
       tracker
     );
