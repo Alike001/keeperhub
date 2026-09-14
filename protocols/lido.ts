@@ -233,6 +233,14 @@ export default defineAbiProtocol({
         "get-wsteth-total-supply": {},
         "get-steth-balance": { account: wallet() },
         "approve-steth": { spender: wallet() },
+        "request-withdrawals": {
+          amounts: '["1000000000000000000"]',
+          owner: wallet(),
+        },
+        "request-withdrawals-wsteth": {
+          amounts: '["1000000000000000000"]',
+          owner: wallet(),
+        },
         "get-withdrawal-requests": { owner: wallet() },
         "get-last-checkpoint-index": {},
         "get-withdrawal-status": { requestIds: '["135184"]' },
@@ -242,6 +250,10 @@ export default defineAbiProtocol({
           lastIndex: "1216",
         },
         "get-claimable-ether": {
+          requestIds: '["135184"]',
+          hints: '["1216"]',
+        },
+        "claim-withdrawals": {
           requestIds: '["135184"]',
           hints: '["1216"]',
         },
