@@ -41,6 +41,32 @@ describe("fundedAssets", () => {
     expect(assets[0]).toMatchObject({ kind: "token", symbol: "USDC" });
   });
 
+  it("hides Arc's native row when the mirror USDC row is keyed as `address` instead of `tokenAddress`", () => {
+    // ServerToken leaves both address fields optional -- the sibling `tokens`
+    // array on this same payload (app/api/user/wallet/balances/route.ts:227)
+    // already keys its rows on `address` rather than `tokenAddress`.
+    // hasTokenAddress must recognize that shape on `supportedTokens` rows
+    // too, or this row gets filtered out before hasFundedMirrorRow ever
+    // sees it and the native row stays visible alongside it -- the
+    // double-count this module exists to prevent.
+    const assets = fundedAssets([
+      arcChain({
+        nativeBalance: "0.083134",
+        supportedTokens: [
+          {
+            address: ARC_USDC_ADDRESS,
+            balance: "0.083134",
+            name: "USD Coin",
+            symbol: "USDC",
+          },
+        ],
+      }),
+    ]);
+    expect(assets.filter((a) => a.kind === "native")).toEqual([]);
+    expect(assets).toHaveLength(1);
+    expect(assets[0]).toMatchObject({ kind: "token", symbol: "USDC" });
+  });
+
   it("keeps Arc's native row visible when the USDC row is an unfunded placeholder", () => {
     // A partial balanceOf failure pushes a "0" row rather than omitting one;
     // that must not be read as "the mirror is funded".

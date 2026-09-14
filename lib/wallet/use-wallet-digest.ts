@@ -147,8 +147,8 @@ function positive(raw: string): boolean {
 // the rows that actually have one before handing them to it.
 function hasTokenAddress(
   token: ServerToken
-): token is ServerToken & { tokenAddress: string } {
-  return typeof token.tokenAddress === "string";
+): token is ServerToken & ({ tokenAddress: string } | { address: string }) {
+  return typeof (token.tokenAddress ?? token.address) === "string";
 }
 
 /** Every funded holding, before prices are attached. */
