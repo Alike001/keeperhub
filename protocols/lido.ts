@@ -1,6 +1,23 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
 import { amount, native, wallet } from "@/lib/test-data/types";
 
+const ERC20_READONLY_ABI = JSON.stringify([
+  {
+    type: "function",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "totalSupply",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+]);
+
 const WSTETH_ABI = JSON.stringify([
   {
     type: "function",
@@ -152,8 +169,6 @@ export default defineAbiProtocol({
       addresses: {
         // Ethereum Mainnet
         "1": "0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0",
-        // Base
-        "8453": "0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452",
         // Sepolia Testnet
         "11155111": "0xB82381A3fBD3FaFA77B3a7bE693342618240067b",
       },
@@ -251,6 +266,43 @@ export default defineAbiProtocol({
           slug: "get-wsteth-total-supply",
           label: "Get wstETH Total Supply",
           description: "Get the total supply of wstETH tokens",
+          outputs: {
+            result: {
+              name: "totalSupply",
+              label: "Total wstETH Supply (wei)",
+              decimals: 18,
+            },
+          },
+        },
+      },
+    },
+    wstethL2: {
+      label: "wstETH (Wrapped stETH) - L2",
+      abi: ERC20_READONLY_ABI,
+      addresses: {
+        // Base - only ERC-20 functions (wrap/unwrap/conversion not implemented)
+        "8453": "0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452",
+      },
+      overrides: {
+        balanceOf: {
+          slug: "get-wsteth-balance-l2",
+          label: "Get wstETH Balance (L2)",
+          description: "Check the wstETH balance of an address on L2",
+          inputs: {
+            account: { label: "Wallet Address" },
+          },
+          outputs: {
+            result: {
+              name: "balance",
+              label: "wstETH Balance (wei)",
+              decimals: 18,
+            },
+          },
+        },
+        totalSupply: {
+          slug: "get-wsteth-total-supply-l2",
+          label: "Get wstETH Total Supply (L2)",
+          description: "Get the total supply of wstETH tokens on L2",
           outputs: {
             result: {
               name: "totalSupply",

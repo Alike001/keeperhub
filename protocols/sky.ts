@@ -176,6 +176,13 @@ const ERC20_READONLY_ABI = JSON.stringify([
     inputs: [{ name: "account", type: "address" }],
     outputs: [{ name: "", type: "uint256" }],
   },
+  {
+    type: "function",
+    name: "totalSupply",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
 ]);
 
 const DAI_USDS_CONVERTER_ABI = JSON.stringify([
@@ -390,12 +397,45 @@ export default defineAbiProtocol({
       addresses: {
         // Ethereum Mainnet -- proxy
         "1": "0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD",
-        // Base
-        "8453": "0x5875eEE11Cf8398102FdAd704C9E96607675467a",
-        // Arbitrum One
-        "42161": "0xdDb46999F8891663a8F2828d25298f70416d7610",
       },
       overrides: erc4626AbiOverrides(),
+    },
+    sUsdsL2: {
+      label: "sUSDS (Savings USDS) - L2",
+      abi: ERC20_READONLY_ABI,
+      addresses: {
+        // Base - only ERC-20 functions (ERC-4626 vault functions not implemented)
+        "8453": "0x5875eEE11Cf8398102FdAd704C9E96607675467a",
+        // Arbitrum One - only ERC-20 functions (ERC-4626 vault functions not implemented)
+        "42161": "0xdDb46999F8891663a8F2828d25298f70416d7610",
+      },
+      overrides: {
+        balanceOf: {
+          slug: "get-susds-balance-l2",
+          label: "Get sUSDS Balance (L2)",
+          description: "Check the sUSDS balance of an address on L2",
+          inputs: { account: { label: "Wallet Address" } },
+          outputs: {
+            result: {
+              name: "balance",
+              label: "sUSDS Balance (wei)",
+              decimals: 18,
+            },
+          },
+        },
+        totalSupply: {
+          slug: "get-susds-total-supply-l2",
+          label: "Get sUSDS Total Supply (L2)",
+          description: "Get the total supply of sUSDS tokens on L2",
+          outputs: {
+            result: {
+              name: "totalSupply",
+              label: "Total sUSDS Supply (wei)",
+              decimals: 18,
+            },
+          },
+        },
+      },
     },
     stUsds: {
       label: "stUSDS (Staked USDS)",
