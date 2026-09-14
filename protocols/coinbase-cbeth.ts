@@ -27,6 +27,13 @@ import cbethAbi from "./abis/coinbase-cbeth.json";
 const CBETH_DOCS =
   "https://help.coinbase.com/en/coinbase/trading-and-funding/staking-rewards/cbeth";
 
+// Input docUrls are fetched on every PR by tests/integration/protocol-doc-urls.test.ts,
+// which collects them from action inputs only. help.coinbase.com sits behind bot
+// protection and answers 403 to a non-browser client, so the input link points at the
+// cbETH contract source instead. The action-level link above is not fetched by that
+// test and stays on the explainer a user reads from the config panel.
+const CBETH_CONTRACT_DOCS = "https://github.com/coinbase/wrapped-tokens-os";
+
 const TEST_DATA: ProtocolTestData = {
   "1": {
     setup: {
@@ -89,7 +96,7 @@ export default defineAbiProtocol({
             account: {
               label: "Wallet Address",
               helpTip: "Address whose cbETH balance will be read.",
-              docUrl: CBETH_DOCS,
+              docUrl: CBETH_CONTRACT_DOCS,
             },
           },
           outputs: {
