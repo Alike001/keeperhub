@@ -3,6 +3,7 @@ import "server-only";
 import { ethers } from "ethers";
 import {
   getRpcManagerForChain,
+  type PreparedSimulationCall,
   prepareSimulationCall,
   resolveSimulationWallet,
   type SimulateResult,
@@ -10,7 +11,7 @@ import {
   simulationUnavailable,
 } from "@/lib/execute/simulate";
 import { MAX_SEQUENCE_CALLS } from "@/lib/execute/simulate-sequence-limits";
-import { checkStablecoinContractCall } from "@/lib/execute/stablecoin-cap";
+import { checkStablecoinContractCallBatch } from "@/lib/execute/stablecoin-cap";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { getErrorMessage } from "@/lib/utils";
 import { decodeRevertReason } from "@/lib/web3/decode-revert-error";
@@ -415,36 +416,43 @@ export async function simulateCallSequence(
   // the node: the bad call carries its error and the rest say why they did
   // not run.
   const encoded: EncodedCall[] = [];
+  const prepared: PreparedSimulationCall[] = [];
   for (const [index, call] of input.calls.entries()) {
-    const prepared = prepareSimulationCall(call);
-    if ("error" in prepared) {
-      return abortBefore(from, input, index, prepared.error, prepared.value);
+    const one = prepareSimulationCall(call);
+    if ("error" in one) {
+      return abortBefore(from, input, index, one.error, one.value);
     }
-
-    // The ceiling applies per transaction at broadcast, and these are separate
-    // transactions, so it is checked per call here exactly as the single-call
-    // path checks it. A call over the ceiling would fail at send, so a clean
-    // dry run for it would be the wrong answer.
-    const cap = await checkStablecoinContractCall({
-      organizationId: input.organizationId,
-      chainId,
-      contractAddress: prepared.to,
-      functionName: prepared.abiFn.name ?? call.functionName,
-      inputTypes: (prepared.abiFn.inputs ?? []).map((i) => i.type),
-      args: prepared.args,
-      context: "simulate",
-    });
-    if (cap.kind !== "allowed") {
-      return abortBefore(from, input, index, cap.error, prepared.value);
-    }
-
+    prepared.push(one);
     encoded.push({
-      to: prepared.to,
-      data: prepared.data,
-      value: prepared.value,
-      iface: prepared.iface,
-      canonicalKey: prepared.canonicalKey,
+      to: one.to,
+      data: one.data,
+      value: one.value,
+      iface: one.iface,
+      canonicalKey: one.canonicalKey,
     });
+  }
+
+  // Per call, as the single-call path checks it: each is its own transaction
+  // at broadcast.
+  const cap = await checkStablecoinContractCallBatch({
+    organizationId: input.organizationId,
+    chainId,
+    context: "simulate",
+    calls: prepared.map((one, i) => ({
+      contractAddress: one.to,
+      functionName: one.abiFn.name ?? input.calls[i].functionName,
+      inputTypes: (one.abiFn.inputs ?? []).map((arg) => arg.type),
+      args: one.args,
+    })),
+  });
+  if (cap.kind !== "allowed") {
+    return abortBefore(
+      from,
+      input,
+      cap.index,
+      cap.error,
+      encoded[cap.index].value
+    );
   }
 
   const cached = mechanismByChain.get(chainId);

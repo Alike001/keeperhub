@@ -416,6 +416,26 @@ describe("simulateCallSequence validation", () => {
     expect(result.error).toContain("USDC");
   });
 
+  it("reads the chain's token list once for the whole sequence", async () => {
+    spies.send.mockResolvedValueOnce([
+      {
+        calls: [
+          { status: "0x1", gasUsed: "0x1", returnData: TRUE },
+          { status: "0x1", gasUsed: "0x1", returnData: TRUE },
+          { status: "0x1", gasUsed: "0x1", returnData: TRUE },
+        ],
+      },
+    ]);
+
+    await run([
+      APPROVE_THEN_DEPOSIT[0],
+      APPROVE_THEN_DEPOSIT[0],
+      APPROVE_THEN_DEPOSIT[0],
+    ]);
+
+    expect(spies.supportedTokensLookup).toHaveBeenCalledTimes(1);
+  });
+
   it("refuses an empty sequence and one that is too long", async () => {
     expect((await run([])).error).toContain("at least one call");
     const tooMany = Array.from({ length: 11 }, () => APPROVE_THEN_DEPOSIT[0]);
