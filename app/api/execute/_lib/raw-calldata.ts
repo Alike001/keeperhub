@@ -12,16 +12,10 @@ export type RawCalldataResolution = {
 
 export type RawCalldataError = { error: string };
 
-// Must match the schema's test for a function key, or a body it accepted
-// reaches the typed path with no name to look up.
+// The same test the schema uses; it has already refused `data` next to a
+// function key, so presence alone decides the path.
 export function isRawCalldataRequest(body: Record<string, unknown>): boolean {
-  const named = (value: unknown): boolean =>
-    typeof value === "string" && value.trim() !== "";
-  return (
-    typeof body.data === "string" &&
-    !named(body.functionName) &&
-    !named(body.abiFunction)
-  );
+  return "data" in body;
 }
 
 export function selectorOf(data: string): string | RawCalldataError {
@@ -31,7 +25,7 @@ export function selectorOf(data: string): string | RawCalldataError {
   if (data.length < SELECTOR_HEX_LENGTH || data.length % 2 !== 0) {
     return {
       error:
-        "data must carry at least a 4-byte function selector (plain value transfers use /api/execute/transfer)",
+        "data must be whole bytes carrying at least a 4-byte function selector; a plain value transfer belongs on /api/execute/transfer",
     };
   }
   return data.slice(0, SELECTOR_HEX_LENGTH).toLowerCase();

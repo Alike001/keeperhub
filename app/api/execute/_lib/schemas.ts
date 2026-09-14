@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isValidOperator, VALID_OPERATORS } from "./condition";
+import { selectorOf } from "./raw-calldata";
 import type { ExecuteErrorResponse } from "./types";
 
 /**
@@ -75,37 +76,43 @@ function functionNameConflict(
 
 // Checked here because a missing function key short-circuits this schema, so
 // nothing downstream would ever see `data`.
-const CALLDATA_REGEX = /^0x[\da-fA-F]*$/;
-const SELECTOR_HEX_LENGTH = 10; // "0x" + 4 bytes
-
 function hasRawCalldataInput(record: Record<string, unknown>): boolean {
   return "data" in record;
+}
+
+// Same rule as functionNameConflict: keyed on the keys being present, because
+// the route would otherwise decode one and quietly drop the other.
+function rawCalldataConflict(
+  record: Record<string, unknown>
+): ExecuteErrorResponse | null {
+  const named = "functionName" in record ? "functionName" : "abiFunction";
+  if (!(named in record)) {
+    return null;
+  }
+  return {
+    error: "Conflicting field values",
+    field: "data",
+    details: `data and ${named} describe the same call twice; send raw calldata in data, or the function key and functionArgs, not both.`,
+  };
 }
 
 function rawCalldataError(
   record: Record<string, unknown>
 ): ExecuteErrorResponse | null {
   const data = record.data;
-  if (typeof data !== "string" || !CALLDATA_REGEX.test(data)) {
+  if (typeof data !== "string") {
     return {
       error: "Invalid field type",
       field: "data",
       details: "data must be a 0x-prefixed hex string",
     };
   }
-  if (data.length % 2 !== 0) {
+  const selector = selectorOf(data);
+  if (typeof selector !== "string") {
     return {
       error: "Invalid field value",
       field: "data",
-      details: "data must contain whole bytes (an even number of hex digits)",
-    };
-  }
-  if (data.length < SELECTOR_HEX_LENGTH) {
-    return {
-      error: "Invalid field value",
-      field: "data",
-      details:
-        "data must carry at least a 4-byte function selector; a plain value transfer belongs on /api/execute/transfer",
+      details: selector.error,
     };
   }
   return null;
@@ -224,9 +231,12 @@ export const contractCallInputSchema = objectBase.superRefine((record, ctx) => {
     addError(ctx, chainFieldError);
     return;
   }
-  // Validated whenever present, but only stands in for the function key when
-  // none was sent.
   if (hasRawCalldataInput(record)) {
+    const conflict = rawCalldataConflict(record);
+    if (conflict) {
+      addError(ctx, conflict);
+      return;
+    }
     const dataError = rawCalldataError(record);
     if (dataError) {
       addError(ctx, dataError);

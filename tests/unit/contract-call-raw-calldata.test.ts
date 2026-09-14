@@ -271,8 +271,8 @@ describe("contract-call with raw calldata", () => {
     expect(mockResolveAbi).not.toHaveBeenCalled();
   });
 
-  it("lets the typed fields win when both data and functionName are sent", async () => {
-    await call(
+  it("refuses data next to functionName before anything executes", async () => {
+    const response = await call(
       post({
         chainId: 8453,
         contractAddress: TOKEN,
@@ -282,27 +282,14 @@ describe("contract-call with raw calldata", () => {
         data: approveData,
       })
     );
+    const body = (await response.json()) as { error: string; field?: string };
 
-    expect(mockWriteContractCore.mock.calls[0][0]).toMatchObject({
-      abiFunction: "approve",
-      functionArgs: JSON.stringify([SPENDER, "1"]),
-    });
-  });
-
-  it("takes the raw path when the function key is present but empty", async () => {
-    await call(
-      post({
-        chainId: 8453,
-        contractAddress: TOKEN,
-        abiFunction: "",
-        abi: ERC20_ABI,
-        data: approveData,
-      })
-    );
-
-    expect(mockWriteContractCore.mock.calls[0][0]).toMatchObject({
-      abiFunction: "approve(address,uint256)",
-    });
+    expect(response.status).toBe(400);
+    expect(body.field).toBe("data");
+    expect(body.error).toBe("Conflicting field values");
+    expect(mockResolveAbi).not.toHaveBeenCalled();
+    expect(mockWriteContractCore).not.toHaveBeenCalled();
+    expect(mockSimulateContractCall).not.toHaveBeenCalled();
   });
 
   it("refuses malformed data in the schema, before the ABI is resolved", async () => {

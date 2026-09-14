@@ -456,9 +456,10 @@ round trip - trailing bytes past the arguments (an ERC-2771 appended sender,
 for example), non-minimal offsets, non-canonical padding - is rejected with
 `400` on field `data` rather than dropped silently.
 
-When `functionName` (or `abiFunction`) is present alongside `data`, the typed
-fields win and `data` is ignored; it is still checked for shape.
-`check-and-execute` does not accept `data`.
+Send `data` or the typed fields, not both. A body carrying `data` alongside
+`functionName` (or `abiFunction`) describes the same call twice and is rejected
+with `400` on field `data`, for the same reason a differing `functionName` and
+`abiFunction` pair is. `check-and-execute` does not accept `data`.
 
 **Direct execution vs. workflow node field names**
 

@@ -33,17 +33,8 @@ const ERC20_ABI = JSON.stringify([
 const iface = new ethers.Interface(JSON.parse(ERC20_ABI));
 
 describe("isRawCalldataRequest", () => {
-  it("is true only when data is present and no function key is", () => {
+  it("is keyed on the data key being present, as the schema is", () => {
     expect(isRawCalldataRequest({ data: "0x095ea7b3" })).toBe(true);
-    expect(
-      isRawCalldataRequest({ data: "0x095ea7b3", functionName: "approve" })
-    ).toBe(false);
-    expect(
-      isRawCalldataRequest({ data: "0x095ea7b3", abiFunction: "approve" })
-    ).toBe(false);
-    expect(isRawCalldataRequest({ data: "0x095ea7b3", abiFunction: "" })).toBe(
-      true
-    );
     expect(isRawCalldataRequest({ functionName: "approve" })).toBe(false);
   });
 });
@@ -259,20 +250,28 @@ describe("contractCallInputSchema with raw calldata", () => {
     }
   });
 
-  it("accepts a body that carries both: the typed fields win", () => {
+  it("rejects data next to functionName as a conflict, before shape", () => {
+    for (const key of ["functionName", "abiFunction"]) {
+      const result = validateContractCallInput({
+        ...base,
+        data: "0xnothex",
+        [key]: "approve",
+      });
+      expect(result.valid).toBe(false);
+      if (result.valid) {
+        throw new Error("expected a conflict");
+      }
+      expect(result.error.field).toBe("data");
+      expect(result.error.error).toBe("Conflicting field values");
+      expect(result.error.details).toContain(key);
+    }
+  });
+
+  it("treats an empty function key as present, like functionNameConflict does", () => {
     const result = validateContractCallInput({
       ...base,
       data: iface.encodeFunctionData("approve", [SPENDER, BigInt("1")]),
-      functionName: "approve",
-    });
-    expect(result.valid).toBe(true);
-  });
-
-  it("still validates data when the typed fields are the ones used", () => {
-    const result = validateContractCallInput({
-      ...base,
-      data: "0xnothex",
-      functionName: "approve",
+      abiFunction: "",
     });
     expect(result.valid).toBe(false);
     expect(result.valid === false && result.error.field).toBe("data");
