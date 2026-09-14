@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workflowExecutionLogs, workflowStepClaims } from "@/lib/db/schema";
 import { ErrorCategory, logInfo, logSystemWarn, logWarn } from "@/lib/logging";
@@ -9,16 +9,19 @@ import { stepClaimKey } from "@/lib/redis-keys";
 import { pollForCompletedOutput } from "@/lib/workflow/executor/poll-for-output";
 
 /**
- * Identifies one step within one execution. forEachNodeId and iterationIndex
- * carry sentinels outside a For Each body so the claim key is total: a
- * nullable member would make every non-loop step distinct from itself in the
- * primary key and defeat the claim.
+ * Identifies one step within one execution.
+ *
+ * Steps inside a For Each body are deliberately out of scope. The executor
+ * describes an iteration with a single (forEachNodeId, iterationIndex) pair
+ * naming the innermost loop, so a node in a nested body carries the same pair
+ * under every outer iteration. Claiming on that key would make the second
+ * outer iteration reuse the first one's output, which is worse than the
+ * duplicate work this module exists to remove. Deduplicating loop bodies
+ * needs the executor to carry the full nesting path first.
  */
 export type StepClaimScope = {
   executionId: string;
   nodeId: string;
-  forEachNodeId: string;
-  iterationIndex: number;
 };
 
 /**
@@ -30,7 +33,17 @@ const STALE_CLAIM_MS = 10 * 60 * 1000;
 
 /** How long a replay that lost the claim waits for the winner's output. */
 const WAIT_FOR_WINNER_MS = 30_000;
-const WAIT_POLL_INTERVAL_MS = 250;
+const WAIT_POLL_INTERVAL_MS = 1000;
+
+/**
+ * Ceiling for the two reads this module makes. Both run on the step's hot
+ * path, so a database stall must surface as "run the step" rather than as a
+ * replay parked until the pod is killed.
+ */
+const CLAIM_STATEMENT_TIMEOUT_MS = 5000;
+
+/** Wait rounds before a replay stops deferring and runs the step itself. */
+const MAX_WAIT_ROUNDS = 2;
 
 export type StepClaimResult =
   /** This caller owns the step and must run it. */
@@ -38,99 +51,120 @@ export type StepClaimResult =
   /** Another replay already produced this step's output; reuse it. */
   | { outcome: "reuse"; output: unknown };
 
+/**
+ * The claim scope for a step, or undefined when the step must not be claimed.
+ * A step with no execution to scope to, and any step inside a For Each body,
+ * are both left unguarded for the reasons on StepClaimScope.
+ */
 export function stepClaimScope(context: {
-  executionId: string;
-  nodeId: string;
+  executionId?: string;
+  nodeId?: string;
   forEachNodeId?: string;
   iterationIndex?: number;
-}): StepClaimScope {
-  return {
-    executionId: context.executionId,
-    nodeId: context.nodeId,
-    forEachNodeId: context.forEachNodeId ?? "",
-    iterationIndex:
-      typeof context.iterationIndex === "number" ? context.iterationIndex : -1,
-  };
+}): StepClaimScope | undefined {
+  if (!(context.executionId && context.nodeId)) {
+    return;
+  }
+  if (context.forEachNodeId !== undefined) {
+    return;
+  }
+  return { executionId: context.executionId, nodeId: context.nodeId };
+}
+
+function redisKeyFor(scope: StepClaimScope): string {
+  return stepClaimKey(scope.executionId, scope.nodeId);
 }
 
 /**
- * Take the claim in Redis. Returns true when this caller won, false when
- * someone else holds it, and null when Redis cannot answer at all -- the
- * caller then falls through to the database, which holds the same claim.
+ * Whether Redis already knows someone holds this claim.
+ *
+ * Redis is a negative cache, never the authority. The overwhelming majority
+ * of replays arrive long after the step was claimed, and answering those here
+ * keeps one database write per step rather than one per replay. A miss, or an
+ * unreachable Redis, simply falls through to the authoritative insert.
  */
-async function claimInRedis(scope: StepClaimScope): Promise<boolean | null> {
+async function heldAccordingToRedis(scope: StepClaimScope): Promise<boolean> {
   const redis = getRedis();
   if (!redis) {
-    return null;
+    return false;
   }
   try {
-    const key = stepClaimKey(
-      scope.executionId,
-      scope.nodeId,
-      scope.forEachNodeId,
-      scope.iterationIndex
-    );
-    const result = await redis.set(key, "1", "PX", STALE_CLAIM_MS, "NX");
-    return result === "OK";
+    return (await redis.exists(redisKeyFor(scope))) === 1;
   } catch {
-    return null;
+    return false;
+  }
+}
+
+async function rememberClaimInRedis(scope: StepClaimScope): Promise<void> {
+  const redis = getRedis();
+  if (!redis) {
+    return;
+  }
+  try {
+    await redis.set(redisKeyFor(scope), "1", "PX", STALE_CLAIM_MS);
+  } catch {
+    // The claim still stands in Postgres; this only costs a cache miss.
   }
 }
 
 /**
- * Take the claim in Postgres. The insert is the race: exactly one caller can
- * hold the primary key. The DO UPDATE clause is what lets a claim abandoned by
- * a dead pod be taken over once it is older than STALE_CLAIM_MS, since a plain
- * DO NOTHING would leave the step unrunnable forever.
+ * Take the claim in Postgres, the single authority for who runs a step.
+ *
+ * The insert is the race: exactly one caller can hold the primary key. The DO
+ * UPDATE clause is what lets a claim abandoned by a dead pod be taken over
+ * once it is older than STALE_CLAIM_MS, since a plain DO NOTHING would leave
+ * the step unrunnable for the rest of the run.
  */
 async function claimInDb(scope: StepClaimScope): Promise<boolean> {
-  const rows = await db
-    .insert(workflowStepClaims)
-    .values({
-      executionId: scope.executionId,
-      nodeId: scope.nodeId,
-      forEachNodeId: scope.forEachNodeId,
-      iterationIndex: scope.iterationIndex,
-    })
-    .onConflictDoUpdate({
-      target: [
-        workflowStepClaims.executionId,
-        workflowStepClaims.nodeId,
-        workflowStepClaims.forEachNodeId,
-        workflowStepClaims.iterationIndex,
-      ],
-      set: { claimedAt: sql`now()` },
-      setWhere: sql`${workflowStepClaims.claimedAt} < now() - make_interval(secs => ${STALE_CLAIM_MS / 1000})`,
-    })
-    .returning({ nodeId: workflowStepClaims.nodeId });
+  const rows = await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SET LOCAL statement_timeout = ${CLAIM_STATEMENT_TIMEOUT_MS}`
+    );
+    return await tx
+      .insert(workflowStepClaims)
+      .values({ executionId: scope.executionId, nodeId: scope.nodeId })
+      .onConflictDoUpdate({
+        target: [workflowStepClaims.executionId, workflowStepClaims.nodeId],
+        set: { claimedAt: sql`now()` },
+        setWhere: sql`${workflowStepClaims.claimedAt} < now() - make_interval(secs => ${STALE_CLAIM_MS / 1000})`,
+      })
+      .returning({ nodeId: workflowStepClaims.nodeId });
+  });
 
   return rows.length > 0;
 }
 
-/** The terminal log row another replay wrote for this step, if it has one. */
-async function findTerminalRow(
+/**
+ * The output the winning replay recorded, if it has finished successfully.
+ *
+ * Matches only a success row carrying output, newest first, exactly as the
+ * sibling readers in get-completed-step-output.step.ts do. A node routinely
+ * carries a success row alongside an orphaned error row -- releaseStepClaim
+ * on failure produces that very shape -- so an unordered read that accepted
+ * either status could hand back a stale failure and send this replay off to
+ * run the step next to the winner.
+ */
+async function findWinnerOutput(
   scope: StepClaimScope
-): Promise<{ status: string; outputRaw: unknown } | null> {
-  const rows = await db
-    .select({
-      status: workflowExecutionLogs.status,
-      outputRaw: workflowExecutionLogs.outputRaw,
-    })
-    .from(workflowExecutionLogs)
-    .where(
-      and(
-        eq(workflowExecutionLogs.executionId, scope.executionId),
-        eq(workflowExecutionLogs.nodeId, scope.nodeId),
-        scope.forEachNodeId === ""
-          ? sql`${workflowExecutionLogs.forEachNodeId} is null`
-          : eq(workflowExecutionLogs.forEachNodeId, scope.forEachNodeId),
-        scope.iterationIndex === -1
-          ? sql`${workflowExecutionLogs.iterationIndex} is null`
-          : eq(workflowExecutionLogs.iterationIndex, scope.iterationIndex),
-        sql`${workflowExecutionLogs.status} in ('success', 'error')`
+): Promise<{ outputRaw: unknown } | null> {
+  const rows = await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SET LOCAL statement_timeout = ${CLAIM_STATEMENT_TIMEOUT_MS}`
+    );
+    return await tx
+      .select({ outputRaw: workflowExecutionLogs.outputRaw })
+      .from(workflowExecutionLogs)
+      .where(
+        and(
+          eq(workflowExecutionLogs.executionId, scope.executionId),
+          eq(workflowExecutionLogs.nodeId, scope.nodeId),
+          eq(workflowExecutionLogs.status, "success"),
+          isNotNull(workflowExecutionLogs.outputRaw)
+        )
       )
-    )
-    .limit(1);
+      .orderBy(desc(workflowExecutionLogs.completedAt))
+      .limit(1);
+  });
 
   return rows[0] ?? null;
 }
@@ -138,59 +172,73 @@ async function findTerminalRow(
 /**
  * Decide whether this caller runs the step or reuses another replay's output.
  *
- * Losing the claim does not by itself mean the output exists: the winner may
- * still be mid-flight, or may have died. So a loser waits for a terminal row
- * and only reuses a success. An error row means the winner's attempt failed
- * and this caller should run, and a timeout means the winner is gone and
- * running is better than hanging the execution.
+ * A replay that loses the claim waits for the winner's success row. On
+ * timeout it tries to take the claim over rather than simply proceeding:
+ * every loser started its wait at the same moment, so a winner killed
+ * mid-step would otherwise release the whole crowd to run the step at once,
+ * which is the pile-up this module exists to prevent.
  *
- * Any failure to reach Redis or the database resolves to "run". The claim is
- * an optimisation over correctness that already exists elsewhere, so it must
- * never be the reason a step does not happen.
+ * Any failure to reach Redis or the database resolves to "run". The claim
+ * reduces duplicated work; it must never be the reason a step does not
+ * happen at all.
  */
 export async function acquireStepClaim(
-  scope: StepClaimScope
+  scope: StepClaimScope,
+  /** Injectable so the wait loop is deterministic under test, matching
+   *  pollForCompletedOutput's own seam. */
+  waitOptions?: { timeoutMs?: number; sleep?: (ms: number) => Promise<void> }
 ): Promise<StepClaimResult> {
-  let won: boolean;
-  try {
-    const viaRedis = await claimInRedis(scope);
-    won = viaRedis ?? (await claimInDb(scope));
-  } catch (error) {
-    logSystemWarn(
-      ErrorCategory.WORKFLOW_ENGINE,
-      "[stepClaim] Claim unavailable, running step unguarded",
-      error instanceof Error ? error : new Error(String(error)),
-      { execution_id: scope.executionId, node_id: scope.nodeId }
-    );
-    return { outcome: "run" };
-  }
+  const timeoutMs = waitOptions?.timeoutMs ?? WAIT_FOR_WINNER_MS;
+  for (let round = 0; round < MAX_WAIT_ROUNDS; round++) {
+    let won: boolean;
+    try {
+      // Skip the authoritative write only on the first pass, where Redis
+      // answers the bulk of replays. A later round is a takeover attempt and
+      // has to reach the row that carries the staleness check.
+      const held = round === 0 && (await heldAccordingToRedis(scope));
+      won = held ? false : await claimInDb(scope);
+    } catch (error) {
+      logSystemWarn(
+        ErrorCategory.WORKFLOW_ENGINE,
+        "[stepClaim] Claim unavailable, running step unguarded",
+        error instanceof Error ? error : new Error(String(error)),
+        { execution_id: scope.executionId, node_id: scope.nodeId }
+      );
+      return { outcome: "run" };
+    }
 
-  if (won) {
-    return { outcome: "run" };
-  }
+    if (won) {
+      await rememberClaimInRedis(scope);
+      return { outcome: "run" };
+    }
 
-  let terminal: { status: string; outputRaw: unknown } | null;
-  try {
-    terminal = await pollForCompletedOutput(() => findTerminalRow(scope), {
-      timeoutMs: WAIT_FOR_WINNER_MS,
-      intervalMs: WAIT_POLL_INTERVAL_MS,
-    });
-  } catch (error) {
-    logSystemWarn(
-      ErrorCategory.WORKFLOW_ENGINE,
-      "[stepClaim] Could not read the winning attempt, running step",
-      error instanceof Error ? error : new Error(String(error)),
-      { execution_id: scope.executionId, node_id: scope.nodeId }
-    );
-    return { outcome: "run" };
-  }
+    let winner: { outputRaw: unknown } | null;
+    try {
+      winner = await pollForCompletedOutput(() => findWinnerOutput(scope), {
+        timeoutMs,
+        intervalMs: WAIT_POLL_INTERVAL_MS,
+        sleep: waitOptions?.sleep,
+      });
+    } catch (error) {
+      logSystemWarn(
+        ErrorCategory.WORKFLOW_ENGINE,
+        "[stepClaim] Could not read the winning attempt, running step",
+        error instanceof Error ? error : new Error(String(error)),
+        { execution_id: scope.executionId, node_id: scope.nodeId }
+      );
+      return { outcome: "run" };
+    }
 
-  if (terminal?.status === "success") {
-    logInfo("[stepClaim] Reusing output from the replay that owns this step", {
-      execution_id: scope.executionId,
-      node_id: scope.nodeId,
-    });
-    return { outcome: "reuse", output: terminal.outputRaw };
+    if (winner) {
+      logInfo(
+        "[stepClaim] Reusing output from the replay that owns this step",
+        {
+          execution_id: scope.executionId,
+          node_id: scope.nodeId,
+        }
+      );
+      return { outcome: "reuse", output: winner.outputRaw };
+    }
   }
 
   return { outcome: "run" };
@@ -205,16 +253,9 @@ export async function releaseStepClaim(scope: StepClaimScope): Promise<void> {
   const redis = getRedis();
   if (redis) {
     try {
-      await redis.del(
-        stepClaimKey(
-          scope.executionId,
-          scope.nodeId,
-          scope.forEachNodeId,
-          scope.iterationIndex
-        )
-      );
+      await redis.del(redisKeyFor(scope));
     } catch {
-      // Best-effort: the claim expires on its own after STALE_CLAIM_MS.
+      // Best-effort: the claim goes stale on its own after STALE_CLAIM_MS.
     }
   }
 
@@ -224,9 +265,7 @@ export async function releaseStepClaim(scope: StepClaimScope): Promise<void> {
       .where(
         and(
           eq(workflowStepClaims.executionId, scope.executionId),
-          eq(workflowStepClaims.nodeId, scope.nodeId),
-          eq(workflowStepClaims.forEachNodeId, scope.forEachNodeId),
-          eq(workflowStepClaims.iterationIndex, scope.iterationIndex)
+          eq(workflowStepClaims.nodeId, scope.nodeId)
         )
       );
   } catch {

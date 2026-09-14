@@ -1083,11 +1083,6 @@ export async function logWorkflowCompleteDb(
     }
   }
 
-  // The run is over, so no further replay can legitimately claim one of its
-  // steps. Dropping the rows here is what keeps the claim table sized to
-  // in-flight work rather than to history.
-  await clearStepClaims(params.executionId);
-
   // Close orphaned 'running' logs before updating the execution so that
   // any concurrent reader sees a consistent snapshot.
   try {
@@ -1264,6 +1259,15 @@ export async function logWorkflowCompleteDb(
       workflowId: workflowExecutions.workflowId,
       previousStatus: prevExecution.status,
     });
+
+  // Only once this UPDATE actually moved the row to a terminal state can no
+  // further replay legitimately claim one of its steps. An empty `updated`
+  // means the WHERE rejected the write -- a duplicate _workflowComplete on a
+  // run still draining steps, for one -- and clearing claims there would
+  // strip the guard from a run that is still executing.
+  if (updated.length > 0) {
+    await clearStepClaims(params.executionId);
+  }
 
   // KEEP-545: increment the counters only when this UPDATE performed the
   // first non-terminal -> terminal transition. The WHERE clause excludes

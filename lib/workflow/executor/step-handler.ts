@@ -18,7 +18,6 @@ import {
 import {
   acquireStepClaim,
   releaseStepClaim,
-  type StepClaimScope,
   stepClaimScope,
 } from "@/lib/workflow/executor/step-claim";
 import {
@@ -313,17 +312,21 @@ async function withStepLoggingInner<TInput extends StepInput, TOutput>(
   // reach it, so this function is entered many times per step per run. Claim
   // the step before doing anything observable: without it, two replays that
   // arrive before either has finished both log a row and both run the step.
-  let claim: StepClaimScope | undefined;
-  if (context?.executionId && context.nodeId) {
-    claim = stepClaimScope({
-      executionId: context.executionId,
-      nodeId: context.nodeId,
-      forEachNodeId: context.forEachNodeId,
-      iterationIndex: context.iterationIndex,
-    });
+  // stepClaimScope returns undefined for the steps that must stay unguarded.
+  const claim = context ? stepClaimScope(context) : undefined;
+  if (claim && context) {
     const decision = await acquireStepClaim(claim);
     if (decision.outcome === "reuse") {
-      return decision.output as TOutput;
+      // The winner's row already carries this step; writing another would be
+      // the duplicate being removed. The tracker still has to learn about it:
+      // resolveTransactionHashesForSuccess only scans the logs when the
+      // tracker is entirely empty, so a pod that ran one web3 write and
+      // reused another would otherwise drop the reused hash from the run's
+      // transactionHashes and from receipt verification.
+      const reused = decision.output as TOutput;
+      recordStepSuccess(claim.executionId, claim.nodeId, reused);
+      recordTransactionHashIfPresent(context, reused);
+      return reused;
     }
   }
 

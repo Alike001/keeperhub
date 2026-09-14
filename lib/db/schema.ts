@@ -940,10 +940,11 @@ export const workflowExecutionLogs = pgTable(
  * claim and answers first; this table is the fallback for when Redis is
  * unreachable, so the guarantee does not disappear with it.
  *
- * forEachNodeId and iterationIndex are NOT NULL with sentinels rather than
- * nullable columns: Postgres treats NULLs as distinct in a unique constraint,
- * so nullable members would let every non-loop step claim itself repeatedly
- * and silently defeat the whole table.
+ * Keyed on the node alone. Steps inside a For Each body are not claimed at
+ * all: the executor names only the innermost loop of an iteration, so a node
+ * in a nested body would carry the same key under every outer iteration and
+ * the second one would reuse the first one's output. Claiming loop bodies
+ * needs the executor to carry the full nesting path first.
  */
 export const workflowStepClaims = pgTable(
   "workflow_step_claims",
@@ -952,24 +953,12 @@ export const workflowStepClaims = pgTable(
       .notNull()
       .references(() => workflowExecutions.id, { onDelete: "cascade" }),
     nodeId: text("node_id").notNull(),
-    /** "" for a step outside a For Each body. */
-    forEachNodeId: text("for_each_node_id").notNull().default(""),
-    /** -1 for a step outside a For Each body. */
-    iterationIndex: integer("iteration_index").notNull().default(-1),
     claimedAt: timestamp("claimed_at").notNull().defaultNow(),
   },
   (table) => [
-    // Named explicitly: the derived name would be 77 characters and Postgres
-    // truncates identifiers at 63, leaving the constraint under a name no
-    // later migration diff would recognise.
     primaryKey({
       name: "workflow_step_claims_pk",
-      columns: [
-        table.executionId,
-        table.nodeId,
-        table.forEachNodeId,
-        table.iterationIndex,
-      ],
+      columns: [table.executionId, table.nodeId],
     }),
   ]
 );

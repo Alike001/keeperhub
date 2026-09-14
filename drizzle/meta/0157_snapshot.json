@@ -1,5 +1,5 @@
 {
-  "id": "9b9be344-9b2a-48c5-9251-fea03b023528",
+  "id": "7f95c00f-9196-451c-a2e3-167dc176d1c7",
   "prevId": "4aef163f-14c3-49e7-b071-f41d1ccd94a3",
   "version": "7",
   "dialect": "postgresql",
@@ -8775,20 +8775,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "for_each_node_id": {
-          "name": "for_each_node_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "''"
-        },
-        "iteration_index": {
-          "name": "iteration_index",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": -1
-        },
         "claimed_at": {
           "name": "claimed_at",
           "type": "timestamp",
@@ -8818,9 +8804,7 @@
           "name": "workflow_step_claims_pk",
           "columns": [
             "execution_id",
-            "node_id",
-            "for_each_node_id",
-            "iteration_index"
+            "node_id"
           ]
         }
       },
