@@ -167,6 +167,37 @@ describe("Lido Protocol Definition", () => {
     );
   });
 
+  it("matches the Withdrawal Queue array return and indexed event ABI", () => {
+    const withdrawalQueueAbi = lidoDef.contracts.withdrawalQueue.abi;
+    expect(withdrawalQueueAbi).toBeDefined();
+    const queueAbi = JSON.parse(withdrawalQueueAbi ?? "[]");
+    const claimable = queueAbi.find(
+      (entry: { name?: string }) => entry.name === "getClaimableEther"
+    );
+    const requested = queueAbi.find(
+      (entry: { name?: string }) => entry.name === "WithdrawalRequested"
+    );
+    const finalized = queueAbi.find(
+      (entry: { name?: string }) => entry.name === "WithdrawalsFinalized"
+    );
+    const claimed = queueAbi.find(
+      (entry: { name?: string }) => entry.name === "WithdrawalClaimed"
+    );
+
+    expect(claimable.outputs).toEqual([
+      { name: "claimableEther", type: "uint256[]" },
+    ]);
+    expect(requested.inputs[3]).toMatchObject({ name: "amountOfStETH" });
+    expect(finalized.inputs.slice(0, 2)).toEqual([
+      expect.objectContaining({ name: "from", indexed: true }),
+      expect.objectContaining({ name: "to", indexed: true }),
+    ]);
+    expect(claimed.inputs[2]).toMatchObject({
+      name: "receiver",
+      indexed: true,
+    });
+  });
+
   it("all event slugs are valid kebab-case", () => {
     for (const event of lidoDef.events ?? []) {
       expect(event.slug).toMatch(KEBAB_CASE_REGEX);

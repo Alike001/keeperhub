@@ -430,7 +430,12 @@ describe("protocolReadStep", () => {
             contract: "comet",
             function: "getMany",
             inputs: [
-              { name: "requestIds", type: "uint256[]", label: "Request IDs" },
+              {
+                name: "requestIds",
+                type: "uint256[]",
+                label: "Request IDs",
+                default: '["12","34"]',
+              },
             ],
           },
         ],
@@ -442,6 +447,44 @@ describe("protocolReadStep", () => {
       mockReadContractCore.mockResolvedValue({ success: true, result: [] });
 
       await protocolReadStep(makeInput({ requestIds: '["12","34"]' }));
+
+      const coreCall = (mockReadContractCore as Mock).mock.calls[0][0];
+      expect(JSON.parse(coreCall.functionArgs)).toEqual([["12", "34"]]);
+    });
+
+    it("normalizes JSON array defaults before read ABI encoding", async () => {
+      const metaWithArray: ProtocolMeta = {
+        protocolSlug: "compound",
+        contractKey: "comet",
+        functionName: "getMany",
+        actionType: "read",
+      };
+      const protocolWithArrayDefault = {
+        ...COMPOUND_PROTOCOL,
+        actions: [
+          {
+            slug: "get-many",
+            label: "Get Many",
+            type: "read" as const,
+            contract: "comet",
+            function: "getMany",
+            inputs: [
+              {
+                name: "requestIds",
+                type: "uint256[]",
+                label: "Request IDs",
+                default: '["12","34"]',
+              },
+            ],
+          },
+        ],
+      };
+      mockResolveProtocolMeta.mockReturnValue(metaWithArray);
+      mockGetProtocol.mockReturnValue(protocolWithArrayDefault);
+      mockResolveAbi.mockResolvedValue({ abi: "[]" });
+      mockReadContractCore.mockResolvedValue({ success: true, result: [] });
+
+      await protocolReadStep(makeInput({ requestIds: undefined }));
 
       const coreCall = (mockReadContractCore as Mock).mock.calls[0][0];
       expect(JSON.parse(coreCall.functionArgs)).toEqual([["12", "34"]]);
