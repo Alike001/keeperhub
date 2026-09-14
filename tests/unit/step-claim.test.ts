@@ -79,10 +79,23 @@ describe("stepClaimKey", () => {
 });
 
 describe("stepClaimScope", () => {
-  it("scopes a step outside a For Each body to its execution and node", () => {
+  it("scopes a workflow step to its execution and node", () => {
     expect(
-      stepClaimScope({ executionId: "exec-1", nodeId: "node-1" })
+      stepClaimScope({
+        executionId: "exec-1",
+        nodeId: "node-1",
+        workflowId: "wf-1",
+      })
     ).toEqual<StepClaimScope>({ executionId: "exec-1", nodeId: "node-1" });
+  });
+
+  it("refuses to claim a direct execution", () => {
+    // /api/execute/node dispatches the same wrappers with an executionId from
+    // direct_executions, which the claim's foreign key would reject. Only the
+    // workflow executor sets workflowId.
+    expect(
+      stepClaimScope({ executionId: "direct-1", nodeId: "direct-1" })
+    ).toBeUndefined();
   });
 
   it("refuses to claim a step inside a For Each body", () => {
@@ -93,6 +106,7 @@ describe("stepClaimScope", () => {
       stepClaimScope({
         executionId: "exec-1",
         nodeId: "node-1",
+        workflowId: "wf-1",
         forEachNodeId: "loop-1",
         iterationIndex: 0,
       })
@@ -100,7 +114,9 @@ describe("stepClaimScope", () => {
   });
 
   it("refuses to claim when there is no execution to scope to", () => {
-    expect(stepClaimScope({ nodeId: "node-1" })).toBeUndefined();
+    expect(
+      stepClaimScope({ nodeId: "node-1", workflowId: "wf-1" })
+    ).toBeUndefined();
   });
 });
 

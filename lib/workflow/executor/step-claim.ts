@@ -42,6 +42,14 @@ const WAIT_POLL_INTERVAL_MS = 1000;
  */
 const CLAIM_STATEMENT_TIMEOUT_MS = 5000;
 
+/**
+ * Postgres rejects a bind parameter in SET, so the value is inlined. It is a
+ * module constant, never caller input.
+ */
+const SET_CLAIM_TIMEOUT = sql.raw(
+  `SET LOCAL statement_timeout = ${CLAIM_STATEMENT_TIMEOUT_MS}`
+);
+
 /** Wait rounds before a replay stops deferring and runs the step itself. */
 const MAX_WAIT_ROUNDS = 2;
 
@@ -53,16 +61,28 @@ export type StepClaimResult =
 
 /**
  * The claim scope for a step, or undefined when the step must not be claimed.
- * A step with no execution to scope to, and any step inside a For Each body,
- * are both left unguarded for the reasons on StepClaimScope.
+ *
+ * Three kinds of step are deliberately left unguarded:
+ *
+ * - Anything without an execution and node to scope to.
+ * - Steps inside a For Each body, for the reason on StepClaimScope.
+ * - Direct executions. `/api/execute/node` dispatches the same step wrappers
+ *   with a `_context.executionId` naming a `direct_executions` row, not a
+ *   `workflow_executions` one, so the claim's foreign key would reject every
+ *   one of them -- a warning per call on a paid API path, in exchange for
+ *   nothing, since a direct execution runs a single step once and has no
+ *   replays to deduplicate. `workflowId` is what separates them: the workflow
+ *   executor sets it on every step context it builds, and the direct routes
+ *   never do.
  */
 export function stepClaimScope(context: {
   executionId?: string;
   nodeId?: string;
+  workflowId?: string;
   forEachNodeId?: string;
   iterationIndex?: number;
 }): StepClaimScope | undefined {
-  if (!(context.executionId && context.nodeId)) {
+  if (!(context.executionId && context.nodeId && context.workflowId)) {
     return;
   }
   if (context.forEachNodeId !== undefined) {
@@ -117,9 +137,7 @@ async function rememberClaimInRedis(scope: StepClaimScope): Promise<void> {
  */
 async function claimInDb(scope: StepClaimScope): Promise<boolean> {
   const rows = await db.transaction(async (tx) => {
-    await tx.execute(
-      sql`SET LOCAL statement_timeout = ${CLAIM_STATEMENT_TIMEOUT_MS}`
-    );
+    await tx.execute(SET_CLAIM_TIMEOUT);
     return await tx
       .insert(workflowStepClaims)
       .values({ executionId: scope.executionId, nodeId: scope.nodeId })
@@ -148,9 +166,7 @@ async function findWinnerOutput(
   scope: StepClaimScope
 ): Promise<{ outputRaw: unknown } | null> {
   const rows = await db.transaction(async (tx) => {
-    await tx.execute(
-      sql`SET LOCAL statement_timeout = ${CLAIM_STATEMENT_TIMEOUT_MS}`
-    );
+    await tx.execute(SET_CLAIM_TIMEOUT);
     return await tx
       .select({ outputRaw: workflowExecutionLogs.outputRaw })
       .from(workflowExecutionLogs)
