@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -24,6 +24,7 @@ const {
   currentExecutionId,
   sweepBroadcastMarkers,
   waitForBroadcastCounterForTests,
+  enableBroadcastMarkers,
 } = await import("./broadcast-marker");
 
 afterEach(() => {
@@ -36,7 +37,39 @@ afterAll(() => {
   rmSync(TMP, { recursive: true, force: true });
 });
 
+describe("broadcast marker write gate (issue #2289 review, third pass)", () => {
+  it("writes no marker file in an ungated process, but still counts", () => {
+    // Default module state: the Next app pod imports the lib/web3 write
+    // paths and runs markBroadcast, but nothing in that process ever takes
+    // or sweeps a marker - so until a consumer calls enableBroadcastMarkers()
+    // (executor listen(), workflow-runner main()), a mark must not land a
+    // file. One file per execution for the pod's whole lifetime was the
+    // exact leak the startup sweep could not reach.
+    const before = getBroadcastCount();
+    markBroadcast("exec-ungated");
+    expect(getBroadcastCount()).toBe(before + 1);
+    expect(existsSync(getBroadcastMarkerPath("exec-ungated"))).toBe(false);
+  });
+
+  it("peek and take keep working in an ungated process (read-only consumers)", () => {
+    writeFileSync(
+      getBroadcastMarkerPath("exec-1"),
+      JSON.stringify({ executionId: "exec-1", broadcastAt: Date.now() }),
+      "utf-8"
+    );
+    // The gate controls writes only: a file that exists (pre-seeded, or
+    // written by the same process before a gate flip) stays readable.
+    expect(peekBroadcastMarker("exec-1")?.executionId).toBe("exec-1");
+  });
+});
+
 describe("broadcast marker (issue #2289 broadcast stage)", () => {
+  // The tests below exercise the consumer side (executor, runner) where the
+  // registry is populated: flip the gate once for the whole describe.
+  beforeAll(() => {
+    enableBroadcastMarkers();
+  });
+
   it("resolves the execution id from the async-local workflow context", () => {
     // No ALS registered in this test process -> undefined, never a throw.
     expect(currentExecutionId()).toBeUndefined();
@@ -125,10 +158,20 @@ describe("broadcast marker (issue #2289 broadcast stage)", () => {
       JSON.stringify({ executionId: "exec-stale", broadcastAt: Date.now() }),
       "utf-8"
     );
+    // Entries this module never wrote must survive the sweep untouched: the
+    // filter is part of the deletion contract, and MARKER_DIR is an
+    // unvalidated env var, so the sweep cannot go treating the directory's
+    // other contents as data.
+    writeFileSync(join(TMP, "keeper.txt"), "not a marker", "utf-8");
+    mkdirSync(join(TMP, "subdir"), { recursive: true });
+    writeFileSync(join(TMP, "subdir", "nested.json"), "{}", "utf-8");
+
     expect(sweepBroadcastMarkers()).toBe(3);
     expect(existsSync(getBroadcastMarkerPath("exec-1"))).toBe(false);
     expect(existsSync(getBroadcastMarkerPath("exec-2"))).toBe(false);
     expect(existsSync(getBroadcastMarkerPath("exec-stale"))).toBe(false);
+    expect(existsSync(join(TMP, "keeper.txt"))).toBe(true);
+    expect(existsSync(join(TMP, "subdir", "nested.json"))).toBe(true);
     // A second sweep over the empty registry is a no-op returning 0.
     expect(sweepBroadcastMarkers()).toBe(0);
   });

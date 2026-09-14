@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach } from "vitest";
+import { afterAll, afterEach } from "vitest";
 
 // lib/metrics/collectors/prometheus.ts is server-only; stub it so the lazy
 // counter import inside broadcast-marker can resolve (same approach as
@@ -10,9 +10,21 @@ import { afterEach } from "vitest";
 vi.mock("server-only", () => ({}));
 
 // The marker dir is resolved at module load; point it at a scratch dir
-// before the first import.
+// before the first import. Mirrors broadcast-marker.test.ts's afterAll:
+// restore the env and remove the scratch dir so neither leaks past this
+// file's worker.
 const TMP = mkdtempSync(join(tmpdir(), "kh-inprocess-cleanup-test-"));
+const PREV_MARKER_DIR = process.env.KH_BROADCAST_MARKER_DIR;
 process.env.KH_BROADCAST_MARKER_DIR = TMP;
+
+afterAll(() => {
+  if (PREV_MARKER_DIR === undefined) {
+    delete process.env.KH_BROADCAST_MARKER_DIR;
+  } else {
+    process.env.KH_BROADCAST_MARKER_DIR = PREV_MARKER_DIR;
+  }
+  rmSync(TMP, { recursive: true, force: true });
+});
 
 // The run under test must broadcast (write its marker) and then throw, so
 // the engine mock does exactly that before failing. Same relative specifier
@@ -65,7 +77,12 @@ vi.mock("../lib/logging", () => ({
 }));
 
 const { executeInProcess } = await import("./in-process");
-const { getBroadcastMarkerPath } = await import("./lib/broadcast-marker");
+const broadcastMarker = await import("./lib/broadcast-marker");
+const { getBroadcastMarkerPath } = broadcastMarker;
+// This test stands in for the executor process, the only kind of process that
+// may populate the registry: flip the write gate so markBroadcast in the
+// engine mock actually writes the file the failure catch must remove.
+broadcastMarker.enableBroadcastMarkers();
 const dbHelpers = await import("./lib/db-helpers");
 
 afterEach(() => {

@@ -24,17 +24,25 @@
  *    the interval to the executor. Taking by explicit execution id is what
  *    keeps concurrent in-process runs from stealing each other's marker.
  *
- * Marker files are removed on three paths, so no single failure mode can
- * accumulate them: the runner's or the in-process success take
+ * Writes are gated: only a process that also consumes the registry calls
+ * enableBroadcastMarkers() (the executor's listen() and the workflow-runner's
+ * entry), because a marker file is only useful where one of the three removal
+ * paths below can run. Everywhere else - the Next app pod above all, which
+ * serves executeViaApi for EXECUTION_MODE=process and the webhook and MCP
+ * routes - markBroadcast() increments the counters and writes nothing, so the
+ * registry stays bounded by construction rather than by cleanup.
+ *
+ * Removal paths inside a gated process, so no single failure mode can
+ * accumulate files: the runner's or the in-process success take
  * (read-and-discard), the in-process failure catch (best-effort discard, so
  * a run that broadcasts and then throws leaves nothing behind), and a sweep
  * of the whole registry at executor startup (sweepBroadcastMarkers, called
  * from the executor's listen() before any run can start - covers a process
  * killed mid-run, where no in-process handler ever returns). Best-effort by
  * design: every failure mode degrades to a missing optional stage mark, and
- * a missed cleanup costs one tiny file until the next startup sweep. Never
- * throws into the write path - observability must not be able to fail a
- * transaction.
+ * inside a gated process a missed cleanup costs one tiny file until the next
+ * startup sweep. Never throws into the write path - observability must not
+ * be able to fail a transaction.
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -42,6 +50,10 @@ import { join } from "node:path";
 
 import { getWorkflowErrorContext } from "@/lib/workflow/executor/error-context";
 
+// Registry directory. KH_BROADCAST_MARKER_DIR is operator-controlled and is
+// not validated: the write path only creates the directory and files named
+// after allowlisted ids, and the sweep deletes only `.json` entries (below),
+// so nothing in this module treats the directory's other contents as data.
 const MARKER_DIR = process.env.KH_BROADCAST_MARKER_DIR || "/tmp/kh-broadcast-markers";
 
 /** Stage record written by the write path and consumed by the runner. */
@@ -72,6 +84,22 @@ function isSafeExecutionId(executionId: string): boolean {
 }
 
 /**
+ * Write gate (issue #2289 review, third pass): the registry is only consumed
+ * by the executor and the runner, so only they may populate it. Every other
+ * process importing the lib/web3 write paths - the Next app pod above all,
+ * which is the longest-lived pod in the fleet - would otherwise write one
+ * marker per execution with no take, no catch and no sweep to remove it. A
+ * startup sweep wired into the app would only bound it per restart, not per
+ * run; the gate bounds it per run, structurally. Side-effect import pattern:
+ * the same mechanism workflow-error-context-bootstrap uses.
+ */
+let markerWritesEnabled = false;
+
+export function enableBroadcastMarkers(): void {
+  markerWritesEnabled = true;
+}
+
+/**
  * Best-effort execution id for the broadcast marker: reads the async-local
  * workflow error context the engine enters at run start, which carries
  * execution_id across every async leg of the run (including plugin steps).
@@ -97,6 +125,12 @@ export function markBroadcast(
 ): void {
   broadcastCount++;
   bumpRegisteredCounter();
+  // Ungated process (the Next app pod, scripts, tests without the gate): the
+  // counters are the guarantee, the sidecar is a consumer-local optimization.
+  // Writes stay exclusive to the processes that remove what they write.
+  if (!markerWritesEnabled) {
+    return;
+  }
   // An unsafe id still counts (the broadcast did happen) but writes no file:
   // the sidecar is an optimization, the counters are the guarantee.
   if (!executionId || !isSafeExecutionId(executionId)) {
@@ -188,13 +222,17 @@ export function takeBroadcastMarker(
 }
 
 /**
- * Delete every marker file in the registry and return how many were removed.
+ * Delete the marker files this module wrote and return how many were removed.
  * Called from the executor's listen() at process startup, before the SQS
  * consumer can start any in-process run: at that point every file present is
  * a leftover from a previous process that died between broadcast and take
  * (the one failure mode neither the success take nor the failure catch
  * covers). Runner pods mount their own emptyDir, so a sweep in the executor
- * pod cannot touch markers belonging to a live dispatch. Best-effort: a
+ * pod cannot touch markers belonging to a live dispatch. The filter is part
+ * of the deletion contract: this module writes only `<safe-id>.json`, so the
+ * sweep removes only `.json` entries, one `rmSync` per entry without
+ * `recursive`, and the count it returns is marker files - not directories,
+ * not anything else that happens to share the directory. Best-effort: a
  * missing or unreadable directory sweeps nothing and returns 0.
  */
 export function sweepBroadcastMarkers(): number {
@@ -202,8 +240,11 @@ export function sweepBroadcastMarkers(): number {
     const entries = readdirSync(MARKER_DIR);
     let removed = 0;
     for (const entry of entries) {
+      if (!entry.endsWith(".json")) {
+        continue;
+      }
       try {
-        rmSync(join(MARKER_DIR, entry), { force: true, recursive: true });
+        rmSync(join(MARKER_DIR, entry), { force: true });
         removed++;
       } catch {
         // Unlinkable entry (permissions, concurrent removal): leave it. The
@@ -239,11 +280,13 @@ function parseMarker(raw: string): BroadcastMarker | undefined {
 // lib/metrics/collectors/prometheus, which is server-only and drags the whole
 // metrics stack with it; importing it eagerly would weight every lib/web3
 // write path for a metric it rarely reads. Resolve it lazily on first
-// broadcast instead: the executor and the runner pods both load the module
-// anyway (delta collection imports it), so the promise settles almost
-// immediately in production. Marks landing before resolution are buffered and
-// flushed on arrival, so no sample is lost either way. Where the collector
-// never becomes available (tests without the server-only shim) this stays a
+// broadcast instead. Resolution is not tied to a startup step: the delta
+// collectors run on an ingest POST (executor) and at shutdown (runner), so
+// the promise may stay unresolved for the process's whole uptime. That is
+// acceptable because nothing depends on it landing early - marks landing
+// before resolution are buffered and flushed on arrival, so the count is
+// exact no matter when the collector appears. Where the collector never
+// becomes available (tests without the server-only shim) this stays a
 // no-op - observability must not be able to fail a transaction.
 let broadcastCount = 0;
 let broadcastCounter: import("prom-client").Counter<string> | undefined;

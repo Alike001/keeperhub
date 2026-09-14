@@ -43,7 +43,11 @@ import {
   updateExecutionStatus,
   updateScheduleStatus,
 } from "./lib/db-helpers";
-import { peekBroadcastMarker, takeBroadcastMarker } from "./lib/broadcast-marker";
+import {
+  enableBroadcastMarkers,
+  peekBroadcastMarker,
+  takeBroadcastMarker,
+} from "./lib/broadcast-marker";
 import { collectLatencyObservations } from "./lib/latency-observations";
 import { shipMetricsToExecutor } from "./lib/ship-metrics";
 // Register the async-local workflow error context: this process has no Next
@@ -206,6 +210,12 @@ process.on("SIGTERM", () => onShutdownSignal("SIGTERM"));
 process.on("SIGINT", () => onShutdownSignal("SIGINT"));
 
 async function main(): Promise<void> {
+  // Gate the marker registry on: this process consumes its own execution's
+  // marker (takeBroadcastMarker after executeWorkflow), so it may populate.
+  // The web3 write paths this process runs through plugin steps then write
+  // their marker files into this pod's own emptyDir, where the take removes
+  // them. The Next app pod never calls this and never writes a marker file.
+  enableBroadcastMarkers();
   const startTime = Date.now();
   const { workflowId, executionId, input, triggerType, scheduleId } =
     validateEnv();
