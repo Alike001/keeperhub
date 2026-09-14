@@ -959,7 +959,11 @@ export const workflowStepClaims = pgTable(
     claimedAt: timestamp("claimed_at").notNull().defaultNow(),
   },
   (table) => [
+    // Named explicitly: the derived name would be 77 characters and Postgres
+    // truncates identifiers at 63, leaving the constraint under a name no
+    // later migration diff would recognise.
     primaryKey({
+      name: "workflow_step_claims_pk",
       columns: [
         table.executionId,
         table.nodeId,

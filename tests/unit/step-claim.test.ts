@@ -20,6 +20,7 @@ vi.mock("@/lib/logging", () => ({
   ErrorCategory: { WORKFLOW_ENGINE: "WORKFLOW_ENGINE" },
   logInfo: vi.fn(),
   logSystemWarn: vi.fn(),
+  logWarn: vi.fn(),
 }));
 
 import { stepClaimKey } from "@/lib/redis-keys";

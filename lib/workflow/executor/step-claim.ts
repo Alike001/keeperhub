@@ -3,7 +3,7 @@ import "server-only";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workflowExecutionLogs, workflowStepClaims } from "@/lib/db/schema";
-import { ErrorCategory, logInfo, logSystemWarn } from "@/lib/logging";
+import { ErrorCategory, logInfo, logSystemWarn, logWarn } from "@/lib/logging";
 import { getRedis } from "@/lib/redis";
 import { stepClaimKey } from "@/lib/redis-keys";
 import { pollForCompletedOutput } from "@/lib/workflow/executor/poll-for-output";
@@ -234,18 +234,22 @@ export async function releaseStepClaim(scope: StepClaimScope): Promise<void> {
   }
 }
 
-/** Drop every claim an execution took, once it can no longer run steps. */
+/**
+ * Drop every claim an execution took, once it can no longer run steps.
+ *
+ * A failure here leaves rows behind but breaks nothing: the claims cascade
+ * when the execution row is eventually purged, and a stale claim is taken
+ * over after STALE_CLAIM_MS anyway. Benign, so it is not raised as a system
+ * warning.
+ */
 export async function clearStepClaims(executionId: string): Promise<void> {
   try {
     await db
       .delete(workflowStepClaims)
       .where(eq(workflowStepClaims.executionId, executionId));
-  } catch (error) {
-    logSystemWarn(
-      ErrorCategory.WORKFLOW_ENGINE,
-      "[stepClaim] Failed to clear claims for a finished execution",
-      error instanceof Error ? error : new Error(String(error)),
-      { execution_id: executionId }
-    );
+  } catch {
+    logWarn("[stepClaim] Could not clear claims for a finished execution", {
+      execution_id: executionId,
+    });
   }
 }
