@@ -6,8 +6,8 @@ import restakeManagerAbi from "./abis/renzo-restake-manager.json";
 // Renzo is a liquid restaking protocol on Ethereum. Deposit native ETH into
 // the RestakeManager to mint ezETH, a non-rebasing restaked-ETH token whose
 // value accrues against ETH as staking and EigenLayer restaking rewards come
-// in. This is a sibling to the Lido, Rocket Pool, Frax Ether and ether.fi
-// integrations already in the registry.
+// in. This is a sibling to the Lido, Rocket Pool and Frax Ether integrations
+// already in the registry.
 //
 // Two mainnet contracts, verified on 2026-09-10 by reading them over a public
 // RPC:
