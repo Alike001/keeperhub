@@ -16,6 +16,12 @@ import {
   type WorkflowErrorContext,
 } from "@/lib/workflow/executor/error-context";
 import {
+  acquireStepClaim,
+  releaseStepClaim,
+  type StepClaimScope,
+  stepClaimScope,
+} from "@/lib/workflow/executor/step-claim";
+import {
   recordStepSuccess,
   recordTransactionHashIfPresent,
 } from "@/lib/workflow/executor/step-success-tracker";
@@ -303,6 +309,24 @@ async function withStepLoggingInner<TInput extends StepInput, TOutput>(
   context: StepContextWithWorkflow | undefined,
   stepLogic: () => Promise<TOutput>
 ): Promise<TOutput> {
+  // Every replica that picks up a step replays the whole workflow body to
+  // reach it, so this function is entered many times per step per run. Claim
+  // the step before doing anything observable: without it, two replays that
+  // arrive before either has finished both log a row and both run the step.
+  let claim: StepClaimScope | undefined;
+  if (context?.executionId && context.nodeId) {
+    claim = stepClaimScope({
+      executionId: context.executionId,
+      nodeId: context.nodeId,
+      forEachNodeId: context.forEachNodeId,
+      iterationIndex: context.iterationIndex,
+    });
+    const decision = await acquireStepClaim(claim);
+    if (decision.outcome === "reuse") {
+      return decision.output as TOutput;
+    }
+  }
+
   // Update progress: mark this step as currently running
   if (context?.executionId && context.nodeId) {
     try {
@@ -351,6 +375,12 @@ async function withStepLoggingInner<TInput extends StepInput, TOutput>(
         errorResult.error || "Step execution failed",
         context?.executionId
       );
+
+      // Hand the step back so a later attempt can run it. Keeping the claim
+      // after a failure would make this failure final for the whole run.
+      if (claim) {
+        await releaseStepClaim(claim);
+      }
 
       recordStepMetrics({
         executionId: context?.executionId,
@@ -444,6 +474,10 @@ async function withStepLoggingInner<TInput extends StepInput, TOutput>(
       errorMessage,
       context?.executionId
     );
+
+    if (claim) {
+      await releaseStepClaim(claim);
+    }
 
     recordStepMetrics({
       executionId: context?.executionId,

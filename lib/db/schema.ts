@@ -7,6 +7,7 @@ import {
   numeric,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -922,6 +923,50 @@ export const workflowExecutionLogs = pgTable(
     index("idx_exec_logs_sponsored_execution")
       .on(table.executionId)
       .where(sql`${table.output} ->> 'sponsored' = 'true'`),
+  ]
+);
+
+/**
+ * One row per step a pod has taken responsibility for running.
+ *
+ * The durability layer replays the whole workflow body on whichever replica
+ * picks up the next step, so a single node is walked dozens of times per run
+ * across every pod. Completed steps are normally read back from the event log,
+ * but two replays that reach the same unfinished step at the same moment both
+ * see "not done" and both run it. That is what produced duplicate step rows
+ * (and duplicate side effects) for the same node in one execution.
+ *
+ * Winning the insert is what grants the right to run. Redis holds the same
+ * claim and answers first; this table is the fallback for when Redis is
+ * unreachable, so the guarantee does not disappear with it.
+ *
+ * forEachNodeId and iterationIndex are NOT NULL with sentinels rather than
+ * nullable columns: Postgres treats NULLs as distinct in a unique constraint,
+ * so nullable members would let every non-loop step claim itself repeatedly
+ * and silently defeat the whole table.
+ */
+export const workflowStepClaims = pgTable(
+  "workflow_step_claims",
+  {
+    executionId: text("execution_id")
+      .notNull()
+      .references(() => workflowExecutions.id, { onDelete: "cascade" }),
+    nodeId: text("node_id").notNull(),
+    /** "" for a step outside a For Each body. */
+    forEachNodeId: text("for_each_node_id").notNull().default(""),
+    /** -1 for a step outside a For Each body. */
+    iterationIndex: integer("iteration_index").notNull().default(-1),
+    claimedAt: timestamp("claimed_at").notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [
+        table.executionId,
+        table.nodeId,
+        table.forEachNodeId,
+        table.iterationIndex,
+      ],
+    }),
   ]
 );
 

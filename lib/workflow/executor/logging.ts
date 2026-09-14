@@ -61,6 +61,7 @@ import {
   FAILED_AFTER_RETRIES_REGEX,
   NO_STEP_COMPLETION_REGEX,
 } from "@/lib/workflow/executor/runner-error-patterns";
+import { clearStepClaims } from "@/lib/workflow/executor/step-claim";
 import {
   getTransactionHashes,
   isRecordableTransactionHash,
@@ -1081,6 +1082,11 @@ export async function logWorkflowCompleteDb(
       );
     }
   }
+
+  // The run is over, so no further replay can legitimately claim one of its
+  // steps. Dropping the rows here is what keeps the claim table sized to
+  // in-flight work rather than to history.
+  await clearStepClaims(params.executionId);
 
   // Close orphaned 'running' logs before updating the execution so that
   // any concurrent reader sees a consistent snapshot.
