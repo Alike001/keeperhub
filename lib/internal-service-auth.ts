@@ -1,3 +1,4 @@
+import { parseAuthTimestamp } from "@/lib/auth-timestamp";
 /**
  * @security Internal service-to-service authentication.
  *
@@ -199,7 +200,7 @@ async function verifyHmac(
   }
 
   const now = Math.floor(Date.now() / 1000);
-  const ts = Number.parseInt(timestamp, 10);
+  const ts = parseAuthTimestamp(timestamp);
   if (!Number.isFinite(ts) || Math.abs(now - ts) > REPLAY_WINDOW_SECONDS) {
     return {
       authenticated: false,

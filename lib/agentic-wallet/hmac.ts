@@ -1,3 +1,4 @@
+import { parseAuthTimestamp } from "../auth-timestamp";
 /**
  * @security HMAC request-authentication primitive for /sign, /approval-request, /link.
  *
@@ -72,7 +73,7 @@ export async function verifyHmacRequest(
   }
 
   const now = Math.floor(Date.now() / 1000);
-  const ts = Number.parseInt(timestamp, 10);
+  const ts = parseAuthTimestamp(timestamp);
   if (!Number.isFinite(ts) || Math.abs(now - ts) > REPLAY_WINDOW_SECONDS) {
     return { ok: false, status: 401, error: "Timestamp outside replay window" };
   }
