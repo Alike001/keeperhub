@@ -157,6 +157,7 @@ export type WriteContractResult =
       // True when the terminal failure came from the gas-sponsored path, so
       // the finalizer can report the route accurately on a failed execution.
       sponsored?: boolean;
+      broadcastAttempted?: boolean;
     };
 
 /**
@@ -610,6 +611,7 @@ export async function writeContractCore(
           error: decision.error,
           errorClass: decision.errorClass,
           sponsored: true,
+          broadcastAttempted: decision.broadcastAttempted,
           ...(decision.transactionHash
             ? {
                 transactionHash: decision.transactionHash,
