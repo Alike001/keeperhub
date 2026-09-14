@@ -1060,6 +1060,51 @@ describe("Direct Execution API", () => {
         expect.objectContaining({ ethValue: "0.1" })
       );
     });
+
+    it("forwards gasLimitMultiplier to writeContractCore (#1973)", async () => {
+      setupPassingGuards();
+      mocks.writeContractCore.mockResolvedValue({
+        success: true,
+        transactionHash: "0xwrite",
+        transactionLink: "https://etherscan.io/tx/0xwrite",
+      });
+
+      const response = await contractCallPOST(
+        postRequest("/contract-call", {
+          ...validWriteBody,
+          gasLimitMultiplier: "1.5",
+        })
+      );
+
+      expect(response.status).toBe(202);
+      expect(mocks.writeContractCore).toHaveBeenCalledWith(
+        expect.objectContaining({ gasLimitMultiplier: "1.5" })
+      );
+    });
+
+    it("forwards the maxGasLimit object as a string writeContractCore already parses (#1973)", async () => {
+      setupPassingGuards();
+      mocks.writeContractCore.mockResolvedValue({
+        success: true,
+        transactionHash: "0xwrite",
+        transactionLink: "https://etherscan.io/tx/0xwrite",
+      });
+      const maxGasLimit = { mode: "maxGasLimit", value: "500000" };
+
+      const response = await contractCallPOST(
+        postRequest("/contract-call", {
+          ...validWriteBody,
+          gasLimitMultiplier: maxGasLimit,
+        })
+      );
+
+      expect(response.status).toBe(202);
+      expect(mocks.writeContractCore).toHaveBeenCalledWith(
+        expect.objectContaining({
+          gasLimitMultiplier: JSON.stringify(maxGasLimit),
+        })
+      );
+    });
   });
 
   // ==========================================================================
@@ -1482,6 +1527,59 @@ describe("Direct Execution API", () => {
       expect(data.executed).toBe(true);
       expect(data.conditionResult.met).toBe(true);
       expect(data.executionId).toBe("exec_1");
+    });
+
+    it("forwards action.gasLimitMultiplier to writeContractCore (#1973)", async () => {
+      setupPassingGuards();
+      mocks.readContractCore.mockResolvedValue({
+        success: true,
+        result: "1500",
+      });
+      mocks.writeContractCore.mockResolvedValue({
+        success: true,
+        transactionHash: "0xcond",
+        transactionLink: "https://etherscan.io/tx/0xcond",
+      });
+
+      const response = await checkAndExecutePOST(
+        postRequest("/check-and-execute", {
+          ...validBody,
+          action: { ...validBody.action, gasLimitMultiplier: "1.5" },
+        })
+      );
+
+      expect(response.status).toBe(202);
+      expect(mocks.writeContractCore).toHaveBeenCalledWith(
+        expect.objectContaining({ gasLimitMultiplier: "1.5" })
+      );
+    });
+
+    it("forwards the maxGasLimit object on action.gasLimitMultiplier as a string (#1973)", async () => {
+      setupPassingGuards();
+      mocks.readContractCore.mockResolvedValue({
+        success: true,
+        result: "1500",
+      });
+      mocks.writeContractCore.mockResolvedValue({
+        success: true,
+        transactionHash: "0xcond",
+        transactionLink: "https://etherscan.io/tx/0xcond",
+      });
+      const maxGasLimit = { mode: "maxGasLimit", value: "500000" };
+
+      const response = await checkAndExecutePOST(
+        postRequest("/check-and-execute", {
+          ...validBody,
+          action: { ...validBody.action, gasLimitMultiplier: maxGasLimit },
+        })
+      );
+
+      expect(response.status).toBe(202);
+      expect(mocks.writeContractCore).toHaveBeenCalledWith(
+        expect.objectContaining({
+          gasLimitMultiplier: JSON.stringify(maxGasLimit),
+        })
+      );
     });
 
     it("returns 403 when condition met but spending cap exceeded", async () => {

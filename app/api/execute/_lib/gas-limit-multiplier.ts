@@ -2,7 +2,7 @@
  * Direct-execution cores take `gasLimitMultiplier` as a string: a legacy
  * multiplier ("1.5") or the JSON `mode`/`value` shape `parseGasLimitConfig`
  * already understands. JSON bodies can send a number or the maxGasLimit
- * object; stringify those here so the transfer route does not drop a shape
+ * object; stringify those here so the execute routes do not drop a shape
  * the cores already parse.
  */
 export function readGasLimitMultiplier(value: unknown): string | undefined {

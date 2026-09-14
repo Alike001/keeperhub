@@ -33,6 +33,7 @@ import {
   redactInput,
   withRejectedSignerOverride,
 } from "../_lib/execution-service";
+import { readGasLimitMultiplier } from "../_lib/gas-limit-multiplier";
 import { checkRateLimit } from "../_lib/rate-limit";
 import { parseSimulateFlag } from "../_lib/simulate-flag";
 import { checkAndReserveExecution } from "../_lib/spending-cap";
@@ -283,7 +284,7 @@ async function executeConditionalWrite(
       abi: resolvedWriteAbi,
       abiFunction: action.functionName,
       functionArgs: action.functionArgs,
-      gasLimitMultiplier: action.gasLimitMultiplier,
+      gasLimitMultiplier: readGasLimitMultiplier(action.gasLimitMultiplier),
       _context: { organizationId },
     })
   );

@@ -35,6 +35,7 @@ import {
   redactInput,
   withRejectedSignerOverride,
 } from "../_lib/execution-service";
+import { readGasLimitMultiplier } from "../_lib/gas-limit-multiplier";
 import { checkRateLimit } from "../_lib/rate-limit";
 import { parseNativeValueEther } from "../_lib/reserved-value";
 import { parseSimulateFlag } from "../_lib/simulate-flag";
@@ -201,7 +202,7 @@ async function handleWriteCall(
       abiFunction: body.functionName as string,
       functionArgs: body.functionArgs as string | undefined,
       ethValue: body.value as string | undefined,
-      gasLimitMultiplier: body.gasLimitMultiplier as string | undefined,
+      gasLimitMultiplier: readGasLimitMultiplier(body.gasLimitMultiplier),
       priorityFeeGwei: body.priorityFeeGwei as string | undefined,
       _context: { organizationId },
     })
