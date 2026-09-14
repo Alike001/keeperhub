@@ -39,7 +39,7 @@ Supported chains: Ethereum, Base. Each vault is a separate contract - you must p
 | Accumulated Fees | Read | No | Get shares accrued as protocol and governor fees |
 | Debt Of Account | Read | No | Get the underlying asset an account owes the vault |
 | Vault Oracle | Read | No | Get the price oracle the vault is configured with |
-| Unit Of Account | Read | No | Get the asset the vault denominates risk calculations in |
+| Unit Of Account | Read | No | Get the unit of account the vault denominates risk calculations in, a token address or an ISO-4217 code |
 | Vault Connector | Read | No | Get the Ethereum Vault Connector the vault is bound to |
 | Vault Creator | Read | No | Get the address that deployed the vault |
 
