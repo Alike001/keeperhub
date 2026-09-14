@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_SEQUENCE_CALLS } from "@/lib/execute/simulate-sequence-limits";
 import { isValidOperator, VALID_OPERATORS } from "./condition";
 import type { ExecuteErrorResponse } from "./types";
 
@@ -71,6 +72,93 @@ function functionNameConflict(
     field: "abiFunction",
     details: `functionName and abiFunction disagree ('${functionName}' vs '${abiFunction}'); send one, or the same value in both. functionName is canonical.`,
   };
+}
+
+// A dry run of several calls in order. The sequence replaces the single
+// top-level call rather than joining it, so the ordinary shape is untouched.
+function hasCallSequenceInput(record: Record<string, unknown>): boolean {
+  return "calls" in record;
+}
+
+function callFieldError(
+  index: number,
+  field: string,
+  details: string
+): ExecuteErrorResponse {
+  return {
+    error: "Invalid field value",
+    field: `calls[${index}].${field}`,
+    details,
+  };
+}
+
+function callSequenceError(
+  record: Record<string, unknown>
+): ExecuteErrorResponse | null {
+  const calls = record.calls;
+  if (!Array.isArray(calls)) {
+    return {
+      error: "Invalid field type",
+      field: "calls",
+      details:
+        "calls must be an array of { contractAddress, functionName, ... }",
+    };
+  }
+  if (calls.length === 0) {
+    return {
+      error: "Invalid field value",
+      field: "calls",
+      details: "calls must contain at least one call",
+    };
+  }
+  if (calls.length > MAX_SEQUENCE_CALLS) {
+    return {
+      error: "Invalid field value",
+      field: "calls",
+      details: `calls must contain at most ${MAX_SEQUENCE_CALLS} calls`,
+    };
+  }
+  for (const [index, call] of calls.entries()) {
+    if (!isNonNullObject(call)) {
+      return callFieldError(index, "", "each call must be an object");
+    }
+    if (!isNonEmptyString(call.contractAddress)) {
+      return callFieldError(
+        index,
+        "contractAddress",
+        "contractAddress is required and must be a non-empty string"
+      );
+    }
+    if (!isNonEmptyString(call.functionName)) {
+      return callFieldError(
+        index,
+        "functionName",
+        "functionName is required and must be a non-empty string"
+      );
+    }
+    if ("functionArgs" in call && typeof call.functionArgs !== "string") {
+      return callFieldError(
+        index,
+        "functionArgs",
+        "functionArgs must be a JSON string when provided"
+      );
+    }
+    if ("abi" in call && typeof call.abi !== "string") {
+      return callFieldError(
+        index,
+        "abi",
+        "abi must be a JSON string when provided"
+      );
+    }
+    if ("value" in call && typeof call.value !== "string") {
+      return callFieldError(
+        index,
+        "value",
+        "value must be a decimal string in ether units when provided"
+      );
+    }
+  }
+  return null;
 }
 
 function requiredFieldError(field: string): ExecuteErrorResponse {
@@ -178,6 +266,22 @@ function priorityFeeError(value: unknown): ExecuteErrorResponse | null {
 }
 
 export const contractCallInputSchema = objectBase.superRefine((record, ctx) => {
+  if (hasCallSequenceInput(record)) {
+    if (!hasChainInput(record)) {
+      addError(ctx, chainFieldError);
+      return;
+    }
+    const sequenceError = callSequenceError(record);
+    if (sequenceError) {
+      addError(ctx, sequenceError);
+      return;
+    }
+    const sequenceFeeError = priorityFeeError(record.priorityFeeGwei);
+    if (sequenceFeeError) {
+      addError(ctx, sequenceFeeError);
+    }
+    return;
+  }
   if (!isNonEmptyString(record.contractAddress)) {
     addError(ctx, requiredFieldError("contractAddress"));
     return;

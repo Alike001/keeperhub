@@ -13,6 +13,10 @@ import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
 import { simulateContractCall } from "@/lib/execute/simulate";
 import {
+  type SimulateSequenceCall,
+  simulateCallSequence,
+} from "@/lib/execute/simulate-sequence";
+import {
   beginIdempotentFromRequest,
   type IdempotencyOutcome,
   idempotencyEarlyResponse,
@@ -38,6 +42,7 @@ import {
 import { checkRateLimit } from "../_lib/rate-limit";
 import { parseNativeValueEther } from "../_lib/reserved-value";
 import { parseSimulateFlag } from "../_lib/simulate-flag";
+import { sequenceHttpStatus } from "../_lib/simulation-response";
 import { checkAndReserveExecution } from "../_lib/spending-cap";
 import type { ExecuteResponse } from "../_lib/types";
 import { validateContractCallInput } from "../_lib/validate";
@@ -140,6 +145,70 @@ async function handleSimulateCall(
 
   return NextResponse.json(result, {
     status: simulationHttpStatus(result),
+  });
+}
+
+/**
+ * A dry run of several calls in order, each against the state the one before
+ * it produced. Never broadcasts, so it stops at the simulator rather than
+ * joining the read/write dispatch below.
+ */
+async function handleSimulateSequence(
+  body: Record<string, unknown>,
+  organizationId: string,
+  simulate: boolean
+): Promise<NextResponse> {
+  if (!simulate) {
+    return NextResponse.json(
+      {
+        error:
+          "calls describes a dry run of a sequence; send simulate: true, or send a single call to broadcast",
+        field: "calls",
+        details:
+          "This endpoint broadcasts one transaction per request. A sequence is simulated, never sent as a unit.",
+      },
+      { status: HttpStatus.BAD_REQUEST }
+    );
+  }
+
+  const walletError = await requireWallet(organizationId);
+  if (walletError) {
+    return walletError;
+  }
+
+  const rawCalls = body.calls as Record<string, unknown>[];
+  const calls: SimulateSequenceCall[] = [];
+  for (const [index, call] of rawCalls.entries()) {
+    // Each call resolves its own ABI: a sequence usually spans two contracts,
+    // and a top-level `abi` is the fallback only when the call omits one.
+    const abiResult = await resolveAbiForRequest({
+      ...call,
+      abi: call.abi ?? body.abi,
+      network: body.network,
+    });
+    if ("error" in abiResult) {
+      return NextResponse.json(
+        { error: abiResult.error, field: `calls[${index}].abi` },
+        { status: HttpStatus.BAD_REQUEST }
+      );
+    }
+    calls.push({
+      contractAddress: call.contractAddress as string,
+      abi: abiResult.abi,
+      functionName: call.functionName as string,
+      functionArgs: call.functionArgs as string | undefined,
+      value: call.value as string | undefined,
+    });
+  }
+
+  const result = await simulateCallSequence({
+    organizationId,
+    network: body.network as string,
+    calls,
+  });
+
+  return NextResponse.json(result, {
+    status: sequenceHttpStatus(result.results),
   });
 }
 
@@ -355,6 +424,19 @@ export async function POST(request: Request): Promise<NextResponse> {
   // both. The core helpers normalize chain names/IDs internally.
   if (body.chainId !== undefined && body.network === undefined) {
     body.network = String(body.chainId);
+  }
+
+  // Before the single-call ABI resolution below, which has no one
+  // contractAddress to work from when the body describes a sequence.
+  if (Array.isArray(body.calls)) {
+    return applyRateLimitHeaders(
+      await handleSimulateSequence(
+        body,
+        apiKeyCtx.organizationId,
+        simulateFlag.simulate
+      ),
+      rateLimit
+    );
   }
 
   const abiResult = await resolveAbiForRequest(body);

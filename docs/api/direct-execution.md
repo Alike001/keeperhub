@@ -650,6 +650,82 @@ Add `"simulate": true` to any of the standard request bodies:
 
 Because a dry run never signs or broadcasts, a credential scoped `mcp:read` may run one. Removing `simulate` to broadcast requires `mcp:write`.
 
+### A sequence of calls
+
+A single dry run resolves against latest state, so the second call of an
+approve-then-deposit pair reverts on allowance every time: the approve has not
+landed. Send `calls` instead of the single top-level call to dry-run an ordered
+sequence, each call against the state the one before it produced:
+
+```json
+{
+  "chainId": 84532,
+  "simulate": true,
+  "calls": [
+    {
+      "contractAddress": "0x036cbd53842c5426634e7929541ec2318f3dcf7e",
+      "functionName": "approve",
+      "functionArgs": "[\"0xd36e12a5b2926a5cbe6b4de42a0d60fd35d3cb04\", \"1000\"]"
+    },
+    {
+      "contractAddress": "0xd36e12a5b2926a5cbe6b4de42a0d60fd35d3cb04",
+      "functionName": "deposit",
+      "functionArgs": "[\"1000\", \"0x...orgWallet\"]"
+    }
+  ]
+}
+```
+
+Each call takes its own `abi`, falling back to a top-level `abi` and then to the
+explorer-verified ABI, so a sequence spanning two contracts needs no extra
+round trip from you. `value` is accepted per call. At most 10 calls.
+
+**`calls` is a dry-run shape only.** This endpoint broadcasts one transaction
+per request, so `calls` without `simulate: true` is rejected with `400`. The
+response says the same thing in `atomic: false`: the entries describe N separate
+transactions sent from the wallet in that order, and on the real chain nothing
+stops another transaction landing between them.
+
+The response carries one result per call, in order, each the same shape a
+single-call dry run returns:
+
+```json
+{
+  "success": false,
+  "status": "simulated",
+  "from": "0x...orgWallet",
+  "atomic": false,
+  "mechanism": "eth_simulateV1",
+  "wouldRevert": true,
+  "results": [
+    { "success": true, "status": "simulated", "gasEstimate": "55425", "wouldRevert": false },
+    {
+      "success": false,
+      "status": "simulated",
+      "failureKind": "revert",
+      "wouldRevert": true,
+      "revertReason": "ERC4626: deposit more than max"
+    }
+  ]
+}
+```
+
+`success` is true only when every call answered cleanly. The status code follows
+the worst call: `503` if the node could not answer one, `400` if one would
+revert or did not validate, `200` otherwise.
+
+`mechanism` names how the answer was produced. `eth_simulateV1` carries state
+across calls in one request and is used wherever the chain's node offers it.
+Nodes without it fall back to `state-overrides`, which replays each call's
+`debug_traceCall` state diff as an `eth_call` override for the next one — the
+same answer, one round trip per call instead of one for the sequence. If a node
+offers neither, the calls after the first report `failureKind: "unavailable"`
+rather than quietly answering against latest state.
+
+The per-transaction stablecoin ceiling is applied to each call, exactly as it is
+on the single-call path: these are separate transactions at broadcast, so a call
+over the ceiling would fail at send and must not dry-run clean.
+
 ### Response — successful simulate
 
 ```json
