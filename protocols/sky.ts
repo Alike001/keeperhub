@@ -193,6 +193,13 @@ const ERC20_READONLY_WITH_SUPPLY_ABI = JSON.stringify([
     inputs: [],
     outputs: [{ name: "", type: "uint256" }],
   },
+  {
+    type: "function",
+    name: "totalAssets",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
 ]);
 
 const DAI_USDS_CONVERTER_ABI = JSON.stringify([
@@ -578,6 +585,18 @@ export default defineAbiProtocol({
             result: {
               name: "totalSupply",
               label: "Total sUSDS Supply (wei)",
+              decimals: 18,
+            },
+          },
+        },
+        totalAssets: {
+          slug: "get-susds-total-assets-l2",
+          label: "Get sUSDS Total Assets (L2)",
+          description: "Get the total assets in the sUSDS vault on L2",
+          outputs: {
+            result: {
+              name: "totalAssets",
+              label: "Total Assets (wei)",
               decimals: 18,
             },
           },

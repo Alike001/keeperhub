@@ -100,6 +100,11 @@
       "data": "0x18160ddd",
       "skipped": true
     },
+    "get-susds-total-assets-l2": {
+      "to": "",
+      "data": "0x01e1d114",
+      "skipped": true
+    },
     "st-usds-vault-deposit": {
       "to": "0x99CD4Ec3f88A45940936F469E4bB72A2A701EEB9",
       "data": "0x6e553f650000000000000000000000000000000000000000000000056bc75e2d631000000000000000000000000000001111111111111111111111111111111111111111",
@@ -332,6 +337,11 @@
       "data": "0x18160ddd",
       "skipped": false
     },
+    "get-susds-total-assets-l2": {
+      "to": "0x5875eEE11Cf8398102FdAd704C9E96607675467a",
+      "data": "0x01e1d114",
+      "skipped": false
+    },
     "st-usds-vault-deposit": {
       "to": "",
       "data": "0x6e553f6500000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000",
@@ -562,6 +572,11 @@
     "get-susds-total-supply-l2": {
       "to": "0xdDb46999F8891663a8F2828d25298f70416d7610",
       "data": "0x18160ddd",
+      "skipped": false
+    },
+    "get-susds-total-assets-l2": {
+      "to": "0xdDb46999F8891663a8F2828d25298f70416d7610",
+      "data": "0x01e1d114",
       "skipped": false
     },
     "st-usds-vault-deposit": {
