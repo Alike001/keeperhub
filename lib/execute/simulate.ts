@@ -22,6 +22,7 @@ import {
   decodeRevertReason,
   extractRevertData,
 } from "@/lib/web3/decode-revert-error";
+import { buildErrorDecodeInterface } from "@/lib/web3/extra-error-abis";
 import {
   convertAmountForWrite,
   resolveForWrite,
@@ -167,6 +168,12 @@ export type SimulateContractCallInput = {
   functionArgs?: string;
   /** Decimal ETH (or native unit) value sent with the call. */
   value?: string;
+  /**
+   * #2430: extra ABI documents whose error entries join the decode path, after
+   * the target's own ABI. Encoding uses `abi` alone, so a fragment here can
+   * never change the calldata, only name a revert the target's ABI cannot.
+   */
+  errorAbis?: string[];
 };
 
 export type SimulateNativeTransferInput = {
@@ -672,6 +679,11 @@ export async function simulateContractCall(
     return failure(from, to, value, stablecoinCap.error);
   }
 
+  // #2430: decoding gets its own interface. `iface` stays the one the call is
+  // encoded and its return value decoded with, so an extra document cannot
+  // reach either.
+  const decodeIface = buildErrorDecodeInterface(iface, input.errorAbis);
+
   const tx: ethers.TransactionRequest = { from, to, data: encodedData, value };
 
   let gasEstimate: bigint;
@@ -692,7 +704,7 @@ export async function simulateContractCall(
       to,
       value,
       err,
-      iface,
+      iface: decodeIface,
     });
   }
 
