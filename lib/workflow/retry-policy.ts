@@ -98,3 +98,54 @@ export function parseRetryAfterHeaderMs(
   }
   return Math.ceil(seconds * 1000);
 }
+
+/**
+ * Error codes that prove the request never reached the server: the socket was
+ * refused, the host or network is unreachable, or the name did not resolve.
+ * Deliberately excludes ECONNRESET, EPIPE and timeouts, which can happen after
+ * the request body was sent and so cannot rule out a delivered request. A
+ * caller retrying a non-idempotent request should retry only these.
+ */
+const CONNECTION_FAILURE_CODES: ReadonlySet<string> = new Set([
+  "ECONNREFUSED",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "EAI_NONAME",
+]);
+
+/** safeFetch resolves DNS itself and throws this before any socket opens. */
+const DNS_FAILURE_MESSAGE = "Cannot resolve host:";
+
+const MAX_CAUSE_DEPTH = 5;
+
+/**
+ * True when the thrown error, or any error in its `cause` chain (undici wraps
+ * socket errors in a TypeError "fetch failed"), shows the request never left
+ * this process.
+ */
+export function isConnectionFailure(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < MAX_CAUSE_DEPTH && current; depth++) {
+    if (typeof current !== "object") {
+      return false;
+    }
+    const { code, message, cause } = current as {
+      code?: unknown;
+      message?: unknown;
+      cause?: unknown;
+    };
+    if (typeof code === "string" && CONNECTION_FAILURE_CODES.has(code)) {
+      return true;
+    }
+    if (
+      typeof message === "string" &&
+      message.startsWith(DNS_FAILURE_MESSAGE)
+    ) {
+      return true;
+    }
+    current = cause;
+  }
+  return false;
+}

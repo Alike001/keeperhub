@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  isConnectionFailure,
   isRetryableHttpStatus,
   linearBackoffMs,
   parseRetryAfterHeaderMs,
@@ -143,5 +144,61 @@ describe("parseRetryAfterHeaderMs", () => {
     expect(parseRetryAfterHeaderMs("2")).toBe(2000);
     expect(parseRetryAfterHeaderMs("1.2345")).toBe(1235);
     expect(parseRetryAfterHeaderMs(" 3 ")).toBe(3000);
+  });
+});
+
+describe("isConnectionFailure", () => {
+  function withCode(code: string): Error {
+    return Object.assign(new Error(code), { code });
+  }
+
+  it.each([
+    "ECONNREFUSED",
+    "EHOSTUNREACH",
+    "ENETUNREACH",
+    "ENOTFOUND",
+    "EAI_AGAIN",
+  ])("recognises %s on the error itself", (code) => {
+    expect(isConnectionFailure(withCode(code))).toBe(true);
+  });
+
+  it("looks through undici's TypeError wrapper to the cause", () => {
+    const wrapped = new TypeError("fetch failed", {
+      cause: withCode("ECONNREFUSED"),
+    });
+    expect(isConnectionFailure(wrapped)).toBe(true);
+  });
+
+  it("recognises safeFetch's own DNS failure message", () => {
+    expect(
+      isConnectionFailure(new Error("Cannot resolve host: example.test"))
+    ).toBe(true);
+  });
+
+  it.each(["ECONNRESET", "EPIPE", "ETIMEDOUT"])(
+    "does not treat %s as proof the request never left",
+    (code) => {
+      expect(isConnectionFailure(withCode(code))).toBe(false);
+    }
+  );
+
+  it("does not treat an abort timeout as a connection failure", () => {
+    const abort = new DOMException("The operation was aborted", "TimeoutError");
+    expect(isConnectionFailure(abort)).toBe(false);
+  });
+
+  it.each([undefined, null, "string", 42, new Error("boom")])(
+    "returns false for %p",
+    (value) => {
+      expect(isConnectionFailure(value)).toBe(false);
+    }
+  );
+
+  it("stops walking a cyclic cause chain", () => {
+    const a: Error & { cause?: unknown } = new Error("a");
+    const b: Error & { cause?: unknown } = new Error("b");
+    a.cause = b;
+    b.cause = a;
+    expect(isConnectionFailure(a)).toBe(false);
   });
 });
