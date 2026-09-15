@@ -95,6 +95,14 @@ export const PUBLIC_RPCS = {
   // eth_subscribe -- and dRPC's free tier rejects eth_subscribe outright. There
   // is no public WSS endpoint for this chain to fall back to, so event and
   // block triggers depend on the WSS URLs in CHAIN_RPC_CONFIG.
+  // HyperEVM (Hyperliquid's EVM). The official endpoint is HTTP only: it answers
+  // a WebSocket upgrade with 405. dRPC's socket is the public WSS default, and
+  // unlike Robinhood's dRPC endpoint above it does serve eth_subscribe: on
+  // 2026-09-15 it delivered newHeads (17 heads in 25 s), eth_getLogs and
+  // eth_call over the socket, which is what event, block and state triggers use.
+  HYPEREVM_MAINNET: "https://rpc.hyperliquid.xyz/evm",
+  HYPEREVM_MAINNET_FALLBACK: "https://hyperliquid.drpc.org",
+  HYPEREVM_MAINNET_WSS: "wss://hyperliquid.drpc.org",
   SOLANA_MAINNET: "https://api.mainnet-beta.solana.com",
   SOLANA_DEVNET: "https://api.devnet.solana.com",
 } as const;
@@ -288,6 +296,15 @@ export const CHAIN_CONFIG: Record<number, ChainConfigEntry> = {
     fallbackEnvKey: "CHAIN_ROBINHOOD_TESTNET_FALLBACK_RPC",
     publicDefault: PUBLIC_RPCS.ROBINHOOD_TESTNET,
     publicFallback: PUBLIC_RPCS.ROBINHOOD_TESTNET_FALLBACK,
+  },
+  // HyperEVM Mainnet
+  999: {
+    jsonKey: "hyperevm-mainnet",
+    envKey: "CHAIN_HYPEREVM_MAINNET_PRIMARY_RPC",
+    fallbackEnvKey: "CHAIN_HYPEREVM_MAINNET_FALLBACK_RPC",
+    publicDefault: PUBLIC_RPCS.HYPEREVM_MAINNET,
+    publicFallback: PUBLIC_RPCS.HYPEREVM_MAINNET_FALLBACK,
+    publicWssDefault: PUBLIC_RPCS.HYPEREVM_MAINNET_WSS,
   },
   // Solana Mainnet
   101: {
