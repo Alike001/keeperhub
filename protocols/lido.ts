@@ -135,6 +135,10 @@ export default defineAbiProtocol({
         wrap: "requires stETH balance - not provisioned in fork setup (stETH's share-derived balanceOf defeats slot fabrication; needs a whale entry)",
         unwrap:
           "requires wstETH balance - not provisioned in fork setup (wrap is skipped, so no wstETH position exists)",
+        "get-wsteth-balance-l2":
+          "L2 action - wstethL2 contract only on Base/Arbitrum",
+        "get-wsteth-total-supply-l2":
+          "L2 action - wstethL2 contract only on Base/Arbitrum",
       },
       // Chain invariants (unnamed outputs, so no field): the wstETH<->stETH
       // exchange rates only ratchet up from 1e18, the 1-unit conversions are
@@ -159,6 +163,32 @@ export default defineAbiProtocol({
       // harness covers it with a targeted submit (needs only native gas,
       // unlike wrap/unwrap which stay skipped pending a stETH whale).
       events: {},
+    },
+    "8453": {
+      setup: {
+        minNativeHuman: "0.01",
+        requiredTokens: [],
+        approvals: [],
+      },
+      actions: {
+        "get-wsteth-balance-l2": { account: wallet() },
+        "get-wsteth-total-supply-l2": {},
+      },
+      skipped: {
+        wrap: "Mainnet only - wsteth contract not on Base",
+        unwrap: "Mainnet only - wsteth contract not on Base",
+        "get-steth-by-wsteth": "Mainnet only - wsteth contract not on Base",
+        "get-wsteth-by-steth": "Mainnet only - wsteth contract not on Base",
+        "steth-per-token": "Mainnet only - wsteth contract not on Base",
+        "tokens-per-steth": "Mainnet only - wsteth contract not on Base",
+        "get-wsteth-balance": "Mainnet only - wsteth contract not on Base",
+        "get-wsteth-total-supply": "Mainnet only - wsteth contract not on Base",
+        "get-steth-balance": "Mainnet only - steth contract not on Base",
+        "approve-steth": "Mainnet only - steth contract not on Base",
+      },
+      expectations: {
+        "get-wsteth-total-supply-l2": [{ nonZero: true }],
+      },
     },
   },
 
