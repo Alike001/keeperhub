@@ -351,9 +351,12 @@ export default defineAbiProtocol({
         },
       },
       skipped: {
-        "get-susds-balance-l2": "L2 action - sUsdsL2 contract only on Base/Arbitrum",
-        "get-susds-total-supply-l2": "L2 action - sUsdsL2 contract only on Base/Arbitrum",
-        "get-susds-total-assets-l2": "L2 action - sUsdsL2 contract only on Base/Arbitrum",
+        "get-susds-balance-l2":
+          "L2 action - sUsdsL2 contract only on Base/Arbitrum",
+        "get-susds-total-supply-l2":
+          "L2 action - sUsdsL2 contract only on Base/Arbitrum",
+        "get-susds-total-assets-l2":
+          "L2 action - sUsdsL2 contract only on Base/Arbitrum",
       },
       // approve-dai and approve-usds run the app's real approve-token path,
       // which fans out cold token state on a fresh fork and runs past the
@@ -441,19 +444,30 @@ export default defineAbiProtocol({
         "vault-withdraw": "Mainnet only - sUsds contract not on Base",
         "vault-redeem": "Mainnet only - sUsds contract not on Base",
         "st-usds-vault-asset": "Mainnet only - stUsds contract not on Base",
-        "st-usds-vault-total-assets": "Mainnet only - stUsds contract not on Base",
-        "st-usds-vault-total-supply": "Mainnet only - stUsds contract not on Base",
+        "st-usds-vault-total-assets":
+          "Mainnet only - stUsds contract not on Base",
+        "st-usds-vault-total-supply":
+          "Mainnet only - stUsds contract not on Base",
         "st-usds-vault-balance": "Mainnet only - stUsds contract not on Base",
-        "st-usds-vault-convert-to-assets": "Mainnet only - stUsds contract not on Base",
-        "st-usds-vault-convert-to-shares": "Mainnet only - stUsds contract not on Base",
-        "st-usds-vault-preview-deposit": "Mainnet only - stUsds contract not on Base",
-        "st-usds-vault-preview-mint": "Mainnet only - stUsds contract not on Base",
-        "st-usds-vault-preview-withdraw": "Mainnet only - stUsds contract not on Base",
-        "st-usds-vault-preview-redeem": "Mainnet only - stUsds contract not on Base",
-        "st-usds-vault-max-deposit": "Mainnet only - stUsds contract not on Base",
+        "st-usds-vault-convert-to-assets":
+          "Mainnet only - stUsds contract not on Base",
+        "st-usds-vault-convert-to-shares":
+          "Mainnet only - stUsds contract not on Base",
+        "st-usds-vault-preview-deposit":
+          "Mainnet only - stUsds contract not on Base",
+        "st-usds-vault-preview-mint":
+          "Mainnet only - stUsds contract not on Base",
+        "st-usds-vault-preview-withdraw":
+          "Mainnet only - stUsds contract not on Base",
+        "st-usds-vault-preview-redeem":
+          "Mainnet only - stUsds contract not on Base",
+        "st-usds-vault-max-deposit":
+          "Mainnet only - stUsds contract not on Base",
         "st-usds-vault-max-mint": "Mainnet only - stUsds contract not on Base",
-        "st-usds-vault-max-withdraw": "Mainnet only - stUsds contract not on Base",
-        "st-usds-vault-max-redeem": "Mainnet only - stUsds contract not on Base",
+        "st-usds-vault-max-withdraw":
+          "Mainnet only - stUsds contract not on Base",
+        "st-usds-vault-max-redeem":
+          "Mainnet only - stUsds contract not on Base",
         "st-usds-vault-deposit": "Mainnet only - stUsds contract not on Base",
         "st-usds-vault-mint": "Mainnet only - stUsds contract not on Base",
         "st-usds-vault-withdraw": "Mainnet only - stUsds contract not on Base",
@@ -492,11 +506,15 @@ export default defineAbiProtocol({
         "vault-total-assets": "Mainnet only - sUsds contract not on Arbitrum",
         "vault-total-supply": "Mainnet only - sUsds contract not on Arbitrum",
         "vault-balance": "Mainnet only - sUsds contract not on Arbitrum",
-        "vault-convert-to-assets": "Mainnet only - sUsds contract not on Arbitrum",
-        "vault-convert-to-shares": "Mainnet only - sUsds contract not on Arbitrum",
-        "vault-preview-deposit": "Mainnet only - sUsds contract not on Arbitrum",
+        "vault-convert-to-assets":
+          "Mainnet only - sUsds contract not on Arbitrum",
+        "vault-convert-to-shares":
+          "Mainnet only - sUsds contract not on Arbitrum",
+        "vault-preview-deposit":
+          "Mainnet only - sUsds contract not on Arbitrum",
         "vault-preview-mint": "Mainnet only - sUsds contract not on Arbitrum",
-        "vault-preview-withdraw": "Mainnet only - sUsds contract not on Arbitrum",
+        "vault-preview-withdraw":
+          "Mainnet only - sUsds contract not on Arbitrum",
         "vault-preview-redeem": "Mainnet only - sUsds contract not on Arbitrum",
         "vault-max-deposit": "Mainnet only - sUsds contract not on Arbitrum",
         "vault-max-mint": "Mainnet only - sUsds contract not on Arbitrum",
@@ -507,23 +525,39 @@ export default defineAbiProtocol({
         "vault-withdraw": "Mainnet only - sUsds contract not on Arbitrum",
         "vault-redeem": "Mainnet only - sUsds contract not on Arbitrum",
         "st-usds-vault-asset": "Mainnet only - stUsds contract not on Arbitrum",
-        "st-usds-vault-total-assets": "Mainnet only - stUsds contract not on Arbitrum",
-        "st-usds-vault-total-supply": "Mainnet only - stUsds contract not on Arbitrum",
-        "st-usds-vault-balance": "Mainnet only - stUsds contract not on Arbitrum",
-        "st-usds-vault-convert-to-assets": "Mainnet only - stUsds contract not on Arbitrum",
-        "st-usds-vault-convert-to-shares": "Mainnet only - stUsds contract not on Arbitrum",
-        "st-usds-vault-preview-deposit": "Mainnet only - stUsds contract not on Arbitrum",
-        "st-usds-vault-preview-mint": "Mainnet only - stUsds contract not on Arbitrum",
-        "st-usds-vault-preview-withdraw": "Mainnet only - stUsds contract not on Arbitrum",
-        "st-usds-vault-preview-redeem": "Mainnet only - stUsds contract not on Arbitrum",
-        "st-usds-vault-max-deposit": "Mainnet only - stUsds contract not on Arbitrum",
-        "st-usds-vault-max-mint": "Mainnet only - stUsds contract not on Arbitrum",
-        "st-usds-vault-max-withdraw": "Mainnet only - stUsds contract not on Arbitrum",
-        "st-usds-vault-max-redeem": "Mainnet only - stUsds contract not on Arbitrum",
-        "st-usds-vault-deposit": "Mainnet only - stUsds contract not on Arbitrum",
+        "st-usds-vault-total-assets":
+          "Mainnet only - stUsds contract not on Arbitrum",
+        "st-usds-vault-total-supply":
+          "Mainnet only - stUsds contract not on Arbitrum",
+        "st-usds-vault-balance":
+          "Mainnet only - stUsds contract not on Arbitrum",
+        "st-usds-vault-convert-to-assets":
+          "Mainnet only - stUsds contract not on Arbitrum",
+        "st-usds-vault-convert-to-shares":
+          "Mainnet only - stUsds contract not on Arbitrum",
+        "st-usds-vault-preview-deposit":
+          "Mainnet only - stUsds contract not on Arbitrum",
+        "st-usds-vault-preview-mint":
+          "Mainnet only - stUsds contract not on Arbitrum",
+        "st-usds-vault-preview-withdraw":
+          "Mainnet only - stUsds contract not on Arbitrum",
+        "st-usds-vault-preview-redeem":
+          "Mainnet only - stUsds contract not on Arbitrum",
+        "st-usds-vault-max-deposit":
+          "Mainnet only - stUsds contract not on Arbitrum",
+        "st-usds-vault-max-mint":
+          "Mainnet only - stUsds contract not on Arbitrum",
+        "st-usds-vault-max-withdraw":
+          "Mainnet only - stUsds contract not on Arbitrum",
+        "st-usds-vault-max-redeem":
+          "Mainnet only - stUsds contract not on Arbitrum",
+        "st-usds-vault-deposit":
+          "Mainnet only - stUsds contract not on Arbitrum",
         "st-usds-vault-mint": "Mainnet only - stUsds contract not on Arbitrum",
-        "st-usds-vault-withdraw": "Mainnet only - stUsds contract not on Arbitrum",
-        "st-usds-vault-redeem": "Mainnet only - stUsds contract not on Arbitrum",
+        "st-usds-vault-withdraw":
+          "Mainnet only - stUsds contract not on Arbitrum",
+        "st-usds-vault-redeem":
+          "Mainnet only - stUsds contract not on Arbitrum",
         "get-usds-balance": "Mainnet only - usds contract not on Arbitrum",
         "approve-usds": "Mainnet only - usds contract not on Arbitrum",
         "get-dai-balance": "Mainnet only - dai contract not on Arbitrum",
@@ -532,8 +566,10 @@ export default defineAbiProtocol({
         "approve-sky": "Mainnet only - sky contract not on Arbitrum",
         "get-mkr-balance": "Mainnet only - mkr contract not on Arbitrum",
         "approve-mkr": "Mainnet only - mkr contract not on Arbitrum",
-        "convert-dai-to-usds": "Mainnet only - daiUsds contract not on Arbitrum",
-        "convert-usds-to-dai": "Mainnet only - daiUsds contract not on Arbitrum",
+        "convert-dai-to-usds":
+          "Mainnet only - daiUsds contract not on Arbitrum",
+        "convert-usds-to-dai":
+          "Mainnet only - daiUsds contract not on Arbitrum",
         "convert-mkr-to-sky": "Mainnet only - mkrSky contract not on Arbitrum",
         "convert-sky-to-mkr": "Mainnet only - mkrSky contract not on Arbitrum",
       },
