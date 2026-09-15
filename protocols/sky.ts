@@ -176,6 +176,16 @@ const ERC20_READONLY_ABI = JSON.stringify([
     inputs: [{ name: "account", type: "address" }],
     outputs: [{ name: "", type: "uint256" }],
   },
+]);
+
+const ERC20_READONLY_WITH_SUPPLY_ABI = JSON.stringify([
+  {
+    type: "function",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
   {
     type: "function",
     name: "totalSupply",
@@ -402,7 +412,7 @@ export default defineAbiProtocol({
     },
     sUsdsL2: {
       label: "sUSDS (Savings USDS) - L2",
-      abi: ERC20_READONLY_ABI,
+      abi: ERC20_READONLY_WITH_SUPPLY_ABI,
       addresses: {
         // Base - only ERC-20 functions (ERC-4626 vault functions not implemented)
         "8453": "0x5875eEE11Cf8398102FdAd704C9E96607675467a",
