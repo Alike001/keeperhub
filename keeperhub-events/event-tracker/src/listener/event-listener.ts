@@ -1,11 +1,11 @@
 import type { SQSClient } from "@aws-sdk/client-sqs";
 import type { ethers } from "ethers";
 import { hexlify, toUtf8Bytes } from "ethers";
+import { generateCorrelationId } from "../../lib/correlation";
 import {
   createPhantomExecution,
   failPhantomExecution,
 } from "../../lib/phantom";
-import { generateCorrelationId } from "../../lib/correlation";
 import { logger } from "../../lib/utils/logger";
 import { enqueueWorkflowEventTrigger } from "../../lib/workflow-sqs";
 import {

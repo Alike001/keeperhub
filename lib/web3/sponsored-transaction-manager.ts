@@ -7,6 +7,7 @@ import {
   http,
   type PublicClient,
 } from "viem";
+import { markBroadcast } from "@/keeperhub-executor/lib/broadcast-marker";
 import {
   checkGasCredits,
   getGasTokenPriceUsd,
@@ -14,7 +15,6 @@ import {
 } from "@/lib/billing/gas-credits";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
-import { markBroadcast } from "@/keeperhub-executor/lib/broadcast-marker";
 import { MetricNames } from "@/lib/metrics/types";
 import { resolveRpcConfig } from "@/lib/rpc/config-service";
 import {

@@ -1,4 +1,4 @@
-import { SendMessageCommand } from "@aws-sdk/client-sqs";
+import type { SendMessageCommand } from "@aws-sdk/client-sqs";
 import { describe, expect, it, vi } from "vitest";
 import { enqueueWorkflowEventTrigger } from "../../lib/workflow-sqs";
 

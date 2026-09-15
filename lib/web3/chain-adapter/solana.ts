@@ -5,6 +5,7 @@ import {
   VersionedTransaction,
 } from "@solana/web3.js";
 import type { ethers } from "ethers";
+import { markBroadcast } from "@/keeperhub-executor/lib/broadcast-marker";
 import { logWarn } from "@/lib/logging";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 import type { RpcOperationType } from "@/lib/rpc/providers/index";
@@ -13,7 +14,6 @@ import { sleep } from "@/lib/sleep";
 import { getErrorMessage } from "@/lib/utils";
 import type { NonceSession } from "../nonce-manager";
 import { assertMaxSolLamportsOutflow } from "../solana-max-sol-guard";
-import { markBroadcast } from "@/keeperhub-executor/lib/broadcast-marker";
 import {
   type NormalizedTxResult,
   normalizeSolanaTransaction,

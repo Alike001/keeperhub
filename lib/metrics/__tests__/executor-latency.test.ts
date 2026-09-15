@@ -6,17 +6,16 @@ import { describe, expect, it, vi } from "vitest";
 // error-labels.test.ts).
 vi.mock("server-only", () => ({}));
 
-const {
-  prometheusMetricsCollector,
-  getApiProcessMetrics,
-} = await import("@/lib/metrics/collectors/prometheus");
+const { prometheusMetricsCollector, getApiProcessMetrics } = await import(
+  "@/lib/metrics/collectors/prometheus"
+);
 const { MetricNames, LabelKeys } = await import("@/lib/metrics/types");
 
 describe("executor latency histograms (issue #2289)", () => {
   it("records a dispatch sample without logging Unknown latency metric", async () => {
     // Registering the name in histogramMap is the whole point: before this,
     // every sample was discarded with "[Prometheus] Unknown latency metric".
-    const samples = await prometheusMetricsCollector.recordLatency(
+    await prometheusMetricsCollector.recordLatency(
       MetricNames.EXECUTOR_DISPATCH_LATENCY,
       1234,
       {
@@ -25,7 +24,6 @@ describe("executor latency histograms (issue #2289)", () => {
         [LabelKeys.STAGE]: "dispatched",
       }
     );
-    void samples;
 
     const metrics = await getApiProcessMetrics();
     expect(metrics).toContain("keeperhub_executor_dispatch_latency_ms");
@@ -44,7 +42,9 @@ describe("executor latency histograms (issue #2289)", () => {
     const bucket = metrics
       .split("\n")
       .find((line) =>
-        line.startsWith('keeperhub_executor_dispatch_latency_ms_bucket{le="2500"')
+        line.startsWith(
+          'keeperhub_executor_dispatch_latency_ms_bucket{le="2500"'
+        )
       );
     expect(bucket).toBeDefined();
     expect(bucket).toContain("} 1");
@@ -99,9 +99,7 @@ describe("executor latency histograms (issue #2289)", () => {
     const metrics = await getApiProcessMetrics();
     const family = metrics
       .split("\n")
-      .find((line) =>
-        line.startsWith("keeperhub_executor_broadcasts_total")
-      );
+      .find((line) => line.startsWith("keeperhub_executor_broadcasts_total"));
     // Label-less counter: no braces, plain "name 1".
     expect(family).toBeDefined();
     expect(family).toMatch(/ 1$/);
