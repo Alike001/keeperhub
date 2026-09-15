@@ -1,4 +1,5 @@
 import type { IntegrationType } from "@/lib/types/integration";
+import type { ShowWhen } from "@/lib/workflow/editor/show-when";
 import { LEGACY_ACTION_MAPPINGS } from "./legacy-mappings";
 import { integrationRegistry, registerIntegration } from "./registry-core";
 
@@ -101,15 +102,10 @@ export type ActionConfigFieldBase = {
   // render time (no persistence). Currently supported computations:
   //   - "abiFunctionMutability": parses `abiField` (ABI JSON) and looks up
   //     the stateMutability of the function named by `functionField`.
-  showWhen?:
-    | { field: string; equals: string }
-    | { field: string; oneOf: string[] }
-    | {
-        computed: "abiFunctionMutability";
-        abiField: string;
-        functionField: string;
-        equals: string;
-      };
+  // Use `all` to require several predicates at once. A hidden field keeps
+  // its stored value, so a field gated on a sibling that is itself hidden
+  // needs to gate on the sibling's own condition too.
+  showWhen?: ShowWhen;
 
   // For abi-function-select and abi-event-select: which field contains the ABI JSON
   abiField?: string;
