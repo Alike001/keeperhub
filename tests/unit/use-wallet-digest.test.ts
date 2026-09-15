@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   __fundedAssetsForTesting as fundedAssets,
-  __toBalanceFeedsForTesting as toBalanceFeeds,
   type ServerChainBalance,
+  __toBalanceFeedsForTesting as toBalanceFeeds,
 } from "@/lib/wallet/use-wallet-digest";
 
 const ARC_CHAIN_ID = 5_042_002;
