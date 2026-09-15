@@ -29,7 +29,7 @@ Converts a string, or a JSON array of strings, between text and a hex or base64 
 | operation | Yes | `encode` (text to hex/base64), `decode` (hex/base64 to text), `decimal-to-hex` (number to hex) or `hex-to-decimal` (hex to number). Default `encode` |
 | value | Yes | A single value, or a JSON array of values to convert in one step |
 | format | Yes | `encode` and `decode` only. `bytes32`, `bytes16`, `bytes8`, `hex` (no padding) or `base64`. Default `bytes32` |
-| numberFormat | Yes | `decimal-to-hex` only. `hex` (minimal, `0xff`), `uint256`, `uint128` or `uint64` (left-padded word of that width). Default `hex` |
+| numberFormat | No | `decimal-to-hex` only. `hex` (minimal, `0xff`), `uint256`, `uint128` or `uint64` (left-padded word of that width). Default `hex` |
 | padding | No | `encode` and `decode` with a fixed-size format only. `right` (Solidity string to bytesN, the default) or `left` (numeric, big-endian) |
 
 The editor shows only the inputs that apply to the selected operation. `hex-to-decimal` needs nothing beyond `value`: leading zeros do not change a number, so a padded word and its minimal form give the same result.
@@ -42,7 +42,7 @@ The editor shows only the inputs that apply to the selected operation. `hex-to-d
 | map | Object keyed by each original value, holding its converted value |
 | count | Number of values converted |
 | operation | `encode`, `decode`, `decimal-to-hex` or `hex-to-decimal` |
-| format | The format that was used. For `decimal-to-hex` this is the byte width behind the chosen `numberFormat` (`hex`, `bytes32`, `bytes16` or `bytes8`) |
+| format | The format that was used: the text format for `encode` and `decode`, the chosen `numberFormat` for `decimal-to-hex`. Absent for `hex-to-decimal`, which has no format |
 | error | Error message if the conversion failed |
 
 ### Notes

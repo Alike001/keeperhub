@@ -22,7 +22,7 @@ type EncodeSuccess = {
   map: Record<string, string>;
   count: number;
   operation: string;
-  format: string;
+  format?: string;
 };
 
 type EncodeFailure = { success: false; error: string };
@@ -177,7 +177,19 @@ describe("data/encode", () => {
       })) as EncodeSuccess;
 
       expect(result.result).toBe(`0x${"ff".padStart(64, "0")}`);
-      expect(result.format).toBe("bytes32");
+      expect(result.format).toBe("uint256");
+    });
+
+    it("reports the number format the user chose, not the byte width", async () => {
+      for (const numberFormat of ["hex", "uint256", "uint128", "uint64"]) {
+        const result = (await run({
+          operation: "decimal-to-hex",
+          value: "1",
+          numberFormat,
+        })) as EncodeSuccess;
+
+        expect(result.format).toBe(numberFormat);
+      }
     });
 
     it("honours the narrower integer widths", async () => {
@@ -404,6 +416,17 @@ describe("data/encode", () => {
       expect(result.success).toBe(true);
       expect(result.result).toBe("255");
       expect(result.operation).toBe("hex-to-decimal");
+    });
+
+    it("reports no format: none took part in the conversion", async () => {
+      const result = (await run({
+        operation: "hex-to-decimal",
+        value: "0xff",
+        format: "bytes32",
+      })) as EncodeSuccess;
+
+      expect("format" in result).toBe(false);
+      expect(result.format).toBeUndefined();
     });
 
     it("accepts hex without the 0x prefix", async () => {

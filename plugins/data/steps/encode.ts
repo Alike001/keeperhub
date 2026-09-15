@@ -25,12 +25,12 @@ const FIXED_BYTE_SIZES: Record<string, number> = {
 
 // Number formats name the Solidity integer type they produce; the value is the
 // text format that shares its byte width, so one padding helper serves both.
-const NUMBER_FORMATS: Record<string, Format> = {
+const NUMBER_FORMATS = {
   hex: "hex",
   uint256: "bytes32",
   uint128: "bytes16",
   uint64: "bytes8",
-};
+} as const satisfies Record<string, Format>;
 
 const OPERATIONS = [
   "encode",
@@ -43,6 +43,7 @@ const PADDINGS = ["right", "left"] as const;
 
 type Operation = (typeof OPERATIONS)[number];
 type Format = (typeof FORMATS)[number];
+type NumberFormat = keyof typeof NUMBER_FORMATS;
 type Padding = (typeof PADDINGS)[number];
 
 // Prefix of every failure message, so the user sees which conversion refused
@@ -81,7 +82,7 @@ type EncodeResult =
       map: Record<string, string>;
       count: number;
       operation: Operation;
-      format: Format;
+      format?: Format | NumberFormat;
     }
   | { success: false; error: string; errorClass?: ExecutionErrorType };
 
@@ -104,8 +105,29 @@ function resolveFormat(raw: string | undefined): Format {
  * offer integer widths rather than bytesN and base64. Hex to decimal has no
  * format of its own: leading zeros do not change a number.
  */
-function resolveNumberFormat(raw: string | undefined): Format {
-  return NUMBER_FORMATS[raw ?? "hex"] ?? "hex";
+function resolveNumberFormat(raw: string | undefined): NumberFormat {
+  return raw !== undefined && Object.hasOwn(NUMBER_FORMATS, raw)
+    ? (raw as NumberFormat)
+    : "hex";
+}
+
+/**
+ * The format a run reports is the one the user chose. Decimal to hex reports
+ * its number format rather than the byte width behind it, and hex to decimal
+ * reports none, because no format took part.
+ */
+function reportedFormat(
+  operation: Operation,
+  format: Format,
+  numberFormat: NumberFormat
+): Format | NumberFormat | undefined {
+  if (operation === "decimal-to-hex") {
+    return numberFormat;
+  }
+  if (operation === "hex-to-decimal") {
+    return undefined;
+  }
+  return format;
 }
 
 function resolvePadding(raw: string | undefined): Padding {
@@ -247,9 +269,10 @@ function convertValue(
 function stepHandler(input: EncodeCoreInput): EncodeResult {
   const operation = resolveOperation(input.operation);
   try {
+    const numberFormat = resolveNumberFormat(input.numberFormat);
     const format =
       operation === "decimal-to-hex"
-        ? resolveNumberFormat(input.numberFormat)
+        ? NUMBER_FORMATS[numberFormat]
         : resolveFormat(input.format);
     const padding = resolvePadding(input.padding);
     const values = parseInputValues(input.value ?? "");
@@ -262,13 +285,14 @@ function stepHandler(input: EncodeCoreInput): EncodeResult {
       converted.push(output);
     }
 
+    const reported = reportedFormat(operation, format, numberFormat);
     return {
       success: true,
       result: converted.length === 1 ? converted[0] : converted,
       map,
       count: converted.length,
       operation,
-      format,
+      ...(reported === undefined ? {} : { format: reported }),
     };
   } catch (error) {
     return failed(

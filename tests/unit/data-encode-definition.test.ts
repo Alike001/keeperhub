@@ -148,24 +148,25 @@ describe("data/encode definition", () => {
       }
     );
 
-    it("treats the number format like the text format: required, no fallback to the default", () => {
-      const encode = validateWorkflowActionConfigs([
-        actionNode({ operation: "encode", value: "SKY" }),
-      ]);
-      const decimalToHex = validateWorkflowActionConfigs([
+    it("does not require the number format: a node saved before the field existed can switch operation", () => {
+      // Defaults are seeded only on an actionType change, so an older
+      // data/encode node has no numberFormat key. The step falls back to hex.
+      const result = validateWorkflowActionConfigs([
         actionNode({ operation: "decimal-to-hex", value: "255" }),
       ]);
 
-      expect(encode.issues).toEqual([
+      expect(result).toEqual({ valid: true, issues: [] });
+    });
+
+    it("still requires the text format for encode", () => {
+      const result = validateWorkflowActionConfigs([
+        actionNode({ operation: "encode", value: "SKY" }),
+      ]);
+
+      expect(result.issues).toEqual([
         expect.objectContaining({
           code: "MISSING_REQUIRED_FIELD",
           field: "format",
-        }),
-      ]);
-      expect(decimalToHex.issues).toEqual([
-        expect.objectContaining({
-          code: "MISSING_REQUIRED_FIELD",
-          field: "numberFormat",
         }),
       ]);
     });

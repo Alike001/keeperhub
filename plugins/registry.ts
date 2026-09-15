@@ -1,5 +1,8 @@
 import type { IntegrationType } from "@/lib/types/integration";
-import type { ShowWhen } from "@/lib/workflow/editor/show-when";
+import {
+  evaluateShowWhen,
+  type ShowWhen,
+} from "@/lib/workflow/editor/show-when";
 import { LEGACY_ACTION_MAPPINGS } from "./legacy-mappings";
 import { integrationRegistry, registerIntegration } from "./registry-core";
 
@@ -598,8 +601,10 @@ export function generateAIActionPrompts(): string {
       const flatFields = flattenConfigFields(action.configFields);
 
       for (const field of flatFields) {
-        // Skip conditional fields in the example
-        if (field.showWhen) continue;
+        // Include a conditional field when its condition holds for the
+        // example assembled so far. Fields are visited in declaration order,
+        // so a field's dependencies are already in the example.
+        if (!evaluateShowWhen(field.showWhen, exampleConfig)) continue;
 
         // Use example, defaultValue, or a sensible default based on type
         if (field.example !== undefined) {

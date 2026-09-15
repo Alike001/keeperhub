@@ -46,7 +46,11 @@ const dataPlugin: IntegrationPlugin = {
           field: "operation",
           description: "encode, decode, decimal-to-hex or hex-to-decimal",
         },
-        { field: "format", description: "The format used" },
+        {
+          field: "format",
+          description:
+            "The format used: the text format for encode and decode, the number format (hex, uint256, uint128 or uint64) for decimal-to-hex. Absent for hex-to-decimal, which has no format",
+        },
         { field: "error", description: "Error message if the conversion failed" },
       ],
       configFields: [
@@ -96,7 +100,6 @@ const dataPlugin: IntegrationPlugin = {
           key: "numberFormat",
           label: "Number format",
           type: "select",
-          required: true,
           options: [
             { value: "hex", label: "hex (minimal, 0xff)" },
             { value: "uint256", label: "uint256 (32-byte left-padded word)" },
