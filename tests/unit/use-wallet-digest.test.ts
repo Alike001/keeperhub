@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   __fundedAssetsForTesting as fundedAssets,
+  __toBalanceFeedsForTesting as toBalanceFeeds,
   type ServerChainBalance,
 } from "@/lib/wallet/use-wallet-digest";
 
@@ -164,6 +165,37 @@ describe("fundedAssets", () => {
     expect(assets.find((a) => a.kind === "token")).toMatchObject({
       balance: "100",
       symbol: "USDC",
+    });
+  });
+});
+
+describe("toBalanceFeeds", () => {
+  it("carries an address-only supportedTokens row's address into SupportedTokenBalance.tokenAddress", () => {
+    // The sibling `tokens` array on this same payload keys its rows on
+    // `address`; a `supportedTokens` row shaped the same way must not fall
+    // back to "", or build-withdrawable-assets.ts's tokenMeta lookup misses,
+    // decimals silently falls back to DEFAULT_STABLECOIN_DECIMALS, and the
+    // withdrawable asset is pushed with tokenAddress: "".
+    const { supportedTokenBalances } = toBalanceFeeds([
+      {
+        chainId: ARC_CHAIN_ID,
+        chainName: "Arc Testnet",
+        isTestnet: true,
+        nativeBalance: "0.083134",
+        supportedTokens: [
+          {
+            address: ARC_USDC_ADDRESS,
+            balance: "0.083134",
+            name: "USD Coin",
+            symbol: "USDC",
+          },
+        ],
+        symbol: "USDC",
+      },
+    ]);
+    expect(supportedTokenBalances).toHaveLength(1);
+    expect(supportedTokenBalances[0]).toMatchObject({
+      tokenAddress: ARC_USDC_ADDRESS,
     });
   });
 });

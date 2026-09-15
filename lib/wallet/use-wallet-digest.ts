@@ -142,13 +142,22 @@ function positive(raw: string): boolean {
   return Number.isFinite(parsed) && parsed > 0;
 }
 
+// ServerToken leaves both address fields optional -- the sibling `tokens`
+// array on this same payload keys its rows on `address` rather than
+// `tokenAddress`. Every reader of a ServerToken's address must go through
+// this so a shape change in one call site can't silently diverge from the
+// others.
+function resolveTokenAddress(token: ServerToken): string | undefined {
+  return token.tokenAddress ?? token.address;
+}
+
 // hasFundedMirrorRow requires a row carry one of its two address fields;
 // the raw server payload's ServerToken leaves both optional, so narrow to
 // the rows that actually have one before handing them to it.
 function hasTokenAddress(
   token: ServerToken
 ): token is ServerToken & ({ tokenAddress: string } | { address: string }) {
-  return typeof (token.tokenAddress ?? token.address) === "string";
+  return typeof resolveTokenAddress(token) === "string";
 }
 
 /** Every funded holding, before prices are attached. */
@@ -191,7 +200,7 @@ function fundedAssets(
       ...(chain.supportedTokens ?? []),
       ...(chain.tokens ?? []),
     ]) {
-      const address = token.tokenAddress ?? token.address;
+      const address = resolveTokenAddress(token);
       if (!(positive(token.balance) && address)) {
         continue;
       }
@@ -268,7 +277,7 @@ function toBalanceFeeds(raw: ServerChainBalance[]): {
         logoUrl: token.logoUrl ?? null,
         name: token.name,
         symbol: token.symbol,
-        tokenAddress: token.tokenAddress ?? "",
+        tokenAddress: resolveTokenAddress(token) ?? "",
       });
     }
     for (const token of chain.tokens ?? []) {
@@ -403,4 +412,7 @@ export function useWalletDigest(
   };
 }
 
-export { fundedAssets as __fundedAssetsForTesting };
+export {
+  fundedAssets as __fundedAssetsForTesting,
+  toBalanceFeeds as __toBalanceFeedsForTesting,
+};
