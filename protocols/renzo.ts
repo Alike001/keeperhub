@@ -21,7 +21,8 @@ import restakeManagerAbi from "./abis/renzo-restake-manager.json";
 // deposit variants and the withdrawal queue are separate surfaces deferred to
 // a follow-up. Mainnet only: minting settles on the beacon chain.
 
-const RENZO_DOCS = "https://docs.renzoprotocol.com/docs/contracts/ethereum-mainnet";
+const RENZO_DOCS =
+  "https://docs.renzoprotocol.com/docs/contracts/ethereum-mainnet";
 
 const TEST_DATA: ProtocolTestData = {
   "1": {
