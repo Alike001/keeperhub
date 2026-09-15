@@ -261,4 +261,143 @@ describe("discord send-message retries", () => {
 
     expect(sleep).toHaveBeenCalledWith(15_000);
   });
+
+  it.each([408, 425, 500, 503, 504])(
+    "retries a %i like the HTTP node",
+    async (status) => {
+      safeFetch
+        .mockResolvedValueOnce(mockResponse(status))
+        .mockResolvedValueOnce(mockResponse(204));
+
+      const result = await runStep(WEBHOOK_URL, { retryAttempts: 1 });
+
+      expect(result.success).toBe(true);
+      expect(safeFetch).toHaveBeenCalledTimes(2);
+    }
+  );
+
+  it.each([401, 403, 404, 501])("does not retry a %i", async (status) => {
+    safeFetch.mockResolvedValue(mockResponse(status));
+
+    const result = await runStep(WEBHOOK_URL, { retryAttempts: 3 });
+
+    expect(result.success).toBe(false);
+    expect(safeFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("makes exactly six requests at the maximum of five retries", async () => {
+    safeFetch.mockResolvedValue(mockResponse(500));
+
+    await runStep(WEBHOOK_URL, { retryAttempts: 5, retryDelay: 0 });
+
+    expect(safeFetch).toHaveBeenCalledTimes(6);
+  });
+
+  it("treats a negative retry count as zero", async () => {
+    safeFetch.mockResolvedValue(mockResponse(500));
+
+    await runStep(WEBHOOK_URL, { retryAttempts: -3 });
+
+    expect(safeFetch).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("truncates a fractional retry count from the editor", async () => {
+    safeFetch.mockResolvedValue(mockResponse(500));
+
+    await runStep(WEBHOOK_URL, { retryAttempts: "2.9", retryDelay: 0 });
+
+    expect(safeFetch).toHaveBeenCalledTimes(3);
+  });
+
+  it("falls back to the default when the retry count is junk", async () => {
+    safeFetch.mockResolvedValue(mockResponse(500));
+
+    await runStep(WEBHOOK_URL, { retryAttempts: "lots" });
+
+    expect(safeFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("honours a retry_after exactly at the cap without clamping", async () => {
+    safeFetch
+      .mockResolvedValueOnce(mockResponse(429, { retry_after: 15 }))
+      .mockResolvedValueOnce(mockResponse(204));
+
+    await runStep(WEBHOOK_URL, { retryAttempts: 1 });
+
+    expect(sleep).toHaveBeenCalledWith(15_000);
+  });
+
+  it("clamps a retry_after just over the cap", async () => {
+    safeFetch
+      .mockResolvedValueOnce(mockResponse(429, { retry_after: 15.001 }))
+      .mockResolvedValueOnce(mockResponse(204));
+
+    await runStep(WEBHOOK_URL, { retryAttempts: 1 });
+
+    expect(sleep).toHaveBeenCalledWith(15_000);
+  });
+
+  it("retries immediately without sleeping on a zero retry_after", async () => {
+    safeFetch
+      .mockResolvedValueOnce(mockResponse(429, { retry_after: 0 }))
+      .mockResolvedValueOnce(mockResponse(204));
+
+    const result = await runStep(WEBHOOK_URL, { retryAttempts: 1 });
+
+    expect(result.success).toBe(true);
+    expect(safeFetch).toHaveBeenCalledTimes(2);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("ignores a negative retry_after and falls back to linear backoff", async () => {
+    safeFetch
+      .mockResolvedValueOnce(mockResponse(429, { retry_after: -1 }))
+      .mockResolvedValueOnce(mockResponse(204));
+
+    await runStep(WEBHOOK_URL, { retryAttempts: 1, retryDelay: 2 });
+
+    expect(sleep).toHaveBeenCalledWith(2000);
+  });
+
+  it("ignores an HTTP-date Retry-After and falls back to linear backoff", async () => {
+    safeFetch
+      .mockResolvedValueOnce(
+        mockResponse(
+          429,
+          {},
+          { "retry-after": "Wed, 21 Oct 2026 07:28:00 GMT" }
+        )
+      )
+      .mockResolvedValueOnce(mockResponse(204));
+
+    await runStep(WEBHOOK_URL, { retryAttempts: 1, retryDelay: 2 });
+
+    expect(sleep).toHaveBeenCalledWith(2000);
+  });
+
+  it("uses linear backoff for a 5xx even after a 429 in the same run", async () => {
+    safeFetch
+      .mockResolvedValueOnce(mockResponse(429, { retry_after: 0.5 }))
+      .mockResolvedValueOnce(mockResponse(503))
+      .mockResolvedValueOnce(mockResponse(204));
+
+    const result = await runStep(WEBHOOK_URL, { retryAttempts: 2 });
+
+    expect(result.success).toBe(true);
+    expect(sleep.mock.calls.map((call) => call[0])).toEqual([500, 2000]);
+  });
+
+  it("stops retrying once the count is exhausted even if the last error is retryable", async () => {
+    safeFetch.mockResolvedValue(mockResponse(429, { retry_after: 0 }));
+
+    const result = await runStep(WEBHOOK_URL, { retryAttempts: 2 });
+
+    expect(result).toEqual({
+      success: false,
+      error: "HTTP 429: Failed to send Discord message",
+      errorClass: ExecutionErrorType.EXTERNAL,
+    });
+    expect(safeFetch).toHaveBeenCalledTimes(3);
+  });
 });

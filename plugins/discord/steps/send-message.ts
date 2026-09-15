@@ -7,6 +7,13 @@ import { runPluginStep, type StepInput } from "@/lib/workflow/executor/step-hand
 import { safeFetch } from "@/lib/safe-fetch";
 import { sleep } from "@/lib/sleep";
 import { getErrorMessage } from "@/lib/utils";
+import {
+  isRetryableHttpStatus,
+  linearBackoffMs,
+  parseRetryAfterHeaderMs,
+  resolveRetryAttempts,
+  resolveRetryDelayMs,
+} from "@/lib/workflow/retry-policy";
 import type { DiscordCredentials } from "../credentials";
 
 type DiscordWebhookResponse = {
@@ -40,49 +47,20 @@ export type SendDiscordMessageInput = StepInput &
 const DISCORD_WEBHOOK_HOSTS = new Set(["discord.com", "discordapp.com"]);
 
 /**
- * Retry policy for transient Discord failures. The workflow engine's own
- * retries stay off for this step (maxRetries = 0 below), so this loop is the
- * only place a webhook post is re-attempted. The count and base delay come
- * from the node config and default to a single attempt, so a node only
- * retries when its author opted in. A 429 waits for the interval Discord asks
- * for; other transient failures back off linearly from the configured delay.
- * Every wait is capped at RETRY_MAX_DELAY_MS so a step never hangs on a long
- * global rate limit.
+ * Retry policy for transient Discord failures. Parsing, clamping, the
+ * retryable status set and the linear backoff are shared with the HTTP
+ * Request node (lib/workflow/retry-policy.ts); only the limits are local.
+ * The workflow engine's own retries stay off for this step (maxRetries = 0
+ * below), so this loop is the only place a webhook post is re-attempted.
+ * Retries default to none, so a node only retries when its author opted in.
+ * A 429 waits for the interval Discord asks for; other transient failures
+ * back off linearly from the configured delay. Every wait is capped at
+ * RETRY_MAX_DELAY_MS so a step never hangs on a long global rate limit.
  */
-const DEFAULT_RETRY_ATTEMPTS = 0;
-const MAX_RETRY_ATTEMPTS = 5;
-const DEFAULT_RETRY_DELAY_SECONDS = 1;
-const MAX_RETRY_DELAY_SECONDS = 15;
-const RETRY_MAX_DELAY_MS = MAX_RETRY_DELAY_SECONDS * 1000;
+const RETRY_ATTEMPT_LIMITS = { defaultAttempts: 0, maxAttempts: 5 };
+const RETRY_DELAY_LIMITS = { defaultDelaySeconds: 1, maxDelaySeconds: 15 };
+const RETRY_MAX_DELAY_MS = RETRY_DELAY_LIMITS.maxDelaySeconds * 1000;
 const HTTP_TOO_MANY_REQUESTS = 429;
-
-/**
- * Resolve the retry count. Accepts numbers from MCP callers and strings from
- * the visual editor, and clamps to [0, MAX_RETRY_ATTEMPTS]. Anything
- * unparseable falls back to the default rather than failing the step.
- */
-function resolveRetryAttempts(raw: unknown): number {
-  if (raw === undefined || raw === null || raw === "") {
-    return DEFAULT_RETRY_ATTEMPTS;
-  }
-  const requested = typeof raw === "number" ? raw : Number(raw);
-  if (!Number.isFinite(requested)) {
-    return DEFAULT_RETRY_ATTEMPTS;
-  }
-  return Math.min(Math.max(0, Math.trunc(requested)), MAX_RETRY_ATTEMPTS);
-}
-
-/** Resolve the base backoff delay in milliseconds, clamped to [0, 15]s. */
-function resolveRetryDelayMs(raw: unknown): number {
-  if (raw === undefined || raw === null || raw === "") {
-    return DEFAULT_RETRY_DELAY_SECONDS * 1000;
-  }
-  const requested = typeof raw === "number" ? raw : Number(raw);
-  if (!Number.isFinite(requested)) {
-    return DEFAULT_RETRY_DELAY_SECONDS * 1000;
-  }
-  return Math.min(Math.max(0, requested), MAX_RETRY_DELAY_SECONDS) * 1000;
-}
 
 /**
  * Validates a Discord webhook URL by hostname over https, not by substring.
@@ -142,14 +120,7 @@ function parseRetryAfterMs(
   if (typeof body.retry_after === "number" && body.retry_after >= 0) {
     return Math.ceil(body.retry_after * 1000);
   }
-  const header = response.headers?.get?.("retry-after");
-  if (header) {
-    const seconds = Number(header);
-    if (Number.isFinite(seconds) && seconds >= 0) {
-      return Math.ceil(seconds * 1000);
-    }
-  }
-  return;
+  return parseRetryAfterHeaderMs(response.headers?.get?.("retry-after"));
 }
 
 async function attemptSend(
@@ -200,18 +171,16 @@ async function attemptSend(
 }
 
 /**
- * A 429 and any 5xx are transient on Discord's side; a network error most
- * often means the connection never completed. Every other 4xx (bad payload,
- * unknown webhook, forbidden) fails identically on retry and is not retried.
+ * The retryable statuses are the HTTP Request node's set (408, 425, 429 and
+ * the transient 5xx family); a network error most often means the connection
+ * never completed. Every other 4xx (bad payload, unknown webhook, forbidden)
+ * fails identically on retry and is not retried.
  */
 function isRetryable(outcome: AttemptOutcome): boolean {
   if (outcome.kind === "network-error") {
     return true;
   }
-  if (outcome.kind !== "http-error") {
-    return false;
-  }
-  return outcome.status === HTTP_TOO_MANY_REQUESTS || outcome.status >= 500;
+  return outcome.kind === "http-error" && isRetryableHttpStatus(outcome.status);
 }
 
 /**
@@ -223,7 +192,7 @@ function retryDelayMs(
   retry: number,
   baseDelayMs: number
 ): number {
-  const fallback = baseDelayMs * retry;
+  const fallback = linearBackoffMs(baseDelayMs, retry);
   const requested =
     outcome.kind === "http-error" && outcome.retryAfterMs !== undefined
       ? outcome.retryAfterMs
@@ -242,8 +211,7 @@ function toResult(outcome: AttemptOutcome): SendDiscordMessageResult {
       errorClass: ExecutionErrorType.EXTERNAL,
     };
   }
-  const external =
-    outcome.status === HTTP_TOO_MANY_REQUESTS || outcome.status >= 500;
+  const external = isRetryableHttpStatus(outcome.status) || outcome.status >= 500;
   return {
     success: false,
     error: outcome.error,
@@ -300,8 +268,11 @@ async function stepHandler(
 
   console.log("[Discord] Sending message to webhook");
 
-  const maxRetries = resolveRetryAttempts(input.retryAttempts);
-  const baseDelayMs = resolveRetryDelayMs(input.retryDelay);
+  const maxRetries = resolveRetryAttempts(
+    input.retryAttempts,
+    RETRY_ATTEMPT_LIMITS
+  );
+  const baseDelayMs = resolveRetryDelayMs(input.retryDelay, RETRY_DELAY_LIMITS);
 
   let outcome = await attemptSend(webhookUrl, input.discordMessage);
   for (let retry = 1; retry <= maxRetries; retry++) {
