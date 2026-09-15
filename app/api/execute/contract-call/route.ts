@@ -27,6 +27,7 @@ import { SCOPE_MCP_READ, SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { requireScope } from "@/lib/middleware/require-scope";
 import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { getErrorMessage } from "@/lib/utils";
+import { normalizeErrorAbiDocuments } from "@/lib/web3/extra-error-abis";
 import { readContractCore } from "@/plugins/web3/steps/read-contract-core";
 import { writeContractCore } from "@/plugins/web3/steps/write-contract-core";
 import { validateApiKey } from "../_lib/auth";
@@ -99,7 +100,8 @@ async function resolveAbiForRequest(
 async function handleReadCall(
   body: Record<string, unknown>,
   resolvedAbi: string,
-  organizationId: string
+  organizationId: string,
+  errorAbis: string[]
 ): Promise<NextResponse> {
   const result = await readContractCore({
     contractAddress: body.contractAddress as string,
@@ -107,6 +109,9 @@ async function handleReadCall(
     abi: resolvedAbi,
     abiFunction: body.functionName as string,
     functionArgs: body.functionArgs as string | undefined,
+    // #2430: decode-only. The read is encoded from `abi` exactly as before;
+    // these only join the interface a revert is decoded against.
+    errorAbis,
     _context: { organizationId },
   });
 
@@ -126,7 +131,8 @@ async function handleReadCall(
 async function handleSimulateCall(
   body: Record<string, unknown>,
   resolvedAbi: string,
-  organizationId: string
+  organizationId: string,
+  errorAbis: string[]
 ): Promise<NextResponse> {
   const walletError = await requireWallet(organizationId);
   if (walletError) {
@@ -141,6 +147,7 @@ async function handleSimulateCall(
     functionName: body.functionName as string,
     functionArgs: body.functionArgs as string | undefined,
     value: body.value as string | undefined,
+    errorAbis,
   });
 
   return NextResponse.json(result, {
@@ -218,7 +225,8 @@ async function handleWriteCall(
   organizationId: string,
   apiKeyId: string,
   idem: IdempotencyOutcome | null,
-  paygOverflow: boolean
+  paygOverflow: boolean,
+  errorAbis: string[]
 ): Promise<NextResponse> {
   const walletError = await requireWallet(organizationId);
   if (walletError) {
@@ -269,6 +277,7 @@ async function handleWriteCall(
       abi: resolvedAbi,
       abiFunction: body.functionName as string,
       functionArgs: body.functionArgs as string | undefined,
+      errorAbis,
       ethValue: body.value as string | undefined,
       gasLimitMultiplier: body.gasLimitMultiplier as string | undefined,
       priorityFeeGwei: body.priorityFeeGwei as string | undefined,
@@ -449,6 +458,10 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const resolvedAbi = abiResult.abi;
 
+  // #2430: the extras are read once, after the schema has already refused a
+  // malformed one, so the decode sites cannot disagree about what they are.
+  const errorAbis = normalizeErrorAbiDocuments(body.errorAbis);
+
   const fnResult = findFunctionInAbi(resolvedAbi, body.functionName as string);
   if ("error" in fnResult) {
     return NextResponse.json(
@@ -463,7 +476,12 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   if (isReadOnly) {
     return applyRateLimitHeaders(
-      await handleReadCall(body, resolvedAbi, apiKeyCtx.organizationId),
+      await handleReadCall(
+        body,
+        resolvedAbi,
+        apiKeyCtx.organizationId,
+        errorAbis
+      ),
       rateLimit
     );
   }
@@ -472,7 +490,12 @@ export async function POST(request: Request): Promise<NextResponse> {
   // never broadcast, never reserve a directExecutions row.
   if (simulateFlag.simulate) {
     return applyRateLimitHeaders(
-      await handleSimulateCall(body, resolvedAbi, apiKeyCtx.organizationId),
+      await handleSimulateCall(
+        body,
+        resolvedAbi,
+        apiKeyCtx.organizationId,
+        errorAbis
+      ),
       rateLimit
     );
   }
@@ -511,7 +534,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       apiKeyCtx.organizationId,
       apiKeyCtx.apiKeyId,
       idem,
-      executionGuard.limitResult?.paygOverflow === true
+      executionGuard.limitResult?.paygOverflow === true,
+      errorAbis
     ),
     rateLimit
   );

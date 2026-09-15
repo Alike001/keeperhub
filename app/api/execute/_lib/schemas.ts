@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { MAX_SEQUENCE_CALLS } from "@/lib/execute/simulate-sequence-limits";
+import { readErrorAbiDocuments } from "@/lib/web3/extra-error-abis";
 import { isValidOperator, VALID_OPERATORS } from "./condition";
 import type { ExecuteErrorResponse } from "./types";
 
@@ -169,6 +170,22 @@ function requiredFieldError(field: string): ExecuteErrorResponse {
   };
 }
 
+// #2430: extra error sources for the decode path. The bounds and the shape
+// checks live with the decoder (`lib/web3/extra-error-abis.ts`) so the field a
+// route accepts is the field the decoder can use; this only maps the refusal
+// onto the execute error contract.
+function errorAbisFieldError(value: unknown): ExecuteErrorResponse | null {
+  const result = readErrorAbiDocuments(value);
+  if (result.ok) {
+    return null;
+  }
+  return {
+    error: result.message,
+    field: "errorAbis",
+    details: result.details,
+  };
+}
+
 const chainFieldError: ExecuteErrorResponse = {
   error: "Missing required field",
   field: "chainId",
@@ -310,6 +327,11 @@ export const contractCallInputSchema = objectBase.superRefine((record, ctx) => {
   const feeError = priorityFeeError(record.priorityFeeGwei);
   if (feeError) {
     addError(ctx, feeError);
+    return;
+  }
+  const errorAbisError = errorAbisFieldError(record.errorAbis);
+  if (errorAbisError) {
+    addError(ctx, errorAbisError);
   }
 });
 
@@ -386,6 +408,11 @@ export const checkAndExecuteInputSchema = objectBase.superRefine(
     const actError = actionError(record.action);
     if (actError) {
       addError(ctx, actError);
+      return;
+    }
+    const errorAbisError = errorAbisFieldError(record.errorAbis);
+    if (errorAbisError) {
+      addError(ctx, errorAbisError);
     }
   }
 );
