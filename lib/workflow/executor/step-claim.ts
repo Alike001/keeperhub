@@ -36,21 +36,6 @@ const WAIT_FOR_WINNER_MS = 30_000;
 const WAIT_POLL_INTERVAL_MS = 1000;
 
 /**
- * Ceiling for the two reads this module makes. Both run on the step's hot
- * path, so a database stall must surface as "run the step" rather than as a
- * replay parked until the pod is killed.
- */
-const CLAIM_STATEMENT_TIMEOUT_MS = 5000;
-
-/**
- * Postgres rejects a bind parameter in SET, so the value is inlined. It is a
- * module constant, never caller input.
- */
-const SET_CLAIM_TIMEOUT = sql.raw(
-  `SET LOCAL statement_timeout = ${CLAIM_STATEMENT_TIMEOUT_MS}`
-);
-
-/**
  * How long a replay defers before running the step unowned. Tied to the
  * takeover window: until a claim can go stale, a caller that proceeds anyway
  * is running beside a live owner, which is the duplicate being removed. A
@@ -146,18 +131,19 @@ async function rememberClaimInRedis(scope: StepClaimScope): Promise<void> {
  * the step unrunnable for the rest of the run.
  */
 async function claimInDb(scope: StepClaimScope): Promise<boolean> {
-  const rows = await db.transaction(async (tx) => {
-    await tx.execute(SET_CLAIM_TIMEOUT);
-    return await tx
-      .insert(workflowStepClaims)
-      .values({ executionId: scope.executionId, nodeId: scope.nodeId })
-      .onConflictDoUpdate({
-        target: [workflowStepClaims.executionId, workflowStepClaims.nodeId],
-        set: { claimedAt: sql`now()` },
-        setWhere: sql`${workflowStepClaims.claimedAt} < now() - make_interval(secs => ${STALE_CLAIM_MS / 1000})`,
-      })
-      .returning({ nodeId: workflowStepClaims.nodeId });
-  });
+  // One statement, no transaction: the INSERT ... ON CONFLICT is itself the
+  // race, and it is atomic alone. Wrapping it only to scope a SET LOCAL
+  // statement_timeout would cost four round trips per step for a bound the
+  // app pool already applies to every connection (lib/db/index.ts).
+  const rows = await db
+    .insert(workflowStepClaims)
+    .values({ executionId: scope.executionId, nodeId: scope.nodeId })
+    .onConflictDoUpdate({
+      target: [workflowStepClaims.executionId, workflowStepClaims.nodeId],
+      set: { claimedAt: sql`now()` },
+      setWhere: sql`${workflowStepClaims.claimedAt} < now() - make_interval(secs => ${STALE_CLAIM_MS / 1000})`,
+    })
+    .returning({ nodeId: workflowStepClaims.nodeId });
 
   return rows.length > 0;
 }
@@ -175,27 +161,24 @@ async function claimInDb(scope: StepClaimScope): Promise<boolean> {
 async function findWinnerOutput(
   scope: StepClaimScope
 ): Promise<{ outputRaw: unknown } | null> {
-  const rows = await db.transaction(async (tx) => {
-    await tx.execute(SET_CLAIM_TIMEOUT);
-    return await tx
-      .select({ outputRaw: workflowExecutionLogs.outputRaw })
-      .from(workflowExecutionLogs)
-      .where(
-        and(
-          eq(workflowExecutionLogs.executionId, scope.executionId),
-          eq(workflowExecutionLogs.nodeId, scope.nodeId),
-          eq(workflowExecutionLogs.status, "success"),
-          isNotNull(workflowExecutionLogs.outputRaw),
-          // Only ever the node's own top-level row. A node reachable from both
-          // a For Each loop handle and its done handle also has iteration
-          // rows, and one of those is not this step's output.
-          isNull(workflowExecutionLogs.iterationIndex),
-          isNull(workflowExecutionLogs.forEachNodeId)
-        )
+  const rows = await db
+    .select({ outputRaw: workflowExecutionLogs.outputRaw })
+    .from(workflowExecutionLogs)
+    .where(
+      and(
+        eq(workflowExecutionLogs.executionId, scope.executionId),
+        eq(workflowExecutionLogs.nodeId, scope.nodeId),
+        eq(workflowExecutionLogs.status, "success"),
+        isNotNull(workflowExecutionLogs.outputRaw),
+        // Only ever the node's own top-level row. A node reachable from both
+        // a For Each loop handle and its done handle also has iteration
+        // rows, and one of those is not this step's output.
+        isNull(workflowExecutionLogs.iterationIndex),
+        isNull(workflowExecutionLogs.forEachNodeId)
       )
-      .orderBy(desc(workflowExecutionLogs.completedAt))
-      .limit(1);
-  });
+    )
+    .orderBy(desc(workflowExecutionLogs.completedAt))
+    .limit(1);
 
   return rows[0] ?? null;
 }

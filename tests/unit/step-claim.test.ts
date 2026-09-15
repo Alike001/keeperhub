@@ -9,14 +9,8 @@ const { mockGetRedis, mockInsert, mockSelect, mockDelete } = vi.hoisted(() => ({
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/redis", () => ({ getRedis: mockGetRedis }));
-const tx = {
-  execute: vi.fn(() => Promise.resolve()),
-  insert: mockInsert,
-  select: mockSelect,
-};
 vi.mock("@/lib/db", () => ({
   db: {
-    transaction: (fn: (t: typeof tx) => unknown) => fn(tx),
     insert: mockInsert,
     select: mockSelect,
     delete: mockDelete,
