@@ -192,7 +192,7 @@ function recordInProcessLatency(params: {
   latency: ExecutionLatency;
   workflowId: string;
   executionId: string;
-  triggerType: string;
+  triggerType: ApiExecuteTriggerType;
   totalMs: number;
 }): void {
   const { latency, workflowId, executionId, triggerType, totalMs } = params;
