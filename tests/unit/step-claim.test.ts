@@ -121,7 +121,11 @@ describe("stepClaimScope", () => {
 });
 
 /** No real waiting: the loser path runs two rounds of the poll. */
-const NO_WAIT = { timeoutMs: 0, sleep: () => Promise.resolve() };
+const NO_WAIT = {
+  timeoutMs: 0,
+  totalWaitMs: 0,
+  sleep: () => Promise.resolve(),
+};
 
 describe("acquireStepClaim", () => {
   it("runs the step when it wins the claim in the database", async () => {
@@ -133,6 +137,7 @@ describe("acquireStepClaim", () => {
 
     await expect(acquireStepClaim(SCOPE, NO_WAIT)).resolves.toEqual({
       outcome: "run",
+      owns: true,
     });
   });
 
@@ -156,6 +161,7 @@ describe("acquireStepClaim", () => {
 
     await expect(acquireStepClaim(SCOPE, NO_WAIT)).resolves.toEqual({
       outcome: "run",
+      owns: true,
     });
     expect(mockInsert).toHaveBeenCalled();
   });
@@ -169,6 +175,7 @@ describe("acquireStepClaim", () => {
 
     await expect(acquireStepClaim(SCOPE, NO_WAIT)).resolves.toEqual({
       outcome: "run",
+      owns: true,
     });
     expect(mockInsert).toHaveBeenCalled();
   });
@@ -184,20 +191,20 @@ describe("acquireStepClaim", () => {
     });
   });
 
-  it("retries the claim instead of running when the winner never lands", async () => {
-    // A winner killed mid-step must not release every waiting replay at once.
-    // The second round is a takeover attempt against the staleness check.
+  it("runs without ownership once the wait is exhausted", async () => {
+    // The owner never recorded a result. Proceeding duplicates the step, but
+    // the caller must not then release a claim it never held.
     mockGetRedis.mockReturnValue(null);
     dbClaimReturns([]);
     dbWinnerRowReturns([]);
 
     await expect(acquireStepClaim(SCOPE, NO_WAIT)).resolves.toEqual({
       outcome: "run",
+      owns: false,
     });
-    expect(mockInsert).toHaveBeenCalledTimes(2);
   });
 
-  it("takes the claim over on the second round when it comes free", async () => {
+  it("takes the claim over on a later round when it comes free", async () => {
     mockGetRedis.mockReturnValue(null);
     dbWinnerRowReturns([]);
     mockInsert
@@ -214,9 +221,9 @@ describe("acquireStepClaim", () => {
         }),
       });
 
-    await expect(acquireStepClaim(SCOPE, NO_WAIT)).resolves.toEqual({
-      outcome: "run",
-    });
+    await expect(
+      acquireStepClaim(SCOPE, { ...NO_WAIT, totalWaitMs: 50 })
+    ).resolves.toEqual({ outcome: "run", owns: true });
     expect(mockInsert).toHaveBeenCalledTimes(2);
   });
 
@@ -228,6 +235,7 @@ describe("acquireStepClaim", () => {
 
     await expect(acquireStepClaim(SCOPE, NO_WAIT)).resolves.toEqual({
       outcome: "run",
+      owns: false,
     });
   });
 
@@ -240,6 +248,7 @@ describe("acquireStepClaim", () => {
 
     await expect(acquireStepClaim(SCOPE, NO_WAIT)).resolves.toEqual({
       outcome: "run",
+      owns: false,
     });
   });
 });

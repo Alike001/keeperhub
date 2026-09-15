@@ -18,6 +18,7 @@ import {
 import {
   acquireStepClaim,
   releaseStepClaim,
+  type StepClaimScope,
   stepClaimScope,
 } from "@/lib/workflow/executor/step-claim";
 import {
@@ -314,8 +315,15 @@ async function withStepLoggingInner<TInput extends StepInput, TOutput>(
   // arrive before either has finished both log a row and both run the step.
   // stepClaimScope returns undefined for the steps that must stay unguarded.
   const claim = context ? stepClaimScope(context) : undefined;
+  // Set only when this caller actually holds the claim. A caller that ran
+  // without one must not release, or it frees the live owner's claim and lets
+  // a third replay onto the same step.
+  let ownedClaim: StepClaimScope | undefined;
   if (claim && context) {
     const decision = await acquireStepClaim(claim);
+    if (decision.outcome === "run" && decision.owns) {
+      ownedClaim = claim;
+    }
     if (decision.outcome === "reuse") {
       // The winner's row already carries this step; writing another would be
       // the duplicate being removed. The tracker still has to learn about it:
@@ -381,8 +389,8 @@ async function withStepLoggingInner<TInput extends StepInput, TOutput>(
 
       // Hand the step back so a later attempt can run it. Keeping the claim
       // after a failure would make this failure final for the whole run.
-      if (claim) {
-        await releaseStepClaim(claim);
+      if (ownedClaim) {
+        await releaseStepClaim(ownedClaim);
       }
 
       recordStepMetrics({
@@ -478,8 +486,8 @@ async function withStepLoggingInner<TInput extends StepInput, TOutput>(
       context?.executionId
     );
 
-    if (claim) {
-      await releaseStepClaim(claim);
+    if (ownedClaim) {
+      await releaseStepClaim(ownedClaim);
     }
 
     recordStepMetrics({

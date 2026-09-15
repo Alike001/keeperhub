@@ -43,7 +43,11 @@ const NODE = "node-1";
 const SCOPE = { executionId: EXECUTION, nodeId: NODE };
 
 /** No real waiting: a loser with nothing to wait for runs both rounds. */
-const NO_WAIT = { timeoutMs: 0, sleep: () => Promise.resolve() };
+const NO_WAIT = {
+  timeoutMs: 0,
+  totalWaitMs: 0,
+  sleep: () => Promise.resolve(),
+};
 
 async function seed(): Promise<void> {
   await testDb
@@ -190,6 +194,62 @@ describe("step claim (real database)", () => {
       .from(workflowStepClaims)
       .where(eq(workflowStepClaims.executionId, EXECUTION));
     expect(rows).toHaveLength(0);
+  });
+
+  it("ignores an iteration row when reading the node's own output", async () => {
+    // A node reachable from both a For Each loop handle and its done handle
+    // has iteration rows too, and one of those is not this step's output.
+    const { acquireStepClaim } = await import(
+      "../../lib/workflow/executor/step-claim"
+    );
+    await testDb.insert(workflowExecutionLogs).values({
+      executionId: EXECUTION,
+      nodeId: NODE,
+      nodeName: "n",
+      nodeType: "evm-chain/chain-info",
+      status: "success",
+      outputRaw: { fromIteration: true },
+      forEachNodeId: "loop-1",
+      iterationIndex: 0,
+      completedAt: new Date(),
+    });
+    await acquireStepClaim(SCOPE, NO_WAIT);
+
+    // Only the iteration row exists, so there is no top-level output to reuse.
+    expect(await acquireStepClaim(SCOPE, NO_WAIT)).toEqual({
+      outcome: "run",
+      owns: false,
+    });
+
+    await recordWinnerSuccess({ topLevel: true });
+    expect(await acquireStepClaim(SCOPE, NO_WAIT)).toEqual({
+      outcome: "reuse",
+      output: { topLevel: true },
+    });
+  });
+
+  it("keeps claims while any step of the run is still running", async () => {
+    // A run is finalized while pending tasks may still be draining. Clearing
+    // a live step's claim would let the next replay run beside its owner.
+    const { acquireStepClaim, clearStepClaims } = await import(
+      "../../lib/workflow/executor/step-claim"
+    );
+    await acquireStepClaim(SCOPE, NO_WAIT);
+    await testDb.insert(workflowExecutionLogs).values({
+      executionId: EXECUTION,
+      nodeId: "node-2",
+      nodeName: "still going",
+      nodeType: "HTTP Request",
+      status: "running",
+    });
+
+    await clearStepClaims(EXECUTION);
+
+    const rows = await testDb
+      .select()
+      .from(workflowStepClaims)
+      .where(eq(workflowStepClaims.executionId, EXECUTION));
+    expect(rows).toHaveLength(1);
   });
 
   it("takes claims with the execution row, so retention needs no pass", async () => {

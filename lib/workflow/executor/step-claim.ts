@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workflowExecutionLogs, workflowStepClaims } from "@/lib/db/schema";
 import { ErrorCategory, logInfo, logSystemWarn, logWarn } from "@/lib/logging";
@@ -50,12 +50,22 @@ const SET_CLAIM_TIMEOUT = sql.raw(
   `SET LOCAL statement_timeout = ${CLAIM_STATEMENT_TIMEOUT_MS}`
 );
 
-/** Wait rounds before a replay stops deferring and runs the step itself. */
-const MAX_WAIT_ROUNDS = 2;
+/**
+ * How long a replay defers before running the step unowned. Tied to the
+ * takeover window: until a claim can go stale, a caller that proceeds anyway
+ * is running beside a live owner, which is the duplicate being removed. A
+ * step still running past this point is duplicated exactly as it is today.
+ */
+const MAX_TOTAL_WAIT_MS = STALE_CLAIM_MS;
 
 export type StepClaimResult =
-  /** This caller owns the step and must run it. */
-  | { outcome: "run" }
+  /**
+   * Run the step. `owns` distinguishes holding the claim from proceeding
+   * without one -- the claim backend was unreachable, or the wait was
+   * exhausted. Only a holder may release, or a caller that never had the
+   * claim would free the live owner's and let a third replay in.
+   */
+  | { outcome: "run"; owns: boolean }
   /** Another replay already produced this step's output; reuse it. */
   | { outcome: "reuse"; output: unknown };
 
@@ -175,7 +185,12 @@ async function findWinnerOutput(
           eq(workflowExecutionLogs.executionId, scope.executionId),
           eq(workflowExecutionLogs.nodeId, scope.nodeId),
           eq(workflowExecutionLogs.status, "success"),
-          isNotNull(workflowExecutionLogs.outputRaw)
+          isNotNull(workflowExecutionLogs.outputRaw),
+          // Only ever the node's own top-level row. A node reachable from both
+          // a For Each loop handle and its done handle also has iteration
+          // rows, and one of those is not this step's output.
+          isNull(workflowExecutionLogs.iterationIndex),
+          isNull(workflowExecutionLogs.forEachNodeId)
         )
       )
       .orderBy(desc(workflowExecutionLogs.completedAt))
@@ -202,10 +217,17 @@ export async function acquireStepClaim(
   scope: StepClaimScope,
   /** Injectable so the wait loop is deterministic under test, matching
    *  pollForCompletedOutput's own seam. */
-  waitOptions?: { timeoutMs?: number; sleep?: (ms: number) => Promise<void> }
+  waitOptions?: {
+    timeoutMs?: number;
+    totalWaitMs?: number;
+    sleep?: (ms: number) => Promise<void>;
+  }
 ): Promise<StepClaimResult> {
-  const timeoutMs = waitOptions?.timeoutMs ?? WAIT_FOR_WINNER_MS;
-  for (let round = 0; round < MAX_WAIT_ROUNDS; round++) {
+  const roundMs = waitOptions?.timeoutMs ?? WAIT_FOR_WINNER_MS;
+  const totalWaitMs = waitOptions?.totalWaitMs ?? MAX_TOTAL_WAIT_MS;
+  const deadline = Date.now() + totalWaitMs;
+
+  for (let round = 0; ; round++) {
     let won: boolean;
     try {
       // Skip the authoritative write only on the first pass, where Redis
@@ -220,18 +242,18 @@ export async function acquireStepClaim(
         error instanceof Error ? error : new Error(String(error)),
         { execution_id: scope.executionId, node_id: scope.nodeId }
       );
-      return { outcome: "run" };
+      return { outcome: "run", owns: false };
     }
 
     if (won) {
       await rememberClaimInRedis(scope);
-      return { outcome: "run" };
+      return { outcome: "run", owns: true };
     }
 
     let winner: { outputRaw: unknown } | null;
     try {
       winner = await pollForCompletedOutput(() => findWinnerOutput(scope), {
-        timeoutMs,
+        timeoutMs: roundMs,
         intervalMs: WAIT_POLL_INTERVAL_MS,
         sleep: waitOptions?.sleep,
       });
@@ -242,7 +264,7 @@ export async function acquireStepClaim(
         error instanceof Error ? error : new Error(String(error)),
         { execution_id: scope.executionId, node_id: scope.nodeId }
       );
-      return { outcome: "run" };
+      return { outcome: "run", owns: false };
     }
 
     if (winner) {
@@ -255,9 +277,20 @@ export async function acquireStepClaim(
       );
       return { outcome: "reuse", output: winner.outputRaw };
     }
-  }
 
-  return { outcome: "run" };
+    if (Date.now() >= deadline) {
+      // The owner has had longer than the whole takeover window and still has
+      // not recorded a result. Proceeding duplicates the step, which is what
+      // happens today anyway; hanging the execution is worse.
+      logSystemWarn(
+        ErrorCategory.WORKFLOW_ENGINE,
+        "[stepClaim] Gave up waiting for the owning replay, running step",
+        new Error(`waited ${totalWaitMs}ms`),
+        { execution_id: scope.executionId, node_id: scope.nodeId }
+      );
+      return { outcome: "run", owns: false };
+    }
+  }
 }
 
 /**
@@ -299,6 +332,25 @@ export async function releaseStepClaim(scope: StepClaimScope): Promise<void> {
  */
 export async function clearStepClaims(executionId: string): Promise<void> {
   try {
+    // A run is finalized while its pending tasks may still be draining -- the
+    // executor's fatal catch reaches here with steps in flight, the same race
+    // selfHealWorkflowAfterLateStepCommit exists for. Deleting a live step's
+    // claim would let the next replay take it and run beside the owner, so
+    // the clear is skipped entirely while any step is still running. Those
+    // rows cascade with the execution instead.
+    const [stillRunning] = await db
+      .select({ nodeId: workflowExecutionLogs.nodeId })
+      .from(workflowExecutionLogs)
+      .where(
+        and(
+          eq(workflowExecutionLogs.executionId, executionId),
+          eq(workflowExecutionLogs.status, "running")
+        )
+      )
+      .limit(1);
+    if (stillRunning) {
+      return;
+    }
     await db
       .delete(workflowStepClaims)
       .where(eq(workflowStepClaims.executionId, executionId));
