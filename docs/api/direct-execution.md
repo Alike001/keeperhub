@@ -741,6 +741,7 @@ A node asked to estimate gas for a transfer the sender cannot pay for rejects it
 - `nativeSymbol`: the chain's native currency symbol (`ETH`, `BNB`, `POL`); falls back to `native` if the chain is not seeded
 - `originalError`: the node's own message, kept verbatim. Attribution only ever adds — nothing the chain said is discarded
 - `undecodedRevertData`: present only when the node did return revert data that no ABI on the decode path matched. The first four bytes are the custom-error selector, which you can look up in a selector database. When this field is set, funding the wallet may not be enough on its own — the contract is also rejecting the call
+- When `undecodedRevertData` is set, the selector alone is not the whole answer: a selector database names it but cannot give its arguments, and the arguments are where a reason code or a job id lives. Supply the ABI of the contract that raised the revert in the request's `errorAbis` field (see [Call Smart Contract](#call-smart-contract)) and the revert decodes with its arguments instead of staying hex
 
 The comparison is against the transfer value only; gas is not included (the gas estimate is what failed, so there is no number to add). A wallet funded with exactly the transfer amount therefore still fails, carrying the node's own `insufficient funds for gas * price + value` message and no `code`.
 
