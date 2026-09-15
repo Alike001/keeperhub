@@ -290,7 +290,7 @@ export type TriggerType =
   | "block"
   | "event";
 
-const TRIGGER_TYPES: ReadonlySet<TriggerType> = new Set<TriggerType>([
+export const TRIGGER_TYPES: ReadonlySet<TriggerType> = new Set<TriggerType>([
   "manual",
   "webhook",
   "scheduled",
