@@ -29,15 +29,41 @@ vi.mock("@/lib/credential-fetcher", () => ({
 const { safeFetch } = vi.hoisted(() => ({ safeFetch: vi.fn() }));
 vi.mock("@/lib/safe-fetch", () => ({ safeFetch }));
 
+// The retry loop waits between attempts. Resolve immediately and record the
+// requested waits so the tests stay instant and can assert on the backoff.
+const { sleep } = vi.hoisted(() => ({
+  sleep: vi.fn((_ms: number) => Promise.resolve()),
+}));
+vi.mock("@/lib/sleep", () => ({ sleep }));
+
 import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import { sendDiscordMessageStep } from "@/plugins/discord/steps/send-message";
 
-function runStep(webhookUrl: string) {
+const WEBHOOK_URL = "https://discord.com/api/webhooks/123/abc";
+
+function runStep(
+  webhookUrl: string,
+  extra: { retryAttempts?: number | string; retryDelay?: number | string } = {}
+) {
   mockFetchCredentials.mockResolvedValue({ webhookUrl });
   return sendDiscordMessageStep({
     integrationId: "int-1",
     discordMessage: "hello",
+    ...extra,
   });
+}
+
+function mockResponse(
+  status: number,
+  body: unknown = {},
+  headers: Record<string, string> = {}
+) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get: (key: string) => headers[key.toLowerCase()] ?? null },
+    json: () => Promise.resolve(body),
+  };
 }
 
 describe("discord send-message webhook URL validation", () => {
@@ -100,5 +126,131 @@ describe("discord send-message webhook URL validation", () => {
     );
     expect(result.success).toBe(true);
     expect(safeFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("discord send-message retries", () => {
+  beforeEach(() => {
+    mockFetchCredentials.mockReset();
+    safeFetch.mockReset();
+    sleep.mockClear();
+  });
+
+  it("retries a 429 after the wait Discord reports in the body", async () => {
+    safeFetch
+      .mockResolvedValueOnce(
+        mockResponse(429, {
+          message: "You are being rate limited.",
+          retry_after: 1.5,
+        })
+      )
+      .mockResolvedValueOnce(mockResponse(204));
+
+    const result = await runStep(WEBHOOK_URL);
+
+    expect(result).toEqual({ success: true, messageId: "sent" });
+    expect(safeFetch).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(sleep).toHaveBeenCalledWith(1500);
+  });
+
+  it("falls back to the Retry-After header when the 429 body has no retry_after", async () => {
+    safeFetch
+      .mockResolvedValueOnce(mockResponse(429, {}, { "retry-after": "2" }))
+      .mockResolvedValueOnce(mockResponse(204));
+
+    const result = await runStep(WEBHOOK_URL);
+
+    expect(result.success).toBe(true);
+    expect(sleep).toHaveBeenCalledWith(2000);
+  });
+
+  it("caps a long rate-limit wait so the step does not hang", async () => {
+    safeFetch
+      .mockResolvedValueOnce(mockResponse(429, { retry_after: 120 }))
+      .mockResolvedValueOnce(mockResponse(204));
+
+    await runStep(WEBHOOK_URL);
+
+    expect(sleep).toHaveBeenCalledWith(10_000);
+  });
+
+  it("retries 5xx with linear backoff and reports EXTERNAL when exhausted", async () => {
+    safeFetch.mockResolvedValue(mockResponse(502, { message: "Bad gateway" }));
+
+    const result = await runStep(WEBHOOK_URL);
+
+    expect(result).toEqual({
+      success: false,
+      error: "Bad gateway",
+      errorClass: ExecutionErrorType.EXTERNAL,
+    });
+    // Default: one attempt plus three retries.
+    expect(safeFetch).toHaveBeenCalledTimes(4);
+    expect(sleep.mock.calls.map((call) => call[0])).toEqual([1000, 2000, 3000]);
+  });
+
+  it("retries a network error and succeeds on a later attempt", async () => {
+    safeFetch
+      .mockRejectedValueOnce(new Error("connect ECONNRESET"))
+      .mockResolvedValueOnce(mockResponse(200, { id: "msg-1" }));
+
+    const result = await runStep(WEBHOOK_URL);
+
+    expect(result).toEqual({ success: true, messageId: "msg-1" });
+    expect(safeFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry a non-transient 4xx", async () => {
+    safeFetch.mockResolvedValue(
+      mockResponse(400, {
+        message: "Cannot send an empty message",
+        code: 50_006,
+      })
+    );
+
+    const result = await runStep(WEBHOOK_URL);
+
+    expect(result).toEqual({
+      success: false,
+      error: "Cannot send an empty message",
+      errorClass: ExecutionErrorType.USER,
+    });
+    expect(safeFetch).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("honours a retry count and delay set from the editor as strings", async () => {
+    safeFetch.mockResolvedValue(mockResponse(503));
+
+    const result = await runStep(WEBHOOK_URL, {
+      retryAttempts: "1",
+      retryDelay: "5",
+    });
+
+    expect(result.success).toBe(false);
+    expect(safeFetch).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(sleep).toHaveBeenCalledWith(5000);
+  });
+
+  it("sends exactly once when retries are set to 0", async () => {
+    safeFetch.mockResolvedValue(mockResponse(429, { retry_after: 1 }));
+
+    const result = await runStep(WEBHOOK_URL, { retryAttempts: 0 });
+
+    expect(result.success).toBe(false);
+    expect(safeFetch).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("clamps an out-of-range retry count to the maximum", async () => {
+    safeFetch.mockResolvedValue(mockResponse(500));
+
+    await runStep(WEBHOOK_URL, { retryAttempts: 99, retryDelay: 0 });
+
+    // One attempt plus the maximum of five retries.
+    expect(safeFetch).toHaveBeenCalledTimes(6);
+    expect(sleep).not.toHaveBeenCalled();
   });
 });
