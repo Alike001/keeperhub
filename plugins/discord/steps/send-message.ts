@@ -43,16 +43,17 @@ const DISCORD_WEBHOOK_HOSTS = new Set(["discord.com", "discordapp.com"]);
  * Retry policy for transient Discord failures. The workflow engine's own
  * retries stay off for this step (maxRetries = 0 below), so this loop is the
  * only place a webhook post is re-attempted. The count and base delay come
- * from the node config (defaults below when unset). A 429 waits for the
- * interval Discord asks for; other transient failures back off linearly from
- * the configured delay. Every wait is capped at RETRY_MAX_DELAY_MS so a step
- * never hangs on a long global rate limit.
+ * from the node config and default to a single attempt, so a node only
+ * retries when its author opted in. A 429 waits for the interval Discord asks
+ * for; other transient failures back off linearly from the configured delay.
+ * Every wait is capped at RETRY_MAX_DELAY_MS so a step never hangs on a long
+ * global rate limit.
  */
-const DEFAULT_RETRY_ATTEMPTS = 3;
+const DEFAULT_RETRY_ATTEMPTS = 0;
 const MAX_RETRY_ATTEMPTS = 5;
 const DEFAULT_RETRY_DELAY_SECONDS = 1;
-const MAX_RETRY_DELAY_SECONDS = 30;
-const RETRY_MAX_DELAY_MS = 10_000;
+const MAX_RETRY_DELAY_SECONDS = 15;
+const RETRY_MAX_DELAY_MS = MAX_RETRY_DELAY_SECONDS * 1000;
 const HTTP_TOO_MANY_REQUESTS = 429;
 
 /**
@@ -71,7 +72,7 @@ function resolveRetryAttempts(raw: unknown): number {
   return Math.min(Math.max(0, Math.trunc(requested)), MAX_RETRY_ATTEMPTS);
 }
 
-/** Resolve the base backoff delay in milliseconds, clamped to [0, 30]s. */
+/** Resolve the base backoff delay in milliseconds, clamped to [0, 15]s. */
 function resolveRetryDelayMs(raw: unknown): number {
   if (raw === undefined || raw === null || raw === "") {
     return DEFAULT_RETRY_DELAY_SECONDS * 1000;

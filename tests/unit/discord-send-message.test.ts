@@ -146,7 +146,7 @@ describe("discord send-message retries", () => {
       )
       .mockResolvedValueOnce(mockResponse(204));
 
-    const result = await runStep(WEBHOOK_URL);
+    const result = await runStep(WEBHOOK_URL, { retryAttempts: 1 });
 
     expect(result).toEqual({ success: true, messageId: "sent" });
     expect(safeFetch).toHaveBeenCalledTimes(2);
@@ -159,7 +159,7 @@ describe("discord send-message retries", () => {
       .mockResolvedValueOnce(mockResponse(429, {}, { "retry-after": "2" }))
       .mockResolvedValueOnce(mockResponse(204));
 
-    const result = await runStep(WEBHOOK_URL);
+    const result = await runStep(WEBHOOK_URL, { retryAttempts: 1 });
 
     expect(result.success).toBe(true);
     expect(sleep).toHaveBeenCalledWith(2000);
@@ -170,22 +170,22 @@ describe("discord send-message retries", () => {
       .mockResolvedValueOnce(mockResponse(429, { retry_after: 120 }))
       .mockResolvedValueOnce(mockResponse(204));
 
-    await runStep(WEBHOOK_URL);
+    await runStep(WEBHOOK_URL, { retryAttempts: 1 });
 
-    expect(sleep).toHaveBeenCalledWith(10_000);
+    expect(sleep).toHaveBeenCalledWith(15_000);
   });
 
   it("retries 5xx with linear backoff and reports EXTERNAL when exhausted", async () => {
     safeFetch.mockResolvedValue(mockResponse(502, { message: "Bad gateway" }));
 
-    const result = await runStep(WEBHOOK_URL);
+    const result = await runStep(WEBHOOK_URL, { retryAttempts: 3 });
 
     expect(result).toEqual({
       success: false,
       error: "Bad gateway",
       errorClass: ExecutionErrorType.EXTERNAL,
     });
-    // Default: one attempt plus three retries.
+    // One attempt plus three retries, one second base delay by default.
     expect(safeFetch).toHaveBeenCalledTimes(4);
     expect(sleep.mock.calls.map((call) => call[0])).toEqual([1000, 2000, 3000]);
   });
@@ -195,7 +195,7 @@ describe("discord send-message retries", () => {
       .mockRejectedValueOnce(new Error("connect ECONNRESET"))
       .mockResolvedValueOnce(mockResponse(200, { id: "msg-1" }));
 
-    const result = await runStep(WEBHOOK_URL);
+    const result = await runStep(WEBHOOK_URL, { retryAttempts: 1 });
 
     expect(result).toEqual({ success: true, messageId: "msg-1" });
     expect(safeFetch).toHaveBeenCalledTimes(2);
@@ -209,7 +209,7 @@ describe("discord send-message retries", () => {
       })
     );
 
-    const result = await runStep(WEBHOOK_URL);
+    const result = await runStep(WEBHOOK_URL, { retryAttempts: 3 });
 
     expect(result).toEqual({
       success: false,
@@ -234,10 +234,10 @@ describe("discord send-message retries", () => {
     expect(sleep).toHaveBeenCalledWith(5000);
   });
 
-  it("sends exactly once when retries are set to 0", async () => {
+  it("sends exactly once by default, even on a 429", async () => {
     safeFetch.mockResolvedValue(mockResponse(429, { retry_after: 1 }));
 
-    const result = await runStep(WEBHOOK_URL, { retryAttempts: 0 });
+    const result = await runStep(WEBHOOK_URL);
 
     expect(result.success).toBe(false);
     expect(safeFetch).toHaveBeenCalledTimes(1);
@@ -252,5 +252,13 @@ describe("discord send-message retries", () => {
     // One attempt plus the maximum of five retries.
     expect(safeFetch).toHaveBeenCalledTimes(6);
     expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("clamps the retry delay to 15 seconds", async () => {
+    safeFetch.mockResolvedValue(mockResponse(500));
+
+    await runStep(WEBHOOK_URL, { retryAttempts: 1, retryDelay: 60 });
+
+    expect(sleep).toHaveBeenCalledWith(15_000);
   });
 });

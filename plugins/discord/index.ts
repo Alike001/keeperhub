@@ -65,23 +65,21 @@ const discordPlugin: IntegrationPlugin = {
           type: "number",
           min: 0,
           max: 5,
-          defaultValue: "3",
-          placeholder: "3",
-          example: "3",
-          helpTip:
-            "Extra attempts after the first when Discord rate-limits the webhook (429), returns a 5xx or the connection fails. A 429 waits as long as Discord asks. Default 3, max 5. Set 0 to send once.",
+          placeholder: "0",
+          example: "0",
+          helpText:
+            "Extra attempts after the first, for connection errors, timeouts, rate limits (429) and 5xx responses. Default 0, max 5.",
         },
         {
           key: "retryDelay",
           label: "Retry delay (seconds)",
           type: "number",
           min: 0,
-          max: 30,
-          defaultValue: "1",
+          max: 15,
           placeholder: "1",
           example: "1",
-          helpTip:
-            "Base wait between attempts for 5xx and connection errors, backing off linearly (attempt N waits delay x N seconds). Ignored on a 429, which uses the wait Discord reports. Default 1, max 30.",
+          helpText:
+            "Base wait between attempts, backing off linearly (attempt N waits delay x N). A 429 waits for the time Discord reports instead. Default 1, max 15.",
         },
       ],
     },
