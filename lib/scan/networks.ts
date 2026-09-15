@@ -12,10 +12,10 @@
  */
 export const SCAN_NETWORK_IDS: readonly number[] = [
   1, // Ethereum
-  560_048, // Ethereum Hoodi
   42_161, // Arbitrum
   8453, // Base
   10, // Optimism
   137, // Polygon
   4217, // Tempo (stablecoin-only — see STABLECOIN_ONLY_SCAN_CHAIN_IDS)
+  560_048, // Ethereum Hoodi
 ] as const;
