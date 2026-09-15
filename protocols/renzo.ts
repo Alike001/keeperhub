@@ -21,7 +21,7 @@ import restakeManagerAbi from "./abis/renzo-restake-manager.json";
 // deposit variants and the withdrawal queue are separate surfaces deferred to
 // a follow-up. Mainnet only: minting settles on the beacon chain.
 
-const RENZO_DOCS = "https://docs.renzoprotocol.com";
+const RENZO_DOCS = "https://docs.renzoprotocol.com/docs/contracts/ethereum-mainnet";
 
 const TEST_DATA: ProtocolTestData = {
   "1": {
@@ -37,16 +37,6 @@ const TEST_DATA: ProtocolTestData = {
       "ez-total-supply": {},
       // Write: stake native ETH for ezETH.
       stake: { ethValue: "0.02" },
-    },
-    skipped: {
-      // depositETH mints ezETH ~pro-rata to TVL; on a fork with no prior
-      // Renzo state the mint can round to zero for a tiny deposit, so the
-      // credit is asserted by the write-expectation rather than as a fixed
-      // amount. The write-expectation also covers unwrap indirectly: every
-      // stake fixture includes a post-write check that ezETH balance is
-      // non-zero, which exercises the same balance read unwrap would.
-      unwrap:
-        "covered indirectly by the stake write-expectation, which reads ez-balance-of",
     },
     // paused() is false on mainnet as of 2026-09-10; a flip to true is an
     // emergency stop that would make the stake action fail for users, so a red
