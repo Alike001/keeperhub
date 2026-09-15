@@ -2,6 +2,7 @@ import { z } from "zod";
 import { MAX_SEQUENCE_CALLS } from "@/lib/execute/simulate-sequence-limits";
 import { readErrorAbiDocuments } from "@/lib/web3/extra-error-abis";
 import { isValidOperator, VALID_OPERATORS } from "./condition";
+import { selectorOf } from "./raw-calldata";
 import type { ExecuteErrorResponse } from "./types";
 
 /**
@@ -162,6 +163,50 @@ function callSequenceError(
   return null;
 }
 
+// Checked here because a missing function key short-circuits this schema, so
+// nothing downstream would ever see `data`.
+function hasRawCalldataInput(record: Record<string, unknown>): boolean {
+  return "data" in record;
+}
+
+// Same rule as functionNameConflict: keyed on the keys being present, because
+// the route would otherwise decode one and quietly drop the other.
+function rawCalldataConflict(
+  record: Record<string, unknown>
+): ExecuteErrorResponse | null {
+  const named = "functionName" in record ? "functionName" : "abiFunction";
+  if (!(named in record)) {
+    return null;
+  }
+  return {
+    error: "Conflicting field values",
+    field: "data",
+    details: `data and ${named} describe the same call twice; send raw calldata in data, or the function key and functionArgs, not both.`,
+  };
+}
+
+function rawCalldataError(
+  record: Record<string, unknown>
+): ExecuteErrorResponse | null {
+  const data = record.data;
+  if (typeof data !== "string") {
+    return {
+      error: "Invalid field type",
+      field: "data",
+      details: "data must be a 0x-prefixed hex string",
+    };
+  }
+  const selector = selectorOf(data);
+  if (typeof selector !== "string") {
+    return {
+      error: "Invalid field value",
+      field: "data",
+      details: selector.error,
+    };
+  }
+  return null;
+}
+
 function requiredFieldError(field: string): ExecuteErrorResponse {
   return {
     error: "Missing required field",
@@ -307,7 +352,18 @@ export const contractCallInputSchema = objectBase.superRefine((record, ctx) => {
     addError(ctx, chainFieldError);
     return;
   }
-  if (!hasFunctionNameInput(record)) {
+  if (hasRawCalldataInput(record)) {
+    const conflict = rawCalldataConflict(record);
+    if (conflict) {
+      addError(ctx, conflict);
+      return;
+    }
+    const dataError = rawCalldataError(record);
+    if (dataError) {
+      addError(ctx, dataError);
+      return;
+    }
+  } else if (!hasFunctionNameInput(record)) {
     addError(ctx, requiredFieldError("functionName"));
     return;
   }

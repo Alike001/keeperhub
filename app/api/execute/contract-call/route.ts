@@ -41,6 +41,7 @@ import {
   withRejectedSignerOverride,
 } from "../_lib/execution-service";
 import { checkRateLimit } from "../_lib/rate-limit";
+import { isRawCalldataRequest, resolveRawCalldata } from "../_lib/raw-calldata";
 import { parseNativeValueEther } from "../_lib/reserved-value";
 import { parseSimulateFlag } from "../_lib/simulate-flag";
 import { sequenceHttpStatus } from "../_lib/simulation-response";
@@ -446,6 +447,29 @@ export async function POST(request: Request): Promise<NextResponse> {
       ),
       rateLimit
     );
+  }
+
+  // Decode `data` here so everything below keeps seeing a named function with
+  // typed arguments.
+  if (isRawCalldataRequest(body)) {
+    const rawAbi = await resolveAbiForRequest(body);
+    if ("error" in rawAbi) {
+      return NextResponse.json(
+        { error: rawAbi.error, field: "abi" },
+        { status: HttpStatus.BAD_REQUEST }
+      );
+    }
+    const decoded = resolveRawCalldata(body.data as string, rawAbi.abi);
+    if ("error" in decoded) {
+      return NextResponse.json(
+        { error: decoded.error, field: "data" },
+        { status: HttpStatus.BAD_REQUEST }
+      );
+    }
+    body.functionName = decoded.functionName;
+    body.functionArgs = decoded.functionArgs;
+    body.abi = rawAbi.abi;
+    body.data = undefined;
   }
 
   const abiResult = await resolveAbiForRequest(body);
