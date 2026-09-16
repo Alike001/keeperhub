@@ -11,6 +11,6 @@
     "name": "paused",
     "stateMutability": "view",
     "inputs": [],
-    "outputs": [{ "name": "", "type": "bool" }]
+    "outputs": [{ "name": "paused", "type": "bool" }]
   }
 ]

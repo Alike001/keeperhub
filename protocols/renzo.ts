@@ -44,7 +44,7 @@ const TEST_DATA: ProtocolTestData = {
     // suite there is signal. Total supply is five figures of ETH; zero means
     // the read decoded garbage.
     expectations: {
-      paused: [{ equals: "false" }],
+      paused: [{ field: "paused", equals: "false" }],
       "ez-total-supply": [{ field: "totalSupply", nonZero: true }],
     },
     // Simulation-tier post-write oracle: staking must actually credit ezETH.
@@ -92,8 +92,7 @@ export default defineAbiProtocol({
             "Read whether the Renzo Restake Manager is paused. Useful as a gate in a workflow to skip the stake action when deposits are halted.",
           docUrl: RENZO_DOCS,
           outputs: {
-            result: {
-              name: "paused",
+            paused: {
               label: "Deposits Paused",
             },
           },
