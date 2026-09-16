@@ -417,6 +417,29 @@ describe("safeEvaluateCondition - semantics", () => {
       expect(cmp("===", "1.0", "1")).toBe(true);
     });
 
+    it("answers the five rows the operator page prints", () => {
+      // docs/workflows/creating.md lists these under "What counts as a
+      // number". Two of them are not the all-false hole: two strings are
+      // ordered character by character, so a branch does run, on an answer
+      // that is not about magnitude. "0x10" < "16" because "0" sorts before
+      // "6"; "1e18" > "1000000000000000000" because "e" sorts after "0".
+      const rows: Array<[unknown, unknown, boolean, boolean, boolean]> = [
+        ["0x10", "16", true, false, false],
+        ["1e18", "1000000000000000000", false, false, true],
+        ["0x10", 16, false, false, false],
+        [1e21, "1000000000000000000000", false, false, false],
+        [" 1", 1, false, false, false],
+      ];
+      for (const [a, b, less, equal, greater] of rows) {
+        expect([String(a), lt(a, b), cmp("===", a, b), gt(a, b)]).toEqual([
+          String(a),
+          less,
+          equal,
+          greater,
+        ]);
+      }
+    });
+
     it("leaves a pair outside the decimal grammar where it was", () => {
       // The invariant above is the decimal grammar's, not every numeric-looking
       // pair's. Exponent and hex forms are outside it by construction - the
