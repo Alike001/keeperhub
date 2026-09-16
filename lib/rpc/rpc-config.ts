@@ -101,18 +101,16 @@ export const PUBLIC_RPCS = {
   ARC_TESTNET: "https://rpc.testnet.arc.io",
   ARC_TESTNET_FALLBACK: "https://rpc.drpc.testnet.arc.io",
   ARC_TESTNET_WSS: "wss://rpc.testnet.arc.io",
-  // Arc Mainnet (Circle). Same USDC-as-gas model as the testnet.
-  //
-  // One endpoint only, and no WSS, both deliberate. Every other mainnet
-  // hostname Circle documents is unreachable from a server: rpc.arc.network
-  // and rpc.arc.io have no DNS record at all, and rpc.mainnet.arc.io resolves
-  // but sits behind Cloudflare Access (403 without an SSO session). dRPC has
-  // no mainnet route - both arc.drpc.org and arc-mainnet.drpc.org answer
-  // "Unknown network" - so there is no second public endpoint to name as a
-  // publicFallback. rpc.arc-scan.org is the only host that serves JSON-RPC,
-  // and it refuses a WebSocket upgrade (405 on /, 404 on /ws), so there is no
-  // publicWssDefault either: see the CHAIN_CONFIG entry for what that costs.
-  ARC_MAINNET: "https://rpc.arc-scan.org",
+  // Arc Mainnet (Circle). Same USDC-as-gas model as the testnet. Public
+  // mainnet opened 2026-09-16; rpc.mainnet.arc.io is Circle's own primary and
+  // answers eth_chainId publicly (0x13b2 = 5042), so it replaces the
+  // arc-scan.org placeholder used before launch. dRPC's mainnet host now
+  // resolves too, unlike pre-launch, so it serves as publicFallback.
+  ARC_MAINNET: "https://rpc.mainnet.arc.io",
+  ARC_MAINNET_FALLBACK: "https://rpc.drpc.mainnet.arc.io",
+  // Blockdaemon's endpoint completes the WSS upgrade handshake with no API
+  // key required, unlike the Alchemy/QuickNode mirrors docs.arc.io lists.
+  ARC_MAINNET_WSS: "wss://rpc.blockdaemon.mainnet.arc.io/websocket",
 } as const;
 
 /**
@@ -328,24 +326,16 @@ export const CHAIN_CONFIG: Record<number, ChainConfigEntry> = {
     publicFallback: PUBLIC_RPCS.ARC_TESTNET_FALLBACK,
     publicWssDefault: PUBLIC_RPCS.ARC_TESTNET_WSS,
   },
-  // Arc Mainnet (Circle)
-  //
-  // No publicWssDefault, and none is coming: Arc mainnet publishes no public
-  // WebSocket endpoint at all (see PUBLIC_RPCS.ARC_MAINNET). getWssUrl
-  // therefore returns undefined unless CHAIN_RPC_CONFIG carries a
-  // primaryWssUrl, and seed-chains writes NULL into chains.defaultPrimaryWss.
-  // That is the sanctioned path for a WSS-less chain, but it is not free:
-  // event triggers are skipped per workflow by the event-tracker's
-  // workflow-mapper, and the block dispatcher's chain monitor throws and is
-  // dropped from the liveness map. Both are logged and neither crashes, but
-  // neither falls back to HTTP polling - so event and block triggers do not
-  // fire on Arc mainnet until an operator supplies a WSS URL through
-  // chain-config. Scheduled and manual triggers are unaffected.
+  // Arc Mainnet (Circle). Public mainnet opened 2026-09-16 with a working
+  // WSS endpoint (see PUBLIC_RPCS.ARC_MAINNET_WSS), unlike the pre-launch
+  // state where no mainnet WSS host existed at all.
   5042: {
     jsonKey: "arc-mainnet",
     envKey: "CHAIN_ARC_MAINNET_PRIMARY_RPC",
     fallbackEnvKey: "CHAIN_ARC_MAINNET_FALLBACK_RPC",
     publicDefault: PUBLIC_RPCS.ARC_MAINNET,
+    publicFallback: PUBLIC_RPCS.ARC_MAINNET_FALLBACK,
+    publicWssDefault: PUBLIC_RPCS.ARC_MAINNET_WSS,
   },
 };
 

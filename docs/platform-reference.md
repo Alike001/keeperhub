@@ -175,13 +175,11 @@ transfer access; it reports balances at 6 decimals, distinct from the
 18-decimal native currency accounting used for gas. The same precompile is at
 the same address on both Arc networks.
 
-Arc mainnet has two limitations the testnet does not. Circle publishes no
-public WebSocket endpoint for it, so **event and block triggers do not fire on
-Arc mainnet** unless your deployment supplies a WSS URL of its own; scheduled,
-manual and webhook triggers work normally. It also has no reachable block
-explorer, so transaction and address links are unavailable and contract ABIs
-cannot be fetched automatically - supply the ABI directly when configuring a
-contract action.
+Arc mainnet has one limitation the testnet does not: it has no reachable
+public block explorer, so transaction and address links are unavailable and
+contract ABIs cannot be fetched automatically - supply the ABI directly when
+configuring a contract action. Event and block triggers work normally on both
+networks.
 
 The live source of truth for chains is `GET /api/chains`; agents can read the
 same list (including per-chain `status`) from the `list_action_schemas` MCP
