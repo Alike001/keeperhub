@@ -1,15 +1,7 @@
+import { hasIndependentTokenList } from "@/lib/web3/independent-token-list-chains";
+
 // TEMPO uses stablecoins for gas, so we display stablecoins only (no native token)
 const TEMPO_CHAIN_IDS: ReadonlySet<number> = new Set([42_431, 4217]);
-
-// Chains whose token lineup doesn't mirror Ethereum mainnet's stablecoin set
-// (e.g. Plasma ships USDT0, no Circle USDC, no Sky USDS; HyperEVM has USDC and
-// USDT0 but no USDS). For these chains we render the chain's own
-// supported_tokens rows directly instead of overlaying them on the mainnet
-// master list, which would otherwise produce misleading "Not available" entries
-// for assets that simply don't exist on the chain.
-const INDEPENDENT_TOKEN_LIST_CHAIN_IDS: ReadonlySet<number> = new Set([
-  42_431, 4217, 9745, 999,
-]);
 
 export const MAINNET_CHAIN_ID = 1;
 
@@ -17,9 +9,10 @@ export function isTempoChain(chainId: number): boolean {
   return TEMPO_CHAIN_IDS.has(chainId);
 }
 
-export function hasIndependentTokenList(chainId: number): boolean {
-  return INDEPENDENT_TOKEN_LIST_CHAIN_IDS.has(chainId);
-}
+// Re-exported so wallet components keep importing chain helpers from one
+// place; the list itself lives in lib/web3 because the supported-tokens API
+// route needs the same answer.
+export { hasIndependentTokenList };
 
 // Display order for the wallet UI. Mainnets land at indexes 0-9, testnets at
 // 10-19, anything else falls back to 999 and sorts after the curated list.

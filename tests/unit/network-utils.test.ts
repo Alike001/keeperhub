@@ -37,8 +37,12 @@ describe("getChainIdFromNetwork", () => {
     });
 
     it("should not guess hyperliquid, which also names the non-EVM HyperCore", () => {
+      // Asserted on the whole message rather than a substring: a message
+      // that grew a "did you mean hyperevm?" suffix would still contain
+      // this text while having started guessing, which is the thing the
+      // test exists to prevent.
       expect(() => getChainIdFromNetwork("hyperliquid")).toThrow(
-        "Unsupported network: hyperliquid"
+        /^Unsupported network: hyperliquid\. Supported:/
       );
     });
 
