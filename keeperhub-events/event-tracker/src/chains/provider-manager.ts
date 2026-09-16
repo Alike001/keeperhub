@@ -1783,7 +1783,7 @@ export class ChainProviderManager {
       if (
         !this.isDestroyed &&
         entry.provider &&
-        (entry.subscribers.size > 0 || entry.stateSubscribers.size > 0)
+        entry.subscribers.size > 0
       ) {
         this.armCatchUp(entry, GETLOGS_MIN_INTERVAL_MS);
       }
@@ -1852,10 +1852,10 @@ export class ChainProviderManager {
 
     this.attachErrorListener(entry);
     // Block listener and heartbeat only if this chain has subscribers.
-    // Both are subscriber-scoped; if every subscriber unsubscribed
-    // during the reconnect, the new provider stays quiet until someone
-    // subscribes again.
-    if (entry.subscribers.size > 0) {
+    // Both listeners are subscriber-scoped; if every subscriber of either
+    // kind unsubscribed during the reconnect, the new provider stays quiet
+    // until someone subscribes again.
+    if (entry.subscribers.size > 0 || entry.stateSubscribers.size > 0) {
       this.attachBlockListener(entry);
       this.startHeartbeat(entry);
       // The catch-up for anything owed from before the drop is armed by
