@@ -61,7 +61,11 @@ export type ActionConfigFieldBase = {
     | "protocol-bool" // Boolean select (true/false) with template variable support
     | "protocol-bytes" // Hex input with 0x-prefix validation
     | "protocol-eth-value" // Decimal ETH value input (e.g. 0.1, 1.5)
-    | "protocol-tuple-array"; // Structured array of tuple items (e.g. tokenAmounts)
+    | "protocol-tuple-array" // Structured array of tuple items (e.g. tokenAmounts)
+    | "pagerduty-service-select" // Services read live from the node's PagerDuty connection
+    | "pagerduty-escalation-policy-select" // Escalation policies read live from that connection
+    | "pagerduty-preview" // Read-only payload and incident preview for a PagerDuty node
+    | "pagerduty-backup-connection-select"; // Existing Discord/Slack/Telegram connection used when a page fails
 
   // For chain-select: filter by chain type - one ("evm") or several (["evm", "solana"])
   chainTypeFilter?: string | string[];

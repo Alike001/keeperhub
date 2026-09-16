@@ -8,6 +8,7 @@
  * extensions are registered before components are rendered.
  */
 
+import { useAtomValue } from "jotai";
 import { KeeperHubLogo } from "@/components/icons/keeperhub-logo";
 import { SendGridConnectionSection } from "@/components/settings/sendgrid-connection-section";
 import { Web3WalletSection } from "@/components/settings/web3-wallet-section";
@@ -23,7 +24,14 @@ import {
 import { CodeEditorField } from "@/components/workflow/config/code-editor-field";
 import { FailOnErrorSwitchField } from "@/components/workflow/config/fail-on-error-switch-field";
 import { GasLimitMultiplierField } from "@/components/workflow/config/gas-limit-multiplier-field";
+import { PagerDutyPreviewField } from "@/components/workflow/config/pagerduty-preview-field";
+import {
+  PagerDutyBackupConnectionField,
+  PagerDutyEscalationPolicyField,
+  PagerDutyServiceField,
+} from "@/components/workflow/config/pagerduty-resource-field";
 import { TokenSelectField } from "@/components/workflow/config/token-select-field";
+import { integrationsAtom } from "@/lib/integrations-store";
 import {
   registerBranding,
   registerFieldRenderer,
@@ -633,3 +641,108 @@ registerBranding({
 
 // Export a flag to indicate extensions are loaded
 export const KEEPERHUB_EXTENSIONS_LOADED = true;
+
+/** Narrow an unknown config value to the string the pickers expect. */
+function configString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+/**
+ * PagerDuty pickers and preview.
+ *
+ * All three read `config.integrationId` - the connection selected on the node
+ * - and fetch through the server, so no PagerDuty credential reaches the
+ * browser. The node stores ids only; the names shown come from PagerDuty on
+ * every load, so a renamed service or policy needs no migration.
+ */
+registerFieldRenderer(
+  "pagerduty-service-select",
+  ({ field, config, onUpdateConfig, disabled }) => (
+    <div className="space-y-2" key={field.key}>
+      <Label className="ml-1" htmlFor={field.key}>
+        {field.label}
+        {field.required && <span className="ml-0.5 text-red-500">*</span>}
+      </Label>
+      <PagerDutyServiceField
+        disabled={disabled}
+        integrationId={configString(config.integrationId) || undefined}
+        onChange={(value) => onUpdateConfig(field.key, value)}
+        value={configString(config[field.key])}
+      />
+      {field.helpText && (
+        <p className="text-muted-foreground text-xs">{field.helpText}</p>
+      )}
+    </div>
+  )
+);
+
+registerFieldRenderer(
+  "pagerduty-escalation-policy-select",
+  ({ field, config, onUpdateConfig, disabled }) => (
+    <div className="space-y-2" key={field.key}>
+      <Label className="ml-1" htmlFor={field.key}>
+        {field.label}
+      </Label>
+      <PagerDutyEscalationPolicyField
+        disabled={disabled}
+        integrationId={configString(config.integrationId) || undefined}
+        onChange={(value) => onUpdateConfig(field.key, value)}
+        value={configString(config[field.key])}
+      />
+      {field.helpText && (
+        <p className="text-muted-foreground text-xs">{field.helpText}</p>
+      )}
+    </div>
+  )
+);
+
+registerFieldRenderer("pagerduty-preview", ({ field, config, disabled }) => (
+  <div className="space-y-2" key={field.key}>
+    <Label className="ml-1">{field.label}</Label>
+    <PagerDutyPreviewField config={config} disabled={disabled} />
+  </div>
+));
+
+registerFieldRenderer(
+  "pagerduty-backup-connection-select",
+  ({ field, config, onUpdateConfig, disabled }) => (
+    <div className="space-y-2" key={field.key}>
+      <Label className="ml-1" htmlFor={field.key}>
+        {field.label}
+      </Label>
+      <PagerDutyBackupConnectionFieldConnected
+        disabled={disabled}
+        onChange={(value) => onUpdateConfig(field.key, value)}
+        value={configString(config[field.key])}
+      />
+      {field.helpText && (
+        <p className="text-muted-foreground text-xs">{field.helpText}</p>
+      )}
+    </div>
+  )
+);
+
+/** Reads the org's connections from the store the editor already keeps loaded. */
+function PagerDutyBackupConnectionFieldConnected({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const connections = useAtomValue(integrationsAtom);
+  return (
+    <PagerDutyBackupConnectionField
+      connections={connections.map((connection) => ({
+        id: connection.id,
+        name: connection.name,
+        type: connection.type,
+      }))}
+      disabled={disabled}
+      onChange={onChange}
+      value={value}
+    />
+  );
+}

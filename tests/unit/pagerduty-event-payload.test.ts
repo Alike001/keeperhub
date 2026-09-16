@@ -1,0 +1,146 @@
+import { describe, expect, it } from "vitest";
+import {
+  buildTriggerEvent,
+  buildUpdateEvent,
+  deriveDedupKey,
+  MAX_DEDUP_KEY_CHARS,
+  MAX_EVENT_BYTES,
+  MAX_SUMMARY_CHARS,
+  normaliseSeverity,
+  truncateRunes,
+} from "@/plugins/pagerduty/event-payload";
+
+const BASE_INPUT = {
+  summary: "Keeper stalled",
+  severity: "error",
+  source: "keeper-watchdog",
+};
+
+function build(overrides: Record<string, unknown> = {}) {
+  return buildTriggerEvent({
+    routingKey: "R0123456789ABCDEF0123456789ABCDE",
+    dedupKey: "keeperhub/wf/node",
+    timestamp: "2026-09-16T10:00:00.000Z",
+    input: { ...BASE_INPUT, ...overrides },
+  });
+}
+
+describe("truncateRunes", () => {
+  it("leaves a short string alone", () => {
+    expect(truncateRunes("short", 10)).toBe("short");
+  });
+
+  it("counts runes, not code units, so an emoji is not cut in half", () => {
+    const value = "ab\u{1F600}cd";
+    expect(truncateRunes(value, 3)).toBe("ab\u{1F600}");
+  });
+});
+
+describe("normaliseSeverity", () => {
+  it.each(["critical", "error", "warning", "info"])("accepts %s", (value) => {
+    expect(normaliseSeverity(value)).toBe(value);
+  });
+
+  it("is case and whitespace insensitive", () => {
+    expect(normaliseSeverity("  CRITICAL ")).toBe("critical");
+  });
+
+  it("falls back to error for anything else", () => {
+    expect(normaliseSeverity("catastrophic")).toBe("error");
+    expect(normaliseSeverity(undefined)).toBe("error");
+    expect(normaliseSeverity(42)).toBe("error");
+  });
+});
+
+describe("deriveDedupKey", () => {
+  it("uses the configured key when there is one", () => {
+    expect(deriveDedupKey("  vault-7  ", {})).toBe("vault-7");
+  });
+
+  it("derives a node-scoped key so repeat runs group into one alert", () => {
+    expect(deriveDedupKey(undefined, { workflowId: "wf1", nodeId: "n3" })).toBe(
+      "keeperhub/wf1/n3"
+    );
+  });
+
+  it("is stable across runs of the same node", () => {
+    const context = { workflowId: "wf1", nodeId: "n3" };
+    expect(deriveDedupKey("", context)).toBe(deriveDedupKey("", context));
+  });
+
+  it("caps the key at PagerDuty's limit", () => {
+    const key = deriveDedupKey("x".repeat(400), {});
+    expect(key).toHaveLength(MAX_DEDUP_KEY_CHARS);
+  });
+});
+
+describe("buildTriggerEvent", () => {
+  it("sends the fields PagerDuty requires", () => {
+    const { body } = build();
+    expect(body.routing_key).toBe("R0123456789ABCDEF0123456789ABCDE");
+    expect(body.event_action).toBe("trigger");
+    expect(body.dedup_key).toBe("keeperhub/wf/node");
+    expect(body.payload?.summary).toBe("Keeper stalled");
+    expect(body.payload?.severity).toBe("error");
+    expect(body.payload?.source).toBe("keeper-watchdog");
+    expect(body.payload?.timestamp).toBe("2026-09-16T10:00:00.000Z");
+  });
+
+  it("truncates the summary to the documented limit", () => {
+    const { body } = build({ summary: "a".repeat(MAX_SUMMARY_CHARS + 500) });
+    expect(body.payload?.summary).toHaveLength(MAX_SUMMARY_CHARS);
+  });
+
+  it("omits blank optional fields rather than sending empty strings", () => {
+    const { body } = build({ component: "   ", group: "", class: undefined });
+    expect(body.payload?.component).toBeUndefined();
+    expect(body.payload?.group).toBeUndefined();
+    expect(body.payload?.class).toBeUndefined();
+  });
+
+  it("keeps custom details that fit", () => {
+    const { body, detailsDropped } = build({
+      customDetails: { vault: "0xabc" },
+    });
+    expect(detailsDropped).toBe(false);
+    expect(body.payload?.custom_details).toEqual({ vault: "0xabc" });
+  });
+
+  it("drops oversized custom details and says why, instead of losing the page", () => {
+    const { body, detailsDropped } = build({
+      customDetails: { blob: "x".repeat(MAX_EVENT_BYTES) },
+    });
+    expect(detailsDropped).toBe(true);
+    expect(JSON.stringify(body.payload?.custom_details)).toContain(
+      "Custom details were removed"
+    );
+    expect(Buffer.byteLength(JSON.stringify(body), "utf8")).toBeLessThan(
+      MAX_EVENT_BYTES
+    );
+    // The alert itself survives: summary and routing are untouched.
+    expect(body.payload?.summary).toBe("Keeper stalled");
+    expect(body.routing_key).toBe("R0123456789ABCDEF0123456789ABCDE");
+  });
+
+  it("normalises an unknown severity rather than letting PagerDuty reject it", () => {
+    const { body } = build({ severity: "disaster" });
+    expect(body.payload?.severity).toBe("error");
+  });
+});
+
+describe("buildUpdateEvent", () => {
+  it("carries only what an acknowledge or resolve needs", () => {
+    const body = buildUpdateEvent({
+      routingKey: "R1",
+      dedupKey: "vault-7",
+      action: "resolve",
+    });
+    expect(body).toEqual({
+      routing_key: "R1",
+      event_action: "resolve",
+      dedup_key: "vault-7",
+    });
+    // PagerDuty ignores a payload on these actions; sending one is noise.
+    expect(body.payload).toBeUndefined();
+  });
+});

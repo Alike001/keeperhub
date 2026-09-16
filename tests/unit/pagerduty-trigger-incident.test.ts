@@ -1,0 +1,296 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("server-only", () => ({}));
+
+vi.mock("@/lib/workflow/executor/step-handler", async () =>
+  (await import("../mocks/step-mocks")).stepHandlerPassthrough()
+);
+vi.mock("@/lib/metrics/instrumentation/plugin", async () =>
+  (await import("../mocks/step-mocks")).pluginMetricsPassthrough()
+);
+
+vi.mock("@/lib/logging", () => ({
+  ErrorCategory: {
+    CONFIGURATION: "configuration",
+    VALIDATION: "validation",
+    EXTERNAL_SERVICE: "external_service",
+  },
+  logUserError: vi.fn(),
+}));
+
+const { safeFetch } = vi.hoisted(() => ({ safeFetch: vi.fn() }));
+vi.mock("@/lib/safe-fetch", () => ({
+  safeFetch,
+  SsrfBlockedError: class SsrfBlockedError extends Error {},
+}));
+
+const { mockFetchCredentials } = vi.hoisted(() => ({
+  mockFetchCredentials: vi.fn(),
+}));
+vi.mock("@/lib/credential-fetcher", () => ({
+  fetchCredentials: (...args: unknown[]) => mockFetchCredentials(...args),
+}));
+
+vi.mock("@/lib/sleep", () => ({ sleep: vi.fn().mockResolvedValue(undefined) }));
+
+const { mockCountConsecutiveRuns } = vi.hoisted(() => ({
+  mockCountConsecutiveRuns: vi.fn(),
+}));
+vi.mock("@/plugins/pagerduty/steps/consecutive-core", async (original) => {
+  const actual =
+    await original<
+      typeof import("@/plugins/pagerduty/steps/consecutive-core")
+    >();
+  return {
+    ...actual,
+    countConsecutiveRuns: (...args: unknown[]) =>
+      mockCountConsecutiveRuns(...args),
+  };
+});
+
+import { clearOAuthTokenCache } from "@/plugins/pagerduty/steps/pagerduty-core";
+import { triggerIncidentStep } from "@/plugins/pagerduty/steps/trigger-incident";
+
+const CONTEXT = {
+  nodeId: "node-3",
+  nodeName: "Page on-call",
+  nodeType: "pagerduty/trigger-incident",
+  workflowId: "wf-8",
+  executionId: "exec-1",
+  organizationId: "org-1",
+};
+
+function response(status: number, body: unknown = {}) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get: () => null },
+    json: () => Promise.resolve(body),
+  };
+}
+
+/** Service lookup, then integration lookup, then the event itself. */
+function mockHappyPath(eventStatus = 202) {
+  safeFetch
+    .mockResolvedValueOnce(
+      response(200, {
+        service: {
+          id: "PSKY1",
+          integrations: [
+            { id: "PI1", type: "events_api_v2_inbound_integration" },
+          ],
+        },
+      })
+    )
+    .mockResolvedValueOnce(
+      response(200, { integration: { integration_key: "R1" } })
+    )
+    .mockResolvedValueOnce(
+      response(eventStatus, {
+        status: "success",
+        dedup_key: "keeperhub/wf-8/node-3",
+      })
+    );
+}
+
+function run(overrides: Record<string, unknown> = {}) {
+  return triggerIncidentStep({
+    integrationId: "int-1",
+    pagerdutyServiceId: "PSKY1",
+    summary: "Keeper stalled",
+    _context: CONTEXT,
+    ...overrides,
+  } as never);
+}
+
+beforeEach(() => {
+  safeFetch.mockReset();
+  mockFetchCredentials.mockReset();
+  mockFetchCredentials.mockResolvedValue({ PAGERDUTY_API_TOKEN: "t" });
+  mockCountConsecutiveRuns.mockReset();
+  mockCountConsecutiveRuns.mockResolvedValue(1);
+  clearOAuthTokenCache();
+});
+
+describe("trigger incident", () => {
+  it("resolves the routing key from the service and sends the event", async () => {
+    mockHappyPath();
+    const result = await run();
+
+    expect(result).toMatchObject({
+      success: true,
+      delivered: true,
+      status: "triggered",
+      dedupKey: "keeperhub/wf-8/node-3",
+    });
+
+    const [eventUrl, eventInit] = safeFetch.mock.calls[2] as [
+      string,
+      Record<string, unknown>,
+    ];
+    expect(eventUrl).toBe("https://events.pagerduty.com/v2/enqueue");
+    const body = JSON.parse(String(eventInit.body));
+    expect(body.routing_key).toBe("R1");
+    expect(body.event_action).toBe("trigger");
+    expect(body.payload.source).toBe("Page on-call");
+    expect(body.payload.custom_details.keeperhub_workflow_id).toBe("wf-8");
+  });
+
+  it("never lets the routing key into the step output", async () => {
+    mockHappyPath();
+    const result = await run();
+    expect(JSON.stringify(result)).not.toContain("R1");
+  });
+
+  it("refuses a run with no service selected", async () => {
+    const result = await run({ pagerdutyServiceId: "" });
+    expect(result).toMatchObject({ success: false });
+    expect(safeFetch).not.toHaveBeenCalled();
+  });
+
+  it("refuses a summary that templated to nothing, rather than sending a blank alert", async () => {
+    const result = await run({ summary: "   " });
+    expect(result).toMatchObject({ success: false });
+    if (!result.success) {
+      expect(result.error).toContain("Summary is empty");
+    }
+    expect(safeFetch).not.toHaveBeenCalled();
+  });
+
+  it("holds the page until the configured run streak is reached", async () => {
+    mockCountConsecutiveRuns.mockResolvedValue(1);
+    const result = await run({ consecutiveRuns: 3 });
+
+    expect(result).toMatchObject({
+      success: true,
+      delivered: false,
+      status: "held",
+      consecutiveRuns: 1,
+      requiredRuns: 3,
+    });
+    expect(safeFetch).not.toHaveBeenCalled();
+  });
+
+  it("pages once the streak is reached", async () => {
+    mockCountConsecutiveRuns.mockResolvedValue(3);
+    mockHappyPath();
+    const result = await run({ consecutiveRuns: 3 });
+    expect(result).toMatchObject({ delivered: true, status: "triggered" });
+  });
+
+  it("fails the run when PagerDuty will not take the event", async () => {
+    safeFetch.mockResolvedValue(response(404, {}));
+    const result = await run();
+    expect(result).toMatchObject({ success: false });
+    if (!result.success) {
+      expect(result.error).toContain("no longer exists");
+    }
+  });
+
+  it("soft-fails with delivered false when the node is set to continue", async () => {
+    safeFetch.mockResolvedValue(response(404, {}));
+    const result = await run({ failOnError: false });
+    expect(result).toMatchObject({ success: true, delivered: false });
+    if (result.success) {
+      expect(result.error).toContain("no longer exists");
+    }
+  });
+
+  it("sends the backup notification when the page cannot be delivered", async () => {
+    safeFetch
+      .mockResolvedValueOnce(response(404, {}))
+      .mockResolvedValueOnce(response(204, {}));
+    mockFetchCredentials
+      .mockResolvedValueOnce({ PAGERDUTY_API_TOKEN: "t" })
+      .mockResolvedValueOnce({
+        webhookUrl: "https://discord.com/api/webhooks/1/abc",
+      });
+
+    const result = await run({
+      failOnError: false,
+      backupIntegrationId: "int-discord",
+    });
+
+    expect(result).toMatchObject({
+      delivered: false,
+      backupAttempted: true,
+      backupDelivered: true,
+      backupChannel: "discord",
+    });
+    const [backupUrl, backupInit] = safeFetch.mock.calls[1] as [
+      string,
+      Record<string, unknown>,
+    ];
+    expect(backupUrl).toBe("https://discord.com/api/webhooks/1/abc");
+    expect(String(backupInit.body)).toContain("PagerDuty page FAILED");
+  });
+
+  it("reports a backup that itself failed, rather than swallowing it", async () => {
+    safeFetch
+      .mockResolvedValueOnce(response(404, {}))
+      .mockResolvedValueOnce(response(500, {}));
+    mockFetchCredentials
+      .mockResolvedValueOnce({ PAGERDUTY_API_TOKEN: "t" })
+      .mockResolvedValueOnce({
+        webhookUrl: "https://discord.com/api/webhooks/1/abc",
+      });
+
+    const result = await run({
+      failOnError: false,
+      backupIntegrationId: "int-discord",
+    });
+    expect(result).toMatchObject({
+      backupAttempted: true,
+      backupDelivered: false,
+    });
+  });
+
+  it("refuses a backup connection that is not a messaging connection", async () => {
+    safeFetch.mockResolvedValueOnce(response(404, {}));
+    mockFetchCredentials
+      .mockResolvedValueOnce({ PAGERDUTY_API_TOKEN: "t" })
+      .mockResolvedValueOnce({});
+
+    const result = await run({
+      failOnError: false,
+      backupIntegrationId: "int-unknown",
+    });
+    expect(result).toMatchObject({
+      backupAttempted: true,
+      backupDelivered: false,
+    });
+  });
+
+  it("retries a rate limit and succeeds on the second attempt", async () => {
+    safeFetch
+      .mockResolvedValueOnce(
+        response(200, {
+          service: {
+            integrations: [
+              { id: "PI1", type: "events_api_v2_inbound_integration" },
+            ],
+          },
+        })
+      )
+      .mockResolvedValueOnce(
+        response(200, { integration: { integration_key: "R1" } })
+      )
+      .mockResolvedValueOnce(response(429, {}))
+      .mockResolvedValueOnce(response(202, { dedup_key: "k" }));
+
+    const result = await run({ retryAttempts: 2 });
+    expect(result).toMatchObject({ delivered: true });
+    expect(safeFetch).toHaveBeenCalledTimes(4);
+  });
+
+  it("uses an explicit dedup key when the author gives one", async () => {
+    mockHappyPath();
+    await run({ dedupKey: "vault-7" });
+    const body = JSON.parse(
+      String(
+        (safeFetch.mock.calls[2] as [string, Record<string, unknown>])[1].body
+      )
+    );
+    expect(body.dedup_key).toBe("vault-7");
+  });
+});
