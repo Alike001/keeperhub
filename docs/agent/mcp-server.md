@@ -264,7 +264,7 @@ and the authoritative safe first-write sequence.
 
 | Tool | Description |
 |------|-------------|
-| `search_protocol_actions` | Search available protocol actions across supported DeFi protocols. Call this first to discover actions and their parameters. |
+| `search_protocol_actions` | Search available protocol actions across supported DeFi protocols. Call this first to discover actions and their parameters. Each result includes `directExecutionSupported`; when false, use workflow execution instead of `execute_protocol_action`. |
 | `execute_protocol_action` | Execute a DeFi protocol action. The `actionType` follows `protocol/action-slug` (for example `aave-v3/supply`). |
 
 ### AI Generation

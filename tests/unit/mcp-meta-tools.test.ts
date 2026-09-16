@@ -1247,7 +1247,10 @@ describe("search_protocol_actions: query filtering", () => {
     };
     return JSON.parse(result.content[0].text) as {
       count: number;
-      actions: Array<{ actionType: string }>;
+      actions: Array<{
+        actionType: string;
+        directExecutionSupported: boolean;
+      }>;
       hint?: string;
     };
   }
@@ -1300,5 +1303,23 @@ describe("search_protocol_actions: query filtering", () => {
     const body = await invokeSearch({});
     expect(body.count).toBe(3);
     expect(body.hint).toBeUndefined();
+  });
+
+  it("Test 36: reports direct execution support from the protocol registry", async () => {
+    const body = await invokeSearch({});
+
+    expect(
+      body.actions.find(
+        (action) => action.actionType === "uniswap/swap-exact-input"
+      )?.directExecutionSupported
+    ).toBe(true);
+    expect(
+      body.actions.find((action) => action.actionType === "web3/approve-token")
+        ?.directExecutionSupported
+    ).toBe(false);
+    expect(
+      body.actions.find((action) => action.actionType === "web3/check-balance")
+        ?.directExecutionSupported
+    ).toBe(false);
   });
 });
