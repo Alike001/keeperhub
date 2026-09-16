@@ -1709,6 +1709,18 @@ export function registerTools(
           "- simulation is EVM-only; Solana chain IDs 101/103 and their aliases are rejected before the API call",
           "- view/pure calls and unmet conditions return their normal read/no-action result",
           "",
+          "DIRECT EXECUTION: SIMULATE RESPONSE SHAPE",
+          "execute_transfer and execute_contract_call return the same simulate shape:",
+          "- Success: {success: true, status: \"simulated\", from, to, value, gasEstimate, simulatedReturnValue, wouldRevert: false}",
+          "- Failure: {success: false, status: \"simulated\", from, to, value, error, failureKind, wouldRevert, revertReason?, code?, balanceWei?, requiredWei?, shortfallWei?}",
+          "- failureKind is \"validation\", \"revert\", or \"unavailable\". \"unavailable\" means the simulator itself failed (RPC/infra), NOT that the call would succeed -- it still reports wouldRevert: false, so always branch on success===true AND wouldRevert===false together, never on wouldRevert alone",
+          "- code: \"insufficient_balance\" is set when the sender cannot cover value; balanceWei/requiredWei/shortfallWei are then present",
+          "execute_check_and_execute's simulate response has three distinct branches, not one shared shape:",
+          "- Condition not met: {success, status, executed: false, conditionResult} -- no gasEstimate, no wouldRevert (no call was made)",
+          "- Condition met, action is view/pure: {success, status, executed: true, conditionResult, result} -- no gasEstimate, no wouldRevert",
+          "- Condition met, action is a write: the full simulate shape above, plus executed and conditionResult",
+          "Full field-by-field docs: https://docs.keeperhub.com/api/direct-execution#dry-run-simulation",
+          "",
           "TEMPLATE SYNTAX",
           "Reference outputs from previous nodes using: {{@nodeId:Label.field}}",
           "Example: {{@check-balance:Check Balance.balance}}",
@@ -1734,7 +1746,7 @@ export function registerTools(
 
   server.tool(
     "execute_transfer",
-    "Transfer native tokens (ETH, MATIC) or ERC20 tokens from your wallet to a recipient address. Requires a wallet integration.",
+    "Transfer native tokens (ETH, MATIC) or ERC20 tokens from your wallet to a recipient address. Requires a wallet integration. Full simulate response shape (success/failure fields, failureKind values): https://docs.keeperhub.com/api/direct-execution#dry-run-simulation",
     {
       chain_id: looseString(
         "Chain ID (e.g., '1' for Ethereum, '8453' for Base, or '103' for Solana Devnet). Solana transfers can broadcast, but simulate is currently EVM-only."
@@ -1785,7 +1797,7 @@ export function registerTools(
 
   server.tool(
     "execute_contract_call",
-    'Call a smart contract function. For view/pure functions, returns the result directly. For state-changing functions, submits a transaction and returns the execution ID. Requires a wallet integration for write calls. Full example: {"contract_address": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238", "chain_id": "11155111", "function_name": "transfer", "function_args": "[\\"0xRecipient...\\", \\"1000\\"]"} - note that function_args is a JSON array encoded as a string.',
+    'Call a smart contract function. For view/pure functions, returns the result directly. For state-changing functions, submits a transaction and returns the execution ID. Requires a wallet integration for write calls. Full example: {"contract_address": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238", "chain_id": "11155111", "function_name": "transfer", "function_args": "[\\"0xRecipient...\\", \\"1000\\"]"} - note that function_args is a JSON array encoded as a string. Full simulate response shape (success/failure fields, failureKind values): https://docs.keeperhub.com/api/direct-execution#dry-run-simulation',
     {
       contract_address: z.string().describe("Contract address (0x...)"),
       chain_id: looseString("Chain ID (e.g., '1' for Ethereum)"),
@@ -1845,7 +1857,7 @@ export function registerTools(
 
   server.tool(
     "execute_check_and_execute",
-    'Read one supported scalar from a contract and execute an action if its condition is met. A single Solidity integer output supports every operator; a single address or bytes1 through bytes32 output supports eq and neq only. Empty, multiple, compound, and other scalar outputs are rejected before the RPC read. Useful for conditional on-chain operations (e.g., \'if balance > 1000, then transfer\'). Requires a wallet integration. Full example: {"contract_address": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238", "chain_id": "11155111", "function_name": "balanceOf", "function_args": "[\\"0xHolder...\\"]", "condition": {"operator": "gt", "value": "1000"}, "action": {"contract_address": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238", "function_name": "transfer", "function_args": "[\\"0xRecipient...\\", \\"1000\\"]"}} - note that function_args is a JSON array encoded as a string, on both the check and the action.',
+    'Read one supported scalar from a contract and execute an action if its condition is met. A single Solidity integer output supports every operator; a single address or bytes1 through bytes32 output supports eq and neq only. Empty, multiple, compound, and other scalar outputs are rejected before the RPC read. Useful for conditional on-chain operations (e.g., \'if balance > 1000, then transfer\'). Requires a wallet integration. Full example: {"contract_address": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238", "chain_id": "11155111", "function_name": "balanceOf", "function_args": "[\\"0xHolder...\\"]", "condition": {"operator": "gt", "value": "1000"}, "action": {"contract_address": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238", "function_name": "transfer", "function_args": "[\\"0xRecipient...\\", \\"1000\\"]"}} - note that function_args is a JSON array encoded as a string, on both the check and the action. The simulate response does NOT always carry gasEstimate/wouldRevert: a condition that is not met, or a view/pure action, never made a call to estimate, so those fields are absent on those two branches. Only a write action returns the full simulate shape (plus executed and conditionResult). Full response shapes for all three branches: https://docs.keeperhub.com/api/direct-execution#check-and-execute-specifics',
     {
       contract_address: z
         .string()
