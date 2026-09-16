@@ -7,8 +7,9 @@
 // carry a placeholder, said so. Two adjacent actions in an approve-then-supply
 // flow, opposite units, and only one of them visible.
 //
-// The sweep at the bottom pins the general property: any field whose label
-// names a unit in parentheses has that unit in its schema description.
+// The sweep at the bottom pins the general property: any parenthesised group
+// in a field's label - which is where units live - appears in its schema
+// description.
 
 import { describe, expect, it } from "vitest";
 
@@ -27,7 +28,9 @@ function schemaFor(actionType: string) {
   throw new Error(`no action ${actionType}`);
 }
 
-const UNIT_IN_LABEL = /\((wei|ray|bps|shares|seconds|\d+ decimals)\)/;
+// Any parenthesised group, not an enumeration of known units: "(wei/sec)" on
+// superfluid's flow rate is a unit too, and a list would silently skip it.
+const PARENTHESISED = /\([^)]+\)/;
 
 describe("ActionSchema field descriptions", () => {
   it("carries a unit that is stated only in the label", () => {
@@ -65,7 +68,7 @@ describe("ActionSchema field descriptions", () => {
       for (const action of plugin.actions) {
         const schema = transformPluginAction(plugin, action);
         for (const field of flattenConfigFields(action.configFields)) {
-          const unit = UNIT_IN_LABEL.exec(field.label)?.[0];
+          const unit = PARENTHESISED.exec(field.label)?.[0];
           if (!unit) {
             continue;
           }
@@ -79,7 +82,8 @@ describe("ActionSchema field descriptions", () => {
         }
       }
     }
-    // A sweep that matched nothing would pass vacuously.
-    expect(checked).toBeGreaterThan(50);
+    // A sweep that matched nothing would pass vacuously. Anything stricter
+    // couples the test to the size of the protocol catalog.
+    expect(checked).toBeGreaterThan(0);
   });
 });
