@@ -66,11 +66,15 @@ function isManualTrigger(node: TriggerNodeLike): boolean {
   return !triggerType || triggerType === "Manual";
 }
 
+// Exported for testing: `shouldCollectManualRunInput` is the production caller.
 export function hasManualTrigger(nodes: TriggerNodeLike[]): boolean {
   return nodes.some(isManualTrigger);
 }
 
-/** Does the schema declare any input field at all? */
+/** Does the schema declare any input field at all?
+ *
+ * Exported for testing: `shouldCollectManualRunInput` is the production caller.
+ */
 export function hasManualRunInputs(
   schema: ManualRunInputSchema | null | undefined
 ): boolean {
@@ -153,6 +157,7 @@ export function buildManualRunSample(
   return result;
 }
 
+// Exported for testing: the prefill and the input check both call it.
 export function getRequiredInputNames(schema: ManualRunInputSchema): string[] {
   return Array.isArray(schema.required)
     ? schema.required.filter((name): name is string => typeof name === "string")
@@ -222,26 +227,170 @@ export function buildManualRunRequestBody(input: Record<string, unknown>): {
 }
 
 /**
- * Validate the author's input against the schema's `required` list.
+ * What the author's input is missing or has declared wrongly.
  *
- * A required field is missing when the key is absent entirely. An empty string
- * is a value the author chose: the prefill leaves required fields out, so a
- * required key exists only once they supply one, and `""` is what it holds if
- * they deliberately type nothing. Rejecting `""` was the wrong lever - it made a
- * required `memo` impossible to run empty, and it read as "missing" when the
- * author had deliberately typed nothing, which is the second message the review
- * flagged.
+ * Two rules.
  *
- * Reachability on the server side is unchanged either way: the listing contract
- * in `app/api/mcp/workflows/[slug]/call/route.ts` is presence-only (it tests
- * `field in body`), so the editor now matches a real caller exactly.
+ * **Presence.** A required field is missing when the key is absent entirely. An
+ * empty string is a value the author chose: the prefill leaves required fields
+ * out, so a required key exists only once they supply one, and `""` is what it
+ * holds if they deliberately type nothing. Rejecting `""` was the wrong lever -
+ * it made a required `memo` impossible to run empty, and it read as "missing"
+ * when the author had deliberately typed nothing, which is the second message
+ * the review flagged. A required key inside a nested object is reported by its
+ * dotted path, which is the name the prompt lists it under, and it is enforced
+ * only once its parent object is present: `metadata: {}` leaves
+ * `metadata.recipient` unsatisfied, while omitting an optional `metadata` does
+ * not.
+ *
+ * **Declared types.** A supplied value whose declared JSON type it does not
+ * satisfy is refused, naming both sides. The prompt shows the type beside each
+ * field, so the check is what makes that column mean something rather than read
+ * as decoration: without it `{"chainId": "abc"}` reaches template resolution and
+ * can flow into a chain write. A field with no declared type, or one this module
+ * cannot check, is not measured.
+ *
+ * What the server does is unchanged and stays the contract: the listing route in
+ * `app/api/mcp/workflows/[slug]/call/route.ts` tests `field in body` at the top
+ * level, so presence matches a real caller exactly. The type rule and the nested
+ * presence rule are the editor's own, one step stricter than the caller, because
+ * the editor is the surface that declares the types to the author.
  */
 export function validateManualRunInput(
   schema: ManualRunInputSchema,
   input: Record<string, unknown>
 ): string[] {
   const present = new Set(Object.keys(input));
-  return getRequiredInputNames(schema)
+  const problems = getRequiredInputNames(schema)
     .filter((name) => !present.has(name))
     .map((name) => `Required input "${name}" is missing.`);
+  // The second pass reads only what the author supplied: the type of each value
+  // it can see, and the required keys inside an object they did send. A
+  // top-level required key is the first pass's business, so the two rules cannot
+  // report the same key twice.
+  checkProvidedInput(schema, input, "", problems);
+  return problems;
+}
+
+/** The JSON Schema types a supplied value is measured against. */
+const CHECKED_TYPES = new Set([
+  "string",
+  "number",
+  "integer",
+  "boolean",
+  "array",
+  "object",
+  "null",
+]);
+
+/** The declared type names for a field, ignoring any this module cannot check. */
+function declaredTypes(shape: Record<string, unknown>): string[] {
+  const declared = shape.type;
+  return (Array.isArray(declared) ? declared : [declared]).filter(
+    (name): name is string =>
+      typeof name === "string" && CHECKED_TYPES.has(name)
+  );
+}
+
+function matchesDeclaredType(name: string, value: unknown): boolean {
+  switch (name) {
+    case "string":
+      return typeof value === "string";
+    case "number":
+      return typeof value === "number" && Number.isFinite(value);
+    case "integer":
+      return typeof value === "number" && Number.isInteger(value);
+    case "boolean":
+      return typeof value === "boolean";
+    case "array":
+      return Array.isArray(value);
+    case "object":
+      return (
+        value !== null && typeof value === "object" && !Array.isArray(value)
+      );
+    case "null":
+      return value === null;
+    default:
+      return true;
+  }
+}
+
+/** How the message names a value the author supplied. */
+function describeType(value: unknown): string {
+  if (value === null) {
+    return "null";
+  }
+  if (Array.isArray(value)) {
+    return "an array";
+  }
+  switch (typeof value) {
+    case "string":
+      return "a string";
+    case "number":
+      return "a number";
+    case "boolean":
+      return "a boolean";
+    case "object":
+      return "an object";
+    case "undefined":
+      return "undefined";
+    default:
+      return typeof value;
+  }
+}
+
+/**
+ * Problems with the values the author supplied.
+ *
+ * Two rules, and the second is why this exists. A value whose declared type it
+ * does not satisfy is named with both sides, because the prompt shows the type
+ * next to the field and until now nothing checked it: `{"chainId": "abc"}`
+ * reached template resolution and could flow into a chain write.
+ *
+ * A required key inside an object is enforced only once that object is present.
+ * Omitting an optional `metadata` entirely is not the same mistake as sending
+ * `metadata: {}` and leaving `metadata.recipient` unsatisfied, and only the
+ * second one leaves a field the prompt marked required without a value.
+ *
+ * Array items are not walked: a declared `items` type would need the same
+ * treatment one level down, and no schema in this repository declares one.
+ */
+function checkProvidedInput(
+  shape: ManualRunInputSchema,
+  value: Record<string, unknown>,
+  prefix: string,
+  problems: string[]
+): void {
+  for (const [name, property] of Object.entries(asRecord(shape.properties))) {
+    if (!(name in value)) {
+      continue;
+    }
+    const path = prefix ? `${prefix}.${name}` : name;
+    const declared = asRecord(property);
+    const supplied = value[name];
+    const types = declaredTypes(declared);
+    if (
+      types.length > 0 &&
+      !types.some((declaredType) => matchesDeclaredType(declaredType, supplied))
+    ) {
+      problems.push(
+        `Input "${path}" must be ${types.join(" or ")}, received ${describeType(supplied)}.`
+      );
+      continue;
+    }
+    if (
+      supplied === null ||
+      typeof supplied !== "object" ||
+      Array.isArray(supplied)
+    ) {
+      continue;
+    }
+    const nested = supplied as Record<string, unknown>;
+    for (const requiredName of getRequiredInputNames(declared)) {
+      if (!(requiredName in nested)) {
+        problems.push(`Required input "${path}.${requiredName}" is missing.`);
+      }
+    }
+    checkProvidedInput(declared, nested, path, problems);
+  }
 }

@@ -212,6 +212,138 @@ describe("buildManualRunRequestBody", () => {
   });
 });
 
+describe("validateManualRunInput nested required keys", () => {
+  const nestedRequired = {
+    type: "object",
+    properties: {
+      metadata: {
+        type: "object",
+        properties: {
+          recipient: { type: "string" },
+          label: { type: "string" },
+        },
+        required: ["recipient"],
+      },
+    },
+    required: ["metadata"],
+  };
+  const optionalParent = {
+    type: "object",
+    properties: {
+      metadata: {
+        type: "object",
+        properties: { recipient: { type: "string" } },
+        required: ["recipient"],
+      },
+    },
+  };
+
+  it("reports a nested required key by its dotted path", () => {
+    // The prompt lists `metadata.recipient` as required, so a submit of
+    // `metadata: {}` has to be refused or the prompt is telling the author
+    // something the check does not enforce.
+    expect(validateManualRunInput(nestedRequired, { metadata: {} })).toEqual([
+      'Required input "metadata.recipient" is missing.',
+    ]);
+  });
+
+  it("accepts the nested key once it is supplied", () => {
+    expect(
+      validateManualRunInput(nestedRequired, {
+        metadata: { recipient: "0xabc" },
+      })
+    ).toEqual([]);
+  });
+
+  it("does not enforce a nested key whose optional parent is absent", () => {
+    // Omitting `metadata` entirely is not the same mistake as sending
+    // `metadata: {}`: the author has not contradicted anything.
+    expect(validateManualRunInput(optionalParent, {})).toEqual([]);
+    expect(validateManualRunInput(optionalParent, { metadata: {} })).toEqual([
+      'Required input "metadata.recipient" is missing.',
+    ]);
+  });
+
+  it("reports the nested key once, not as both parent and child", () => {
+    expect(validateManualRunInput(nestedRequired, {})).toEqual([
+      'Required input "metadata" is missing.',
+    ]);
+  });
+});
+
+describe("validateManualRunInput declared types", () => {
+  it("refuses a value whose type contradicts the declaration", () => {
+    expect(
+      validateManualRunInput(SCHEMA, {
+        sender: "0xabc",
+        value: "1",
+        retries: "5",
+      })
+    ).toEqual(['Input "retries" must be number, received a string.']);
+    expect(
+      validateManualRunInput(SCHEMA, {
+        sender: "0xabc",
+        value: "1",
+        dryRun: "yes",
+      })
+    ).toEqual(['Input "dryRun" must be boolean, received a string.']);
+    expect(
+      validateManualRunInput(SCHEMA, {
+        sender: "0xabc",
+        value: "1",
+        tags: "not-an-array",
+      })
+    ).toEqual(['Input "tags" must be array, received a string.']);
+  });
+
+  it("names the value it found rather than only the field", () => {
+    expect(validateManualRunInput(SCHEMA, { sender: 123, value: "1" })).toEqual(
+      ['Input "sender" must be string, received a number.']
+    );
+  });
+
+  it("checks an integer separately from a number", () => {
+    const schema = {
+      type: "object",
+      properties: { count: { type: "integer" } },
+    };
+    expect(validateManualRunInput(schema, { count: 1.5 })).toEqual([
+      'Input "count" must be integer, received a number.',
+    ]);
+    expect(validateManualRunInput(schema, { count: 2 })).toEqual([]);
+  });
+
+  it("accepts a value declared as any one of several types", () => {
+    const schema = {
+      type: "object",
+      properties: { id: { type: ["string", "number"] } },
+    };
+    expect(validateManualRunInput(schema, { id: 7 })).toEqual([]);
+    expect(validateManualRunInput(schema, { id: "7" })).toEqual([]);
+    expect(validateManualRunInput(schema, { id: true })).toEqual([
+      'Input "id" must be string or number, received a boolean.',
+    ]);
+  });
+
+  it("does not measure a field with no declared type", () => {
+    const schema = { type: "object", properties: { loose: {} } };
+    expect(
+      validateManualRunInput(schema, { loose: { anything: true } })
+    ).toEqual([]);
+  });
+
+  it("leaves the presence rule's messages unchanged", () => {
+    expect(validateManualRunInput(SCHEMA, {})).toEqual([
+      'Required input "sender" is missing.',
+      'Required input "value" is missing.',
+    ]);
+    // An empty string is still a value the author chose, not a type error.
+    expect(validateManualRunInput(SCHEMA, { sender: "", value: "1" })).toEqual(
+      []
+    );
+  });
+});
+
 describe("validateManualRunInput", () => {
   it("reports every missing required input, not just the first", () => {
     expect(validateManualRunInput(SCHEMA, {})).toEqual([
