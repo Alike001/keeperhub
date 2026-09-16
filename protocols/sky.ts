@@ -193,13 +193,6 @@ const ERC20_READONLY_WITH_SUPPLY_ABI = JSON.stringify([
     inputs: [],
     outputs: [{ name: "", type: "uint256" }],
   },
-  {
-    type: "function",
-    name: "totalAssets",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "uint256" }],
-  },
 ]);
 
 const DAI_USDS_CONVERTER_ABI = JSON.stringify([
@@ -355,8 +348,6 @@ export default defineAbiProtocol({
           "L2 action - sUsdsL2 contract only on Base/Arbitrum",
         "get-susds-total-supply-l2":
           "L2 action - sUsdsL2 contract only on Base/Arbitrum",
-        "get-susds-total-assets-l2":
-          "L2 action - sUsdsL2 contract only on Base/Arbitrum",
       },
       // approve-dai and approve-usds run the app's real approve-token path,
       // which fans out cold token state on a fresh fork and runs past the
@@ -422,7 +413,6 @@ export default defineAbiProtocol({
       actions: {
         "get-susds-balance-l2": { account: wallet() },
         "get-susds-total-supply-l2": {},
-        "get-susds-total-assets-l2": {},
       },
       skipped: {
         "vault-asset": "Mainnet only - sUsds contract not on Base",
@@ -477,17 +467,12 @@ export default defineAbiProtocol({
         "get-dai-balance": "Mainnet only - dai contract not on Base",
         "approve-dai": "Mainnet only - dai contract not on Base",
         "get-sky-balance": "Mainnet only - sky contract not on Base",
-        "approve-sky": "Mainnet only - sky contract not on Base",
-        "get-mkr-balance": "Mainnet only - mkr contract not on Base",
-        "approve-mkr": "Mainnet only - mkr contract not on Base",
         "convert-dai-to-usds": "Mainnet only - daiUsds contract not on Base",
         "convert-usds-to-dai": "Mainnet only - daiUsds contract not on Base",
         "convert-mkr-to-sky": "Mainnet only - mkrSky contract not on Base",
-        "convert-sky-to-mkr": "Mainnet only - mkrSky contract not on Base",
       },
       expectations: {
         "get-susds-total-supply-l2": [{ nonZero: true }],
-        "get-susds-total-assets-l2": [{ nonZero: true }],
       },
     },
     "42161": {
@@ -499,7 +484,6 @@ export default defineAbiProtocol({
       actions: {
         "get-susds-balance-l2": { account: wallet() },
         "get-susds-total-supply-l2": {},
-        "get-susds-total-assets-l2": {},
       },
       skipped: {
         "vault-asset": "Mainnet only - sUsds contract not on Arbitrum",
@@ -563,19 +547,14 @@ export default defineAbiProtocol({
         "get-dai-balance": "Mainnet only - dai contract not on Arbitrum",
         "approve-dai": "Mainnet only - dai contract not on Arbitrum",
         "get-sky-balance": "Mainnet only - sky contract not on Arbitrum",
-        "approve-sky": "Mainnet only - sky contract not on Arbitrum",
-        "get-mkr-balance": "Mainnet only - mkr contract not on Arbitrum",
-        "approve-mkr": "Mainnet only - mkr contract not on Arbitrum",
         "convert-dai-to-usds":
           "Mainnet only - daiUsds contract not on Arbitrum",
         "convert-usds-to-dai":
           "Mainnet only - daiUsds contract not on Arbitrum",
         "convert-mkr-to-sky": "Mainnet only - mkrSky contract not on Arbitrum",
-        "convert-sky-to-mkr": "Mainnet only - mkrSky contract not on Arbitrum",
       },
       expectations: {
         "get-susds-total-supply-l2": [{ nonZero: true }],
-        "get-susds-total-assets-l2": [{ nonZero: true }],
       },
     },
   },
@@ -621,18 +600,6 @@ export default defineAbiProtocol({
             result: {
               name: "totalSupply",
               label: "Total sUSDS Supply (wei)",
-              decimals: 18,
-            },
-          },
-        },
-        totalAssets: {
-          slug: "get-susds-total-assets-l2",
-          label: "Get sUSDS Total Assets (L2)",
-          description: "Get the total assets in the sUSDS vault on L2",
-          outputs: {
-            result: {
-              name: "totalAssets",
-              label: "Total Assets (wei)",
               decimals: 18,
             },
           },
