@@ -718,6 +718,41 @@ describe("data/hash", () => {
     // and most mail tooling emit. Refusing it would send the caller to Text
     // encoding, which hashes the base64 characters and the newlines and returns
     // a digest that looks valid over input they never meant.
+    // Only CR and LF are stripped. Stripping spaces too would let prose through
+    // whenever the de-spaced text lands on a canonical final character, which
+    // is the failure this function exists to prevent, one field away: Text sits
+    // one option above Base64 in the select.
+    it.each([
+      "the quick brown fox",
+      "some text here",
+      "a b c d",
+      "hello world",
+    ])(
+      "refuses %s rather than hashing it with the spaces removed",
+      async (value) => {
+        const result = (await run({
+          value,
+          inputEncoding: "base64",
+        })) as HashFailure;
+
+        expect(result.success).toBe(false);
+        expect(result.error).toContain("is not base64");
+      }
+    );
+
+    it("accepts a CRLF-wrapped payload as well as LF", async () => {
+      const lf = (await run({
+        value: "YWJjZGVmZ2hpamts\nbW5vcHFyc3R1dnd4\neXo=",
+        inputEncoding: "base64",
+      })) as HashSuccess;
+      const crlf = (await run({
+        value: "YWJjZGVmZ2hpamts\r\nbW5vcHFyc3R1dnd4\r\neXo=",
+        inputEncoding: "base64",
+      })) as HashSuccess;
+
+      expect(crlf.result).toBe(lf.result);
+    });
+
     it("accepts MIME line-wrapped base64", async () => {
       const oneLine = (await run({
         value: "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo=",

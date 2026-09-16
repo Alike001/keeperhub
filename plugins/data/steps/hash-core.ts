@@ -23,7 +23,7 @@ const DECIMAL_PATTERN = /^[0-9]+$/;
 const BASE64_STANDARD_CHARS = /[+/]/;
 const BASE64_URL_SAFE_CHARS = /[-_]/;
 const BASE64_TRAILING_PADDING = /=+$/;
-const BASE64_WHITESPACE = /\s+/g;
+const BASE64_LINE_BREAKS = /[\r\n]+/g;
 const BASE64_DASH = /-/g;
 const BASE64_UNDERSCORE = /_/g;
 const BASE64_PLUS = /\+/g;
@@ -188,9 +188,15 @@ function toBytes(value: string, encoding: InputEncoding): Uint8Array {
  * Refusing it would be worse than useless here: the message would send the
  * caller to Text encoding, which hashes the base64 characters and the newlines
  * and returns a digest that looks entirely valid over input they never meant.
+ *
+ * Only CR and LF, never \s. Stripping spaces as well would let ordinary prose
+ * through whenever the de-spaced text happens to land on a canonical final
+ * character: "some text here" would decode and hash, while "hello world" would
+ * not, which is both wrong and arbitrary. Input encoding is a select with Text
+ * one option above Base64, so that mistake is a single click away.
  */
 function fromBase64(value: string): Uint8Array {
-  const trimmed = value.trim().replace(BASE64_WHITESPACE, "");
+  const trimmed = value.trim().replace(BASE64_LINE_BREAKS, "");
 
   // The alphabets differ in exactly two characters, so a string carrying both
   // encodes nothing in either and guessing which was meant is a coin toss.
