@@ -49,13 +49,70 @@ describe("capRetriesByDeclaration", () => {
     expect(capRetriesByDeclaration(undefined, 3)).toBeUndefined();
   });
 
-  it("ignores a declaration it cannot use", () => {
+  it("fails closed on a declaration that cannot be read", () => {
+    // The value crosses a dynamic import unvalidated, so a JS step that writes
+    // maxRetries = "0" type-checks and ships. Treating that as absent retries the
+    // step whose author believed they had opted out, which is the whole defect.
+    const config = { maxRetries: 3 };
+    expect(capRetriesByDeclaration(config, "0")?.maxRetries).toBe(0);
+    expect(capRetriesByDeclaration(config, -1)?.maxRetries).toBe(0);
+    expect(capRetriesByDeclaration(config, Number.NaN)?.maxRetries).toBe(0);
+    expect(capRetriesByDeclaration(config, null)?.maxRetries).toBe(0);
+    expect(capRetriesByDeclaration(config, {})?.maxRetries).toBe(0);
+  });
+
+  it("floors a fractional declaration instead of discarding it", () => {
+    // Math.min(3, 2.5) is 2.5, and the loop's `attempt >= maxRetries` comparison
+    // then runs three attempts for an author who asked for two.
+    expect(capRetriesByDeclaration({ maxRetries: 3 }, 2.5)?.maxRetries).toBe(2);
+    expect(capRetriesByDeclaration({ maxRetries: 3 }, 0.5)?.maxRetries).toBe(0);
+  });
+
+  it("treats an unbounded declaration as no cap, by identity", () => {
     const config = { maxRetries: 2 };
-    expect(capRetriesByDeclaration(config, -1)).toBe(config);
-    expect(capRetriesByDeclaration(config, Number.NaN)).toBe(config);
-    expect(
-      capRetriesByDeclaration(config, Number.POSITIVE_INFINITY)?.maxRetries
-    ).toBe(2);
+    expect(capRetriesByDeclaration(config, Number.POSITIVE_INFINITY)).toBe(
+      config
+    );
+  });
+
+  it("does not re-fire a fetch that hangs when the step declares none", async () => {
+    // The worst version of the double charge, and the one the generic branch
+    // actually produces: genericRetryOptions.getError returns undefined, so a
+    // non-web3 step never retries on error text and its only trigger is the
+    // timeout, while withTimeout abandons the in-flight promise without
+    // cancelling it. A paid fetch that exceeds timeoutMs was re-fired while the
+    // first request was still in flight.
+    let calls = 0;
+    const hanging = (): Promise<never> => {
+      calls += 1;
+      return new Promise<never>(() => {
+        // never settles
+      });
+    };
+
+    const capped = await executeWithRetry(
+      hanging,
+      capRetriesByDeclaration({ maxRetries: 3, timeoutMs: 30 }, 0),
+      genericRetryOptions
+    );
+    expect(calls).toBe(1);
+    expect(capped.outcome).toBe("timeout");
+
+    // Control: the same hang under a declaration that allows three, four calls.
+    let controlCalls = 0;
+    const hangingControl = (): Promise<never> => {
+      controlCalls += 1;
+      return new Promise<never>(() => {
+        // never settles
+      });
+    };
+    const retried = await executeWithRetry(
+      hangingControl,
+      capRetriesByDeclaration({ maxRetries: 3, timeoutMs: 30 }, 3),
+      genericRetryOptions
+    );
+    expect(controlCalls).toBe(4);
+    expect(retried.outcome).toBe("timeout");
   });
 
   it("stops a retryable-looking failure from being retried at all", async () => {

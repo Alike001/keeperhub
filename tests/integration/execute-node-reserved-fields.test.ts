@@ -342,6 +342,67 @@ describe("POST /api/execute/node reserved-field gating", () => {
   });
 });
 
+describe("POST /api/execute/node step-declared retry ceiling", () => {
+  // The wiring is the defect: invokeStep reads the property off an object that
+  // arrives through a dynamic import. A helper test cannot see that line, so
+  // reverting the route to `if (retry)` would leave every unit case green.
+  it("runs a step that declares maxRetries = 0 exactly once", async () => {
+    Object.assign(mocks.stepFn, { maxRetries: 0 });
+    mocks.stepFn.mockResolvedValue({
+      success: false,
+      error: "read ECONNRESET",
+    });
+
+    await nodePOST(
+      postRequest({
+        actionType: "web3/write-contract",
+        config: { network: "1", contractAddress: "0xabc" },
+        retry: { maxRetries: 3, timeoutMs: 120_000 },
+      })
+    );
+
+    // "read ECONNRESET" is in RETRYABLE_PATTERNS and the failure carries no
+    // hash, so without the declaration this is four calls.
+    expect(mocks.stepFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("still retries a step that declares nothing, four calls for three retries", async () => {
+    delete (mocks.stepFn as { maxRetries?: number }).maxRetries;
+    mocks.stepFn.mockResolvedValue({
+      success: false,
+      error: "read ECONNRESET",
+    });
+
+    await nodePOST(
+      postRequest({
+        actionType: "web3/write-contract",
+        config: { network: "1", contractAddress: "0xabc" },
+        retry: { maxRetries: 3, timeoutMs: 120_000 },
+      })
+    );
+
+    expect(mocks.stepFn).toHaveBeenCalledTimes(4);
+  });
+
+  it("honours a declaration that is a string zero, which the import cannot type-check", async () => {
+    Object.assign(mocks.stepFn, { maxRetries: "0" });
+    mocks.stepFn.mockResolvedValue({
+      success: false,
+      error: "read ECONNRESET",
+    });
+
+    await nodePOST(
+      postRequest({
+        actionType: "web3/write-contract",
+        config: { network: "1", contractAddress: "0xabc" },
+        retry: { maxRetries: 3, timeoutMs: 120_000 },
+      })
+    );
+
+    expect(mocks.stepFn).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("POST /api/execute/node broadcast hash on a failed step", () => {
   it("hands the step's hash to failExecution and reports its verdict", async () => {
     // The adapter threw after broadcasting, so the step returns the hash with

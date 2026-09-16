@@ -66,20 +66,44 @@ function resolveConfig(config?: RetryConfig): Required<RetryConfig> {
  * nothing leaves the caller's config exactly as it was; and a config of
  * `undefined` stays `undefined`, because this route only retries when the caller
  * asked for retries at all.
+ *
+ * A declaration that was written but cannot be read FAILS CLOSED: the step is
+ * treated as having asked for no retries. The value crosses a dynamic import
+ * unvalidated (`route.ts` casts `any`), so a JS step that sets
+ * `maxRetries = "0"` type-checks, ships, and would otherwise be retried exactly
+ * when its author believed they had opted out. Discarding a declaration is the
+ * one direction that reintroduces the bug this function exists to close.
+ *
+ * `declared` is typed `unknown` rather than `number | undefined` on purpose:
+ * the type is a claim about the step, and this function exists because that
+ * claim is not checked anywhere.
  */
 export function capRetriesByDeclaration(
   config: RetryConfig | undefined,
-  declared: number | undefined
+  declared: unknown
 ): RetryConfig | undefined {
   if (config === undefined) {
     return undefined;
   }
-  if (declared === undefined || !Number.isFinite(declared) || declared < 0) {
+  if (declared === undefined) {
     return config;
   }
+  if (typeof declared !== "number" || Number.isNaN(declared) || declared < 0) {
+    return { ...config, maxRetries: 0 };
+  }
+  // An unbounded declaration is not a cap: min(caller, Infinity) is the caller's
+  // own number, so the config can be returned untouched rather than copied.
+  if (declared === Number.POSITIVE_INFINITY) {
+    return config;
+  }
+  // A fractional declaration is floored rather than discarded: 2.5 is an author
+  // asking for roughly two, and the loop counts attempts in whole numbers.
   return {
     ...config,
-    maxRetries: Math.min(config.maxRetries ?? DEFAULT_MAX_RETRIES, declared),
+    maxRetries: Math.min(
+      config.maxRetries ?? DEFAULT_MAX_RETRIES,
+      Math.floor(declared)
+    ),
   };
 }
 
