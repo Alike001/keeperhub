@@ -45,6 +45,44 @@ function resolveConfig(config?: RetryConfig): Required<RetryConfig> {
   };
 }
 
+/**
+ * The retry budget a step's own declaration allows.
+ *
+ * A step function can carry `maxRetries` on itself, and `plugins/CLAUDE.md` asks
+ * security-critical steps to set it to 0. The workflow runtime honours that
+ * declaration. The direct-execution route did not read it at all: it branched on
+ * the caller's `retry` config and on `isWeb3` alone, so a step that declared it
+ * must never be retried was retried whenever the caller asked for retries and the
+ * failure text looked retryable.
+ *
+ * That is the shape of the x402 paid-resource case: the step delivers its
+ * `X-PAYMENT` header, the server settles the payment, the connection resets
+ * before the response returns, and `ECONNRESET` matches RETRYABLE_PATTERNS
+ * below. The step is then re-run, the resource is re-requested and re-metered,
+ * and any off-chain-metered rail pays twice.
+ *
+ * The declaration is a ceiling, not a default. A caller may ask for fewer
+ * retries than a step allows and can never ask for more; a step that declares
+ * nothing leaves the caller's config exactly as it was; and a config of
+ * `undefined` stays `undefined`, because this route only retries when the caller
+ * asked for retries at all.
+ */
+export function capRetriesByDeclaration(
+  config: RetryConfig | undefined,
+  declared: number | undefined
+): RetryConfig | undefined {
+  if (config === undefined) {
+    return undefined;
+  }
+  if (declared === undefined || !Number.isFinite(declared) || declared < 0) {
+    return config;
+  }
+  return {
+    ...config,
+    maxRetries: Math.min(config.maxRetries ?? DEFAULT_MAX_RETRIES, declared),
+  };
+}
+
 function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number

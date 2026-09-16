@@ -36,6 +36,7 @@ import {
 import { checkRateLimit } from "../_lib/rate-limit";
 import { parseNodeNativeValueWei } from "../_lib/reserved-value";
 import {
+  capRetriesByDeclaration,
   DEFAULT_TIMEOUT_MS as DEFAULT_RETRY_TIMEOUT_MS,
   executeWithRetry,
   genericRetryOptions,
@@ -186,8 +187,14 @@ function isTransactionResult(output: unknown): output is {
   );
 }
 
+/**
+ * A step function, with the retry ceiling a step may declare on itself.
+ *
+ * `maxRetries` is optional because most steps do not set it; when a step does,
+ * it is an upper bound the caller cannot raise (see capRetriesByDeclaration).
+ */
 // biome-ignore lint/suspicious/noExplicitAny: Step functions have varying signatures
-type StepFn = (input: any) => Promise<unknown>;
+type StepFn = ((input: any) => Promise<unknown>) & { maxRetries?: number };
 
 type InvokeResult =
   | { ok: true; result: unknown; retryCount: number }
@@ -219,18 +226,24 @@ async function invokeStep(
   retry: RetryConfig | undefined,
   isWeb3: boolean
 ): Promise<InvokeResult> {
-  if (retry) {
+  // The step's own declaration caps what the caller may ask for. A step that
+  // declares it must never be retried runs once, whatever the request asked for,
+  // which is what makes the declaration worth setting on a step that spends
+  // money: the retryable-looking failures such a step can produce (a reset after
+  // the server settled the payment) are otherwise retried and charged twice.
+  const effectiveRetry = capRetriesByDeclaration(retry, stepFn.maxRetries);
+  if (effectiveRetry) {
     if (isWeb3) {
       const retryResult = await executeWithRetry<TransactionResult>(
         async () => (await stepFn(stepInput)) as TransactionResult,
-        retry,
+        effectiveRetry,
         transactionRetryOptions
       );
       return unwrapRetryResult(retryResult);
     }
     const retryResult = await executeWithRetry<unknown>(
       async () => stepFn(stepInput),
-      retry,
+      effectiveRetry,
       genericRetryOptions
     );
     return unwrapRetryResult(retryResult);

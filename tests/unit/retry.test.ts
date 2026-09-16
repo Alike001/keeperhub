@@ -3,11 +3,97 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import {
+  capRetriesByDeclaration,
   executeWithRetry,
   genericRetryOptions,
   type TransactionResult,
   transactionRetryOptions,
 } from "@/app/api/execute/_lib/retry";
+
+/**
+ * #2498: `stepFn.maxRetries` is a declaration the workflow runtime honours and
+ * the direct-execution route ignored, so a step that said it must never be
+ * retried was retried whenever the caller asked and the failure text looked
+ * retryable.
+ */
+describe("capRetriesByDeclaration", () => {
+  it("turns retries off when the step declares it must never be retried", () => {
+    expect(
+      capRetriesByDeclaration({ maxRetries: 5, timeoutMs: 1000 }, 0)
+    ).toEqual({ maxRetries: 0, timeoutMs: 1000 });
+  });
+
+  it("caps a caller who asks for more than the step allows", () => {
+    expect(capRetriesByDeclaration({ maxRetries: 5 }, 2)?.maxRetries).toBe(2);
+  });
+
+  it("lets a caller ask for fewer than the step allows", () => {
+    expect(capRetriesByDeclaration({ maxRetries: 1 }, 4)?.maxRetries).toBe(1);
+  });
+
+  it("applies the declaration when the caller set no count of its own", () => {
+    // The route's config may carry only a timeout, in which case the default
+    // would otherwise be used and the declaration would not bind at all.
+    expect(capRetriesByDeclaration({ timeoutMs: 1000 }, 1)?.maxRetries).toBe(1);
+    expect(capRetriesByDeclaration({ timeoutMs: 1000 }, 0)?.maxRetries).toBe(0);
+  });
+
+  it("leaves a step that declares nothing alone", () => {
+    const config = { maxRetries: 3 };
+    expect(capRetriesByDeclaration(config, undefined)).toBe(config);
+  });
+
+  it("does not invent retries for a caller who sent no config", () => {
+    // The declaration is a ceiling, not a default: no config means no retries,
+    // which is this route's behaviour for a request that did not ask for any.
+    expect(capRetriesByDeclaration(undefined, 3)).toBeUndefined();
+  });
+
+  it("ignores a declaration it cannot use", () => {
+    const config = { maxRetries: 2 };
+    expect(capRetriesByDeclaration(config, -1)).toBe(config);
+    expect(capRetriesByDeclaration(config, Number.NaN)).toBe(config);
+    expect(
+      capRetriesByDeclaration(config, Number.POSITIVE_INFINITY)?.maxRetries
+    ).toBe(2);
+  });
+
+  it("stops a retryable-looking failure from being retried at all", async () => {
+    // The x402 shape: the payment settled, the connection reset, and the error
+    // text matches the retryable list. One attempt, no second charge.
+    let attempts = 0;
+    const failing = (): Promise<TransactionResult> => {
+      attempts += 1;
+      return Promise.resolve({ success: false, error: "read ECONNRESET" });
+    };
+    const result = await executeWithRetry<TransactionResult>(
+      failing,
+      capRetriesByDeclaration({ maxRetries: 3, timeoutMs: 5000 }, 0),
+      transactionRetryOptions
+    );
+
+    expect(attempts).toBe(1);
+    expect(result.outcome).toBe("failed");
+    expect(result.retryCount).toBe(0);
+  });
+
+  it("still retries the same failure when the step allows two", async () => {
+    let attempts = 0;
+    const failing = (): Promise<TransactionResult> => {
+      attempts += 1;
+      return Promise.resolve({ success: false, error: "read ECONNRESET" });
+    };
+    const result = await executeWithRetry<TransactionResult>(
+      failing,
+      capRetriesByDeclaration({ maxRetries: 3, timeoutMs: 5000 }, 2),
+      transactionRetryOptions
+    );
+
+    expect(attempts).toBe(3);
+    expect(result.retryCount).toBe(2);
+    expect(result.outcome).toBe("failed");
+  });
+});
 
 describe("executeWithRetry", () => {
   describe("with transactionRetryOptions (web3)", () => {
