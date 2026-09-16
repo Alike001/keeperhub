@@ -131,4 +131,19 @@ describe("Sky Protocol Definition", () => {
     const skyActionSlugs = skyActions.map((a) => a.slug);
     expect(skyActionSlugs).toEqual(["get-sky-balance"]);
   });
+
+  it("sUsdsL2 exposes only the two read-only ERC-20 actions", () => {
+    // Pins the contract's own action set the way the sky case above does.
+    // A fourth function added to the shared L2 ABI would otherwise be caught
+    // only by the total count. The last round showed a count assertion can
+    // stay green through a wrong change. In particular this fails if
+    // totalAssets comes back, which is ERC-4626 and reverts on both L2s.
+    const slugs = skyDef.actions
+      .filter((a) => a.contract === "sUsdsL2")
+      .map((a) => a.slug);
+    expect(slugs).toEqual([
+      "get-susds-balance-l2",
+      "get-susds-total-supply-l2",
+    ]);
+  });
 });

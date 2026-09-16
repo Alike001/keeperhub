@@ -135,10 +135,9 @@ export default defineAbiProtocol({
         wrap: "requires stETH balance - not provisioned in fork setup (stETH's share-derived balanceOf defeats slot fabrication; needs a whale entry)",
         unwrap:
           "requires wstETH balance - not provisioned in fork setup (wrap is skipped, so no wstETH position exists)",
-        "get-wsteth-balance-l2":
-          "L2 action - wstethL2 contract only on Base/Arbitrum",
+        "get-wsteth-balance-l2": "L2 action - wstethL2 contract only on Base",
         "get-wsteth-total-supply-l2":
-          "L2 action - wstethL2 contract only on Base/Arbitrum",
+          "L2 action - wstethL2 contract only on Base",
       },
       // Chain invariants (unnamed outputs, so no field): the wstETH<->stETH
       // exchange rates only ratchet up from 1e18, the 1-unit conversions are

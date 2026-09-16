@@ -90,14 +90,30 @@ describe("Lido Protocol Definition", () => {
   });
 
   it("wsteth contract is available on Mainnet and Sepolia", () => {
+    // Length-checked, not just membership. Re-adding "8453" here is the exact
+    // regression the L2 split exists to prevent. A bare toContain pair stays
+    // green through it.
     const chains = Object.keys(lidoDef.contracts.wsteth.addresses);
+    expect(chains).toHaveLength(2);
     expect(chains).toContain("1");
     expect(chains).toContain("11155111");
   });
 
   it("wstethL2 contract is available on Base", () => {
     const chains = Object.keys(lidoDef.contracts.wstethL2.addresses);
-    expect(chains).toContain("8453");
+    expect(chains).toEqual(["8453"]);
+  });
+
+  it("wstethL2 exposes only the two read-only ERC-20 actions", () => {
+    // Pins the contract's own action set, so a third function added to the
+    // shared L2 ABI fails here rather than only moving the total count.
+    const slugs = lidoDef.actions
+      .filter((a) => a.contract === "wstethL2")
+      .map((a) => a.slug);
+    expect(slugs).toEqual([
+      "get-wsteth-balance-l2",
+      "get-wsteth-total-supply-l2",
+    ]);
   });
 
   it("steth contract is available on Mainnet and Sepolia", () => {
