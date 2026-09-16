@@ -1,23 +1,28 @@
 /**
- * Backup notification for a page that could not be delivered.
+ * Backup notification for an alert that could not be delivered by its primary
+ * channel.
  *
- * IMPORTANT: this file must NOT contain "use step".
+ * Lives in lib rather than under plugins/ on purpose: it reads the credentials
+ * of whatever connection the user picked as the backup, which by definition
+ * belong to another plugin. A file under plugins/<name>/steps/ that reads
+ * another plugin's credential keys is exactly what the credential-map coverage
+ * test exists to catch, and it is right to catch it - a step reading a key its
+ * own plugin never declares is otherwise a typo or a missing form field.
  *
- * A PagerDuty outage, a revoked token or a deleted service must not end with
- * nobody being told. When the node is set to fall back, the trigger step calls
- * this with the alert it could not raise, and it posts through a connection
- * the organisation already has.
+ * The destination is always a stored connection, never a URL typed into a
+ * node: every host below is a constant, so a plugin using this keeps its
+ * fixed-host egress classification and a workflow cannot point it anywhere
+ * new. The channel is inferred from the credentials the connection holds, so
+ * swapping the connection needs no second config field kept in sync.
  *
- * The destination is always a stored connection, never a URL typed into the
- * node: every host below is a constant, so the PagerDuty plugin keeps its
- * fixed-host egress classification and a workflow cannot point it anywhere.
- * The channel is inferred from the credentials the connection holds, so
- * swapping the connection needs no second config field to be kept in sync.
+ * Used by the PagerDuty node when a page cannot be delivered; nothing about it
+ * is PagerDuty-specific.
  */
 import { fetchCredentials } from "@/lib/credential-fetcher";
 import { safeFetch } from "@/lib/safe-fetch";
 import { getErrorMessage } from "@/lib/utils";
 
+/** Attributes the egress to the plugin that asked for the backup. */
 const PLUGIN = "pagerduty";
 const REQUEST_TIMEOUT_MS = 10_000;
 const SLACK_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage";
@@ -81,7 +86,8 @@ async function postDiscord(
       attempted: true,
       delivered: false,
       channel: "discord",
-      error: "The backup Discord connection does not hold a Discord webhook URL.",
+      error:
+        "The backup Discord connection does not hold a Discord webhook URL.",
     };
   }
   const response = await safeFetch(webhookUrl, {

@@ -18,7 +18,7 @@ import {
   type BackupOutcome,
   buildBackupMessage,
   sendBackupNotification,
-} from "./backup-notify-core";
+} from "@/lib/notifications/backup-channel";
 import {
   countConsecutiveRuns,
   resolveConsecutiveRuns,
