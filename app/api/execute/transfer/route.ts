@@ -30,11 +30,12 @@ import {
   redactInput,
   withRejectedSignerOverride,
 } from "../_lib/execution-service";
+import { readGasLimitMultiplier } from "../_lib/gas-limit-multiplier";
 import { checkRateLimit } from "../_lib/rate-limit";
 import {
   isSolanaNetwork,
+  parseNativeValueEther,
   parseNativeValueLamports,
-  parseNativeValueWei,
 } from "../_lib/reserved-value";
 import { parseSimulateFlag } from "../_lib/simulate-flag";
 import { checkAndReserveExecution } from "../_lib/spending-cap";
@@ -221,7 +222,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!isTokenTransfer) {
     const parsedValue = isSolanaTransfer
       ? parseNativeValueLamports(amount)
-      : parseNativeValueWei(amount);
+      : parseNativeValueEther(amount);
     if (!parsedValue.ok) {
       return applyRateLimitHeaders(
         await recordIdempotentResponse(
@@ -273,6 +274,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   // 8. Execute (heartbeat the idempotency lock across the on-chain wait).
   const context = { organizationId: apiKeyCtx.organizationId };
+  const gasLimitMultiplier = readGasLimitMultiplier(body.gasLimitMultiplier);
 
   const result = await withIdempotencyHeartbeat(idem, () =>
     isTokenTransfer
@@ -284,12 +286,14 @@ export async function POST(request: Request): Promise<NextResponse> {
           tokenAddress: body.tokenAddress as string | undefined,
           recipientAddress,
           amount,
+          gasLimitMultiplier,
           _context: context,
         })
       : transferFundsCore({
           network,
           recipientAddress,
           amount,
+          gasLimitMultiplier,
           _context: context,
         })
   );
