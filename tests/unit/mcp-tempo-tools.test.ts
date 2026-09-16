@@ -160,6 +160,8 @@ describe("MCP Tempo tools", () => {
     const memoHelpTip =
       memoField && "helpTip" in memoField ? memoField.helpTip : undefined;
 
+    expect(memoHelpTip).toBeDefined();
+
     const schema = getTool("tempo_sign_and_hold").schema;
     expect(schema.memo?.description).toBe(memoHelpTip);
   });

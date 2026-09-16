@@ -81,7 +81,7 @@ Pay many recipients in one atomic transaction. All payments settle together or n
 **Inputs:**
 - Network - Required
 - Token - Required
-- Payouts - Required. A JSON array of `{ recipient, amount, memo? }` entries.
+- Payouts - Required. A JSON array of `{ recipient, amount, memo? }` entries. Each entry's memo follows the same encoding as Shared Memo below: plain text (up to 31 bytes) is encoded to a 32-byte memo; a `0x` + 64-hex value is used verbatim (for example, a receipt hash).
 - Shared Memo - Optional. Applied to any payment that does not set its own memo (for example, a pay-run id). Plain text (up to 31 bytes) is encoded to a 32-byte memo; a `0x` + 64-hex value is used verbatim (for example, a receipt hash).
 
 **Outputs:** `success`, `transactionHash`, `transactionLink`, `from`, `payoutCount`, `totalAmount`, `chainId`, `error`
