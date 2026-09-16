@@ -27,7 +27,7 @@ Returns aggregated analytics for the organization including run counts, success 
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `range` | string | Time range: `24h`, `7d`, `30d`, `90d`, `custom` (default: `30d`) |
+| `range` | string | Time range: `1h`, `24h`, `7d`, `30d`, `custom` (default: `24h`). An unrecognised value is not rejected: `?range=90d` falls through to the `24h` offset |
 | `customStart` | string | ISO timestamp for custom range start |
 | `customEnd` | string | ISO timestamp for custom range end |
 | `projectId` | string | Restrict the figures to one workflow project |
@@ -63,7 +63,7 @@ Returns aggregated analytics for the organization including run counts, success 
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `totalRuns` | number | Combined count of workflow executions and direct executions |
+| `totalRuns` | number | `successCount + errorCount`. Runs that are still pending or running are not counted, and neither are the runs that were cancelled or skipped, so this is not the total of every row List Runs returns. The four figures do not sum to it, deliberately |
 | `successCount` | number | Runs that completed successfully |
 | `errorCount` | number | Runs that failed |
 | `cancelledCount` | number | Workflow runs that were cancelled |
@@ -145,7 +145,9 @@ Same as summary endpoint.
 }
 ```
 
-`network` is the chain id as a string, not a name; the analytics dashboard maps it to a display name for the chart. `executionCount` counts settled runs only, so an in-flight execution does not appear here before it finishes.
+`network` is whatever the step recorded, and the API does not normalise it: a chain id as a string on most rows, the slug an older plugin wrote (`tempo-testnet`) where the chain registry could not resolve it, and the literal `unknown` when the row recorded nothing. It is not a display name and nothing on this endpoint maps it to one, so treat it as an opaque key: `Number(network)` gives `NaN` on real rows. The display-name mapping lives in the runs table, in a different surface.
+
+`executionCount` is not a run count on the workflow half. The direct half counts direct executions that reached `completed` or `failed`, but the workflow half has no run-status predicate: it counts every `workflow_execution_logs` row that recorded gas, which is one per gas-bearing step, including steps of a run that is still in progress. `successCount` and `errorCount` on that half are step statuses for the same reason. Summing `executionCount` across networks therefore gives settled direct executions plus gas-bearing workflow steps, which is what this Gas Breakdown table shows, rather than run volume.
 
 ## List Runs
 
@@ -162,9 +164,14 @@ Returns a unified list of both workflow executions and direct executions with pa
 | `range` | string | Time range filter (same as summary) |
 | `customStart` | string | ISO timestamp for custom range start |
 | `customEnd` | string | ISO timestamp for custom range end |
-| `status` | string | Filter by status: `pending`, `running`, `success`, `error` |
+| `status` | string | Filter by status. Repeatable. One of `pending`, `running`, `success`, `error`, `system_error`, `external_error`, `skipped`, `cancelled` |
 | `source` | string | Filter by source: `workflow`, `direct` |
-| `limit` | number | Results per page (default: 50) |
+| `network` | string | Restrict to these networks. Repeatable |
+| `gas` | string | Restrict to rows whose gas fell on these networks. Repeatable |
+| `durationMin` | number | Only runs at or above this duration, in milliseconds |
+| `durationMax` | number | Only runs at or below this duration, in milliseconds |
+| `search` | string | Match on run id, workflow name or error text |
+| `limit` | number | Results per page (default: 50, capped at 100: a larger value is clamped rather than rejected) |
 | `cursor` | string | Pagination cursor from previous response |
 | `page` | number | One-based page number, an alternative to `cursor`. Values below 1 are clamped to 1 |
 | `projectId` | string | Restrict the listing to one workflow project |
@@ -194,9 +201,6 @@ Returns a unified list of both workflow executions and direct executions with pa
           "hash": "0x...",
           "nodeId": "n1",
           "nodeName": "Write Contract",
-          "chainId": 8453,
-          "network": "8453",
-          "iterationIndex": null,
           "verified": true,
           "receiptStatus": "success",
           "blockNumber": 19000000,
@@ -222,27 +226,41 @@ Returns a unified list of both workflow executions and direct executions with pa
 
 `startedAt`, not `createdAt`: a run is dated from when it started, and a run that
 has not finished carries `completedAt: null` and `durationMs: null`. `directType`
-is set on direct executions (`transfer`, `contract_call`, and so on) and `null`
-on workflow runs, where `source`, `workflowId` and `workflowName` carry the
+is set on direct executions and is exactly one of `transfer`, `contract-call` or
+`check-and-execute` (hyphenated: `contract_call` never matches) and `null` on
+workflow runs, where `source`, `workflowId` and `workflowName` carry the
 identity instead.
 
 `transactionHashes` is an array on both sources, one entry per on-chain write in
 submission order, with a direct execution surfacing its single hash as a
-one-element array so both render through the same code. Each entry carries the
-receipt verification KeeperHub performed independently (`verified`,
-`receiptStatus`, `blockNumber`, `gasUsed`, `verifiedAt`), which is the part a
-caller cannot reconstruct from the chain alone. An empty array means the run
-produced no on-chain write, or finalized before the column was backfilled.
+one-element array so both render through the same code. The minimal entry is
+`hash`, `nodeId` and `nodeName`, as shown above. `chainId`, `network` and
+`iterationIndex` are omitted rather than set to `null` when the log row had no
+value for them, so test for their presence rather than comparing against `null`.
+
+The receipt verification KeeperHub performs independently (`verified`,
+`receiptStatus`, `blockNumber`, `gasUsed`, `verifiedAt`) is the part a caller
+cannot reconstruct from the chain alone, and it is present only on entries that
+were verified at finalize: an entry whose hash matched no verification result is
+returned untouched, and a run that failed inspects only the writes still in
+flight. A missing `verified` therefore means not verified in this response,
+never verification failed.
+
+An empty array means the run produced no on-chain write, or finalized before the
+column was backfilled.
 
 `networks` is every chain the run's steps targeted, including read-only steps;
 `gasNetworks` is the subset its gas landed on. A multi-chain run can therefore
 have a longer `networks` than `gasNetworks`, which is why `network` and the gas
 figures are only meaningful together when that list holds one entry.
 
-`stepLogRetentionCutoff` is optional and appears when the organization's step
-logs have been aged out: a run older than the instant it names is listed with its
-status and duration but has no steps behind it, rather than being blank for the
-same reason a run that recorded nothing is.
+`stepLogRetentionCutoff` is present on every response, `null` when nothing has
+aged out, and otherwise the instant a run must be older than to have no steps
+behind it: such a run is listed with its status and duration and no steps, rather
+than being blank for the same reason a run that recorded nothing is. It is marked
+optional in the response type, but the route serializes the object as it stands,
+so the key ships either way and a caller testing for its presence takes the
+retention path for every organization.
 
 ## Get Run Step Logs
 
