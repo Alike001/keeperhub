@@ -254,12 +254,24 @@ async function runWithStateOverrides(
     }
 
     try {
+      // Trace against the same accumulated state the eth_call above used.
+      // Without stateOverrides the node traces this call against the raw
+      // latest chain state, so a call that only succeeds because an earlier
+      // call set up state reverts here and its state changes never reach the
+      // later calls -- exactly the failure this path exists to avoid.
+      const traceOptions: Record<string, unknown> = {
+        tracer: "prestateTracer",
+        tracerConfig: { diffMode: true },
+      };
+      if (Object.keys(stateAtThisCall).length > 0) {
+        traceOptions.stateOverrides = stateAtThisCall;
+      }
       const diff = await rpc.executeWithFailover(
         (provider) =>
           provider.send("debug_traceCall", [
             tx,
             "latest",
-            { tracer: "prestateTracer", tracerConfig: { diffMode: true } },
+            traceOptions,
           ]) as Promise<{ post?: Record<string, Record<string, unknown>> }>,
         "preflight"
       );

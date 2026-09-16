@@ -297,6 +297,32 @@ describe("simulateCallSequence on a node without eth_simulateV1", () => {
     });
   });
 
+  it("traces each call against the accumulated state, not the raw chain state", async () => {
+    fallbackNode();
+
+    await run();
+
+    const traces = spies.send.mock.calls.filter(
+      ([m]) => m === "debug_traceCall"
+    );
+    expect(traces).toHaveLength(2);
+    // The first call has nothing to carry, so no overrides are sent.
+    expect(traces[0][1][2]).toEqual({
+      tracer: "prestateTracer",
+      tracerConfig: { diffMode: true },
+    });
+    // The second call must be traced on top of what the first call wrote;
+    // without the overrides its diff is computed against the raw latest
+    // state and the state it set up never reaches later calls.
+    expect(traces[1][1][2]).toEqual({
+      tracer: "prestateTracer",
+      tracerConfig: { diffMode: true },
+      stateOverrides: {
+        [TOKEN]: { nonce: "0x3", stateDiff: { "0xslot": "0xvalue" } },
+      },
+    });
+  });
+
   it("does not retry eth_simulateV1 for that chain again", async () => {
     fallbackNode();
 
