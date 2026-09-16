@@ -88,6 +88,8 @@ const CHAIN_GAS_DEFAULTS: Record<number, ChainGasDefaults> = {
   4663: { multiplier: 1.5 },
   // Robinhood Chain testnet
   46630: { multiplier: 1.5 },
+  // HyperEVM (3,000,000 block gas limit)
+  999: { multiplier: 1.5 },
   // 0G Galileo testnet
   16602: { multiplier: 2.0 },
   // 0G Mainnet
