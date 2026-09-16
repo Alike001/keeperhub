@@ -226,6 +226,31 @@ describe("Lido Protocol Definition", () => {
     });
   });
 
+  it("targets named Withdrawal Queue results in coverage expectations", () => {
+    expect(lidoDef.testData?.["1"]?.expectations).toMatchObject({
+      "get-withdrawal-status": [{ field: "statuses", notEmpty: true }],
+      "get-last-checkpoint-index": [
+        { field: "lastCheckpointIndex", nonZero: true },
+      ],
+      "find-checkpoint-hints": [{ field: "hints", notEmpty: true }],
+      "get-claimable-ether": [{ field: "claimableEther", notEmpty: true }],
+    });
+  });
+
+  it("warns request builders about approval and owner requirements", () => {
+    for (const slug of ["request-withdrawals", "request-withdrawals-wsteth"]) {
+      const action = lidoDef.actions.find(
+        (candidate) => candidate.slug === slug
+      );
+      expect(
+        action?.inputs.find((input) => input.name === "amounts")?.helpTip
+      ).toContain("Withdrawal Queue");
+      expect(
+        action?.inputs.find((input) => input.name === "owner")?.helpTip
+      ).toContain("executing wallet");
+    }
+  });
+
   it("all event slugs are valid kebab-case", () => {
     for (const event of lidoDef.events ?? []) {
       expect(event.slug).toMatch(KEBAB_CASE_REGEX);

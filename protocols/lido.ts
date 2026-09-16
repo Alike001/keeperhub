@@ -284,10 +284,12 @@ export default defineAbiProtocol({
         // get-withdrawal-requests is intentionally liveness-only: the shared
         // test wallet does not own a durable queue NFT at the pinned block, so
         // an empty array is a valid response.
-        "get-withdrawal-status": [{ notEmpty: true }],
-        "get-last-checkpoint-index": [{ nonZero: true }],
-        "find-checkpoint-hints": [{ notEmpty: true }],
-        "get-claimable-ether": [{ notEmpty: true }],
+        "get-withdrawal-status": [{ field: "statuses", notEmpty: true }],
+        "get-last-checkpoint-index": [
+          { field: "lastCheckpointIndex", nonZero: true },
+        ],
+        "find-checkpoint-hints": [{ field: "hints", notEmpty: true }],
+        "get-claimable-ether": [{ field: "claimableEther", notEmpty: true }],
       },
       // The Tier 2 app approve path attempts gas sponsorship, which is
       // unconfigured on the CI fork, then falls back to direct signing;
@@ -326,12 +328,17 @@ export default defineAbiProtocol({
           description:
             "Lock one or more stETH amounts in Lido's queue and mint the withdrawal NFT to the specified owner.",
           inputs: {
-            _amounts: { name: "amounts", label: "stETH Amounts (wei)" },
-            _owner: { name: "owner", label: "Withdrawal NFT Owner" },
-          },
-          outputs: {
-            requestIds: {
-              label: "Withdrawal Request IDs",
+            _amounts: {
+              name: "amounts",
+              label: "stETH Amounts (wei)",
+              helpTip:
+                "Approve the Lido Withdrawal Queue as the stETH spender before running this request.",
+            },
+            _owner: {
+              name: "owner",
+              label: "Withdrawal NFT Owner",
+              helpTip:
+                "Use the executing wallet if this workflow will also claim the withdrawal later.",
             },
           },
         },
@@ -341,12 +348,17 @@ export default defineAbiProtocol({
           description:
             "Lock one or more wstETH amounts in Lido's queue and mint the withdrawal NFT to the specified owner.",
           inputs: {
-            _amounts: { name: "amounts", label: "wstETH Amounts (wei)" },
-            _owner: { name: "owner", label: "Withdrawal NFT Owner" },
-          },
-          outputs: {
-            requestIds: {
-              label: "Withdrawal Request IDs",
+            _amounts: {
+              name: "amounts",
+              label: "wstETH Amounts (wei)",
+              helpTip:
+                "Add a web3/approve-token step for the Lido Withdrawal Queue before running this request.",
+            },
+            _owner: {
+              name: "owner",
+              label: "Withdrawal NFT Owner",
+              helpTip:
+                "Use the executing wallet if this workflow will also claim the withdrawal later.",
             },
           },
         },

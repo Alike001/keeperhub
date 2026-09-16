@@ -60,6 +60,18 @@ function serializeItems(items: ArrayItem[]): unknown[] {
   return items.map((item) => item.value);
 }
 
+export function isLegacyCommaArrayValue(value: unknown): value is string {
+  if (typeof value !== "string" || !value.includes(",")) {
+    return false;
+  }
+
+  try {
+    return !Array.isArray(JSON.parse(value));
+  } catch {
+    return true;
+  }
+}
+
 function makeEmptyValue(components?: AbiComponent[]): unknown {
   if (components && components.length > 0) {
     const obj: Record<string, unknown> = {};
@@ -80,6 +92,7 @@ export function ArrayInputField({
   components,
 }: ArrayInputFieldProps): React.ReactNode {
   const idCounter = useRef(0);
+  const migratedLegacyValue = useRef<string | null>(null);
   const nextId = (): number => {
     idCounter.current += 1;
     return idCounter.current;
@@ -93,6 +106,14 @@ export function ArrayInputField({
     const incoming = parseArrayValue(value, nextId);
     if (incoming.length > 0 && items.length === 0) {
       setItems(incoming);
+    }
+
+    if (
+      isLegacyCommaArrayValue(value) &&
+      migratedLegacyValue.current !== value
+    ) {
+      migratedLegacyValue.current = value;
+      onChange(serializeItems(incoming));
     }
   }, [value]);
 

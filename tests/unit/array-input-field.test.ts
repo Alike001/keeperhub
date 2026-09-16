@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { parseArrayValue } from "@/components/workflow/config/array-input-field";
+import {
+  isLegacyCommaArrayValue,
+  parseArrayValue,
+} from "@/components/workflow/config/array-input-field";
 
 describe("parseArrayValue", () => {
   it("preserves legacy comma-separated scalar-array values", () => {
@@ -13,5 +16,11 @@ describe("parseArrayValue", () => {
       { id: 1, value: "0xpool1" },
       { id: 2, value: "0xpool2" },
     ]);
+  });
+
+  it("identifies only non-JSON comma-separated values for migration", () => {
+    expect(isLegacyCommaArrayValue("0xpool1, 0xpool2")).toBe(true);
+    expect(isLegacyCommaArrayValue('["0xpool1","0xpool2"]')).toBe(false);
+    expect(isLegacyCommaArrayValue("0xpool1")).toBe(false);
   });
 });
