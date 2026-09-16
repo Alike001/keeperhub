@@ -87,7 +87,9 @@ Close, or acknowledge, the alert carrying a given dedup key.
 
 **Outputs:** `delivered`, `dedupKey`, and, when the check is on, `incidentStatus`, `alreadyInTargetState` and `incidentUrl`.
 
-Both actions need the dedup key of the alert they are closing, and it is not derived for you: point the field at the trigger node's output, for example `{{Trigger Incident.dedupKey}}`. The service must be the same one the trigger used, because PagerDuty drops an update that arrives through a different service's routing key.
+Both actions need the dedup key of the alert they are closing. Pick the **Trigger Incident node** whose alert this closes and the same key is derived here; only set the dedup key field when that trigger uses a key of its own, in which case put the same value on both nodes.
+
+Pick the node rather than referencing `{{Trigger Incident.dedupKey}}`: on the healthy branch of a check the trigger node never ran, so a template reference to its output cannot resolve and the run would fail -- which is exactly the branch a resolve belongs on. The service must also be the same one the trigger used, because PagerDuty drops an update that arrives through a different service's routing key.
 
 PagerDuty answers `202 Accepted` to an acknowledge or a resolve whether or not it had an open alert to apply it to, so a key that matches nothing looks exactly like success. Turn on **Check the incident afterwards** to read the incident back and report its real status; an inconclusive answer is reported as `unknown` and never fails the run.
 
@@ -110,7 +112,9 @@ Record a deploy, a config change or a migration on the service's timeline. Chang
 
 Create an incident directly rather than through an alert. This is the only action that can override the escalation policy, set urgency or set a priority, and the only one that needs a write-capable credential plus a **From email** -- the login email of a real PagerDuty user, which PagerDuty attributes the incident to.
 
-**Inputs:** PagerDuty service, Title, Details, Escalation policy (optional override), Urgency, Incident key, From email.
+**Inputs:** PagerDuty service, Title, Details, Escalation policy (optional override), Urgency, Priority, Incident key, From email.
+
+**Priority** is read from your account (P1, P2, and so on) and is a paid-plan feature -- an account without it shows nothing to pick. Only this action can set one: the Events API v2 payload has no priority field, so an alert raised by Trigger Incident takes its priority from your Event Orchestration rules instead. **Urgency** decides whether the incident notifies on-call at all; left at the service default, PagerDuty applies the service's urgency rule.
 
 **Outputs:** `incidentId`, `incidentNumber`, `incidentUrl`, `status`, `escalationPolicyFellBack`.
 
@@ -123,6 +127,8 @@ Every failure names the object it is about, and the ones that cannot succeed on 
 | What happened | What the node does |
 |---------------|--------------------|
 | Service deleted, or not visible to these credentials | Fails naming the service id. The node keeps the id rather than repointing at another service |
+| Service disabled in PagerDuty | Fails. A disabled service accepts events and raises no incident, so the page would have gone nowhere |
+| Service in a maintenance window | Delivers, and reports `suppressedByService` -- PagerDuty takes the event and raises no incident until the window ends |
 | Service has no Events API v2 integration | Fails naming the service and the fix |
 | Token revoked, or presented to the wrong region | Fails with a credential error. Test Connection tells you when the region checkbox is the cause |
 | PagerDuty account lapsed or downgraded | Fails with PagerDuty's `402`: the plan does not allow the request |

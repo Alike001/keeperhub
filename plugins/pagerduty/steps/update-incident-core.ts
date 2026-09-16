@@ -21,11 +21,12 @@ import {
 import type { PagerDutyCredentials } from "../credentials";
 import {
   buildUpdateEvent,
+  deriveDedupKey,
   failureIsExternal,
   findIncidentByKey,
   type IncidentLookup,
   postEventWithRetries,
-  resolveRoutingKey,
+  resolveRoutingKeyWithRetries,
 } from "./pagerduty-core";
 
 const RETRY_ATTEMPT_LIMITS = { defaultAttempts: 2, maxAttempts: 5 };
@@ -34,6 +35,8 @@ const RETRY_DELAY_LIMITS = { defaultDelaySeconds: 1, maxDelaySeconds: 15 };
 export type UpdateIncidentCoreInput = {
   pagerdutyServiceId: string;
   dedupKey?: string;
+  /** Id of the Trigger Incident node whose alert this closes. */
+  dedupKeyFromNodeId?: string;
   /** Read the incident back afterwards to report what state it is actually in. */
   verifyWithPagerDuty?: boolean | string;
   retryAttempts?: number | string;
@@ -48,11 +51,18 @@ export type UpdateIncidentResult =
       delivered: boolean;
       dedupKey: string;
       action: "acknowledge" | "resolve";
-      /** Only present when verification is on. "unknown" means PagerDuty had nothing to show, which is not proof of absence. */
+      /**
+       * Only present when the check is on: the incident's status when it was
+       * read back, after the event was sent. The Events API is asynchronous,
+       * so this can still show the previous state for a second or two, and
+       * "unknown" means PagerDuty had nothing to show - which is not proof of
+       * absence, since a service that groups alerts produces incidents with no
+       * incident key.
+       */
       incidentStatus?: IncidentLookup["status"];
       incidentUrl?: string;
-      /** True when the incident was already in the state this action asks for. */
-      alreadyInTargetState?: boolean;
+      /** The incident's priority, when it has one. */
+      incidentPriority?: string;
       /** Why verification could not answer, when it could not. Never fails the step. */
       verificationError?: string;
       error?: string;
@@ -73,13 +83,40 @@ export type UpdateIncidentResult =
  * trigger node's `dedupKey` output is the shape that works.
  */
 function missingDedupKeyError(action: "acknowledge" | "resolve"): string {
-  return `This ${action} has no dedup key. PagerDuty needs the key of the alert to ${action}, and it is not derived for you here: point this at the trigger node's dedupKey output, for example {{Trigger Incident.dedupKey}}, or type the same key the trigger uses.`;
+  return `This ${action} has no dedup key. PagerDuty needs the key of the alert to ${action}: pick the Trigger Incident node whose alert this closes, and the same key it uses is derived here, or set a dedup key explicitly on both nodes.`;
+}
+
+/**
+ * The key of the alert to update.
+ *
+ * An explicit key wins. Otherwise it is derived from the trigger node the user
+ * picked, using the same rule the trigger itself uses when its key is blank -
+ * deriving from THIS node's id would produce a key no alert has ever carried,
+ * and PagerDuty answers 202 to that and drops it.
+ *
+ * A template reference to the trigger node's output cannot be used for this:
+ * the healthy branch of a check is precisely the branch where the trigger node
+ * did not run, so the reference would be unresolved and the run would fail.
+ */
+function resolveTargetDedupKey(
+  input: UpdateIncidentCoreInput,
+  workflowId: string | undefined
+): string {
+  const explicit = input.dedupKey?.trim();
+  if (explicit) {
+    return explicit;
+  }
+  const triggerNodeId = input.dedupKeyFromNodeId?.trim();
+  if (triggerNodeId) {
+    return deriveDedupKey(undefined, { workflowId, nodeId: triggerNodeId });
+  }
+  return "";
 }
 
 type Verification = {
   incidentStatus?: IncidentLookup["status"];
   incidentUrl?: string;
-  alreadyInTargetState?: boolean;
+  incidentPriority?: string;
   verificationError?: string;
 };
 
@@ -95,6 +132,11 @@ type Verification = {
  * service that groups alerts (whose incidents carry no incident key) all come
  * back as "unknown" with a note - refusing to resolve an incident because the
  * read-back was inconclusive would be worse than the ambiguity it replaces.
+ *
+ * It reports the state AFTER the event, which is what can be observed; it
+ * cannot say whether the incident was already in that state, because the read
+ * happens after the write. Reading first would answer that and cost a second
+ * call on every run, for an answer nothing acts on.
  */
 async function verifyIfAsked(params: {
   input: UpdateIncidentCoreInput;
@@ -122,23 +164,22 @@ async function verifyIfAsked(params: {
     };
   }
 
-  const target =
-    params.action === "resolve" ? "resolved" : "acknowledged";
   return {
     incidentStatus: lookup.value.status,
     incidentUrl: lookup.value.htmlUrl,
-    alreadyInTargetState: lookup.value.status === target,
+    incidentPriority: lookup.value.priority,
   };
 }
 
 export async function runUpdateIncident(params: {
   input: UpdateIncidentCoreInput;
   credentials: PagerDutyCredentials;
+  workflowId?: string;
   action: "acknowledge" | "resolve";
 }): Promise<UpdateIncidentResult> {
   const { input, credentials, action } = params;
   const failOnError = resolveFailOnError(input.failOnError);
-  const dedupKey = input.dedupKey?.trim() ?? "";
+  const dedupKey = resolveTargetDedupKey(input, params.workflowId);
   const logLabels = {
     plugin_name: "pagerduty",
     action_name: `${action}-incident`,
@@ -162,29 +203,44 @@ export async function runUpdateIncident(params: {
     };
   }
 
-  const routingKey = await resolveRoutingKey(credentials, serviceId);
+  const maxRetries = resolveRetryAttempts(
+    input.retryAttempts,
+    RETRY_ATTEMPT_LIMITS
+  );
+  const baseDelayMs = resolveRetryDelayMs(input.retryDelay, RETRY_DELAY_LIMITS);
+  const onRetry = (
+    failure: { message: string },
+    attempt: number,
+    delayMs: number
+  ): void => {
+    logUserError(
+      ErrorCategory.EXTERNAL_SERVICE,
+      "[PagerDuty] Attempt failed, retrying",
+      failure.message,
+      { ...logLabels, attempt: String(attempt), retry_in_ms: String(delayMs) }
+    );
+  };
+
+  const routingKey = await resolveRoutingKeyWithRetries({
+    credentials,
+    serviceId,
+    maxRetries,
+    baseDelayMs,
+    wait: sleep,
+    onRetry,
+  });
   const result = routingKey.ok
     ? await postEventWithRetries({
         credentials,
         body: buildUpdateEvent({
-          routingKey: routingKey.value,
+          routingKey: routingKey.value.routingKey,
           dedupKey,
           action,
         }),
-        maxRetries: resolveRetryAttempts(
-          input.retryAttempts,
-          RETRY_ATTEMPT_LIMITS
-        ),
-        baseDelayMs: resolveRetryDelayMs(input.retryDelay, RETRY_DELAY_LIMITS),
+        maxRetries,
+        baseDelayMs,
         wait: sleep,
-        onRetry: (failure, attempt, delayMs) => {
-          logUserError(
-            ErrorCategory.EXTERNAL_SERVICE,
-            "[PagerDuty] Attempt failed, retrying",
-            failure.message,
-            { ...logLabels, attempt: String(attempt), retry_in_ms: String(delayMs) }
-          );
-        },
+        onRetry,
       })
     : routingKey;
 

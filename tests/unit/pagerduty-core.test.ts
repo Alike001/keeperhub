@@ -10,6 +10,7 @@ vi.mock("@/lib/safe-fetch", () => ({
 
 import {
   clearOAuthTokenCache,
+  clearRoutingKeyCache,
   createIncident,
   findIncidentByKey,
   listServices,
@@ -47,6 +48,7 @@ function lastCall(index = 0): [string, Record<string, unknown>] {
 beforeEach(() => {
   safeFetch.mockReset();
   clearOAuthTokenCache();
+  clearRoutingKeyCache();
 });
 
 describe("resolveAuthHeader", () => {
@@ -137,13 +139,14 @@ describe("listServices", () => {
     const result = await listServices(TOKEN_CREDS);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value[0]).toMatchObject({
+      expect(result.value.truncated).toBe(false);
+      expect(result.value.services[0]).toMatchObject({
         id: "PSKY1",
         name: "Sky Keeper Bots",
         escalationPolicyName: "Platform On-Call",
         acceptsEvents: true,
       });
-      expect(result.value[1].acceptsEvents).toBe(false);
+      expect(result.value.services[1].acceptsEvents).toBe(false);
     }
     expect(lastCall()[0]).toContain("https://api.pagerduty.com/services");
   });
@@ -203,6 +206,33 @@ describe("listServices", () => {
 });
 
 describe("resolveRoutingKey", () => {
+  it("pages through a large account instead of stopping at the first 100", async () => {
+    safeFetch
+      .mockResolvedValueOnce(
+        response(200, {
+          services: [{ id: "PA", name: "A", integrations: [] }],
+          more: true,
+        })
+      )
+      .mockResolvedValueOnce(
+        response(200, {
+          services: [{ id: "PB", name: "B", integrations: [] }],
+          more: false,
+        })
+      );
+
+    const result = await listServices(TOKEN_CREDS);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.services.map((service) => service.id)).toEqual([
+        "PA",
+        "PB",
+      ]);
+      expect(result.value.truncated).toBe(false);
+    }
+    expect(String(safeFetch.mock.calls[1][0])).toContain("offset=100");
+  });
+
   it("reads the key from the service's Events API v2 integration", async () => {
     safeFetch
       .mockResolvedValueOnce(
@@ -220,7 +250,10 @@ describe("resolveRoutingKey", () => {
       );
 
     const result = await resolveRoutingKey(TOKEN_CREDS, "PSKY1");
-    expect(result).toEqual({ ok: true, value: "R123" });
+    expect(result).toEqual({
+      ok: true,
+      value: { routingKey: "R123", serviceStatus: undefined },
+    });
   });
 
   it("says the service is gone on a 404, and does not ask for a retry", async () => {

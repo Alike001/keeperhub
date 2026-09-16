@@ -11,10 +11,11 @@ import {
 } from "@/components/ui/select";
 import type {
   PagerDutyEscalationPolicy,
+  PagerDutyPriority,
   PagerDutyService,
 } from "@/plugins/pagerduty/steps/pagerduty-core";
 
-type Resource = "services" | "escalation-policies";
+type Resource = "services" | "escalation-policies" | "priorities";
 
 type LoadState<T> = {
   items: T[];
@@ -23,6 +24,8 @@ type LoadState<T> = {
   error: string | null;
   /** The account these came from, e.g. "acme" for acme.pagerduty.com. */
   accountSubdomain?: string;
+  /** True when the account holds more than the route paged through. */
+  truncated?: boolean;
 };
 
 /**
@@ -39,7 +42,9 @@ function usePagerDutyResources<T>(
   pick: (body: {
     services?: PagerDutyService[];
     escalationPolicies?: PagerDutyEscalationPolicy[];
+    priorities?: PagerDutyPriority[];
     accountSubdomain?: string;
+    truncated?: boolean;
   }) => T[]
 ): LoadState<T> & { reload: () => void } {
   const [state, setState] = useState<LoadState<T>>({
@@ -61,7 +66,7 @@ function usePagerDutyResources<T>(
     setState({ items: [], loading: true, error: null });
 
     fetch(
-      `/api/integrations/${integrationId}/pagerduty/resources?resource=${resource}`
+      `/api/integrations/${encodeURIComponent(integrationId)}/pagerduty/resources?resource=${resource}`
     )
       .then(async (response) => {
         const body = await response.json().catch(() => ({}));
@@ -87,6 +92,7 @@ function usePagerDutyResources<T>(
             typeof body?.accountSubdomain === "string"
               ? body.accountSubdomain
               : undefined,
+          truncated: body?.truncated === true,
         });
       })
       .catch((error: unknown) => {
@@ -128,7 +134,7 @@ function Notice({
     <div
       className={`flex items-start gap-2 rounded-md border p-2 text-xs ${
         tone === "warning"
-          ? "border-yellow-500/40 bg-yellow-500/5 text-yellow-200"
+          ? "border-yellow-500/40 bg-yellow-500/5 text-yellow-700 dark:text-yellow-300"
           : "border-border bg-muted/30 text-muted-foreground"
       }`}
     >
@@ -162,6 +168,9 @@ const pickPolicies = (body: {
   escalationPolicies?: PagerDutyEscalationPolicy[];
 }) => body.escalationPolicies ?? [];
 
+const pickPriorities = (body: { priorities?: PagerDutyPriority[] }) =>
+  body.priorities ?? [];
+
 export function PagerDutyServiceField({
   value,
   disabled,
@@ -173,14 +182,17 @@ export function PagerDutyServiceField({
   integrationId?: string;
   onChange: (value: string) => void;
 }) {
-  const { items, loading, error, reload, accountSubdomain } =
+  const { items, loading, error, reload, accountSubdomain, truncated } =
     usePagerDutyResources(integrationId, "services", pickServices);
 
   const selected = items.find((service) => service.id === value);
   // A stored id that the account no longer lists: deleted, moved, or outside
   // what these credentials can see. The id is kept exactly as it is - silently
   // repointing a node at another service would send a page to another team.
-  const missing = Boolean(value) && !loading && !error && !selected;
+  // Never claimed on a truncated list, where the service may simply be on a
+  // page nobody fetched.
+  const missing =
+    Boolean(value) && !(loading || error || truncated) && !selected;
 
   if (!integrationId) {
     return (
@@ -277,6 +289,29 @@ export function PagerDutyServiceField({
         </Notice>
       )}
 
+      {selected && selected.status === "disabled" && (
+        <Notice tone="warning">
+          {selected.name} is disabled in PagerDuty. It accepts events and
+          raises no incident, so a page sent to it goes nowhere. This node
+          fails rather than reporting a page that never happened.
+        </Notice>
+      )}
+
+      {selected && selected.status === "maintenance" && (
+        <Notice tone="warning">
+          {selected.name} is in a maintenance window, so PagerDuty will take
+          the event and raise no incident until the window ends. The node
+          reports that rather than claiming someone was paged.
+        </Notice>
+      )}
+
+      {truncated && (
+        <Notice tone="info">
+          This account has more services than are listed here. Search narrows
+          what is shown; a service further down the list is not missing.
+        </Notice>
+      )}
+
       {selected?.acceptsEvents && (
         <Notice tone="info">
           Pages{" "}
@@ -364,6 +399,129 @@ export function PagerDutyEscalationPolicyField({
           Escalation policy <code className="font-mono">{value}</code> is not in
           this account any more. Unless the fallback below is off, the incident
           will page the service's own policy instead.
+        </Notice>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The account's incident priorities. REST-only, and a paid-plan feature, so an
+ * empty list is a normal state rather than an error.
+ */
+export function PagerDutyPriorityField({
+  value,
+  disabled,
+  integrationId,
+  onChange,
+}: {
+  value: string;
+  disabled?: boolean;
+  integrationId?: string;
+  onChange: (value: string) => void;
+}) {
+  const { items, loading, error } = usePagerDutyResources(
+    integrationId,
+    "priorities",
+    pickPriorities
+  );
+
+  if (!integrationId) {
+    return <Notice tone="info">Select a PagerDuty connection first.</Notice>;
+  }
+
+  if (!(loading || error) && items.length === 0) {
+    return (
+      <Notice tone="info">
+        This PagerDuty account has no incident priorities. They come with the
+        plans that include them; without one, PagerDuty decides the priority
+        itself.
+      </Notice>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <Select
+        disabled={disabled || loading}
+        onValueChange={onChange}
+        value={value || undefined}
+      >
+        <SelectTrigger className="w-full">
+          <SelectValue placeholder="Leave it to PagerDuty" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="none">Leave it to PagerDuty</SelectItem>
+          {items.map((priority) => (
+            <SelectItem key={priority.id} value={priority.id}>
+              <span className="flex flex-col items-start">
+                <span>{priority.name}</span>
+                {priority.description && (
+                  <span className="text-muted-foreground text-xs">
+                    {priority.description}
+                  </span>
+                )}
+              </span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {error && <Notice tone="warning">{error}</Notice>}
+    </div>
+  );
+}
+
+/**
+ * Picks the Trigger Incident node whose alert an acknowledge or resolve
+ * closes. A node reference, not a template: the healthy branch of a check is
+ * exactly the branch where the trigger node did not run, so a reference to its
+ * output would be unresolved and the run would fail.
+ */
+export function PagerDutyTriggerNodeField({
+  value,
+  disabled,
+  nodes,
+  onChange,
+}: {
+  value: string;
+  disabled?: boolean;
+  nodes: { id: string; label: string }[];
+  onChange: (value: string) => void;
+}) {
+  const selected = nodes.find((node) => node.id === value);
+
+  if (nodes.length === 0) {
+    return (
+      <Notice tone="info">
+        No Trigger Incident node in this workflow yet. Add one, or set the
+        dedup key below by hand on both nodes.
+      </Notice>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <Select
+        disabled={disabled}
+        onValueChange={onChange}
+        value={value || undefined}
+      >
+        <SelectTrigger className="w-full">
+          <SelectValue placeholder="Select the trigger node" />
+        </SelectTrigger>
+        <SelectContent>
+          {nodes.map((node) => (
+            <SelectItem key={node.id} value={node.id}>
+              {node.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {Boolean(value) && !selected && (
+        <Notice tone="warning">
+          The trigger node this pointed at is gone from the workflow. Pick
+          another, or set the dedup key by hand - otherwise this closes
+          nothing.
         </Notice>
       )}
     </div>

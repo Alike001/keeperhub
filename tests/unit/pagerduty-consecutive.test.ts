@@ -4,11 +4,17 @@ vi.mock("server-only", () => ({}));
 
 const { selectMock } = vi.hoisted(() => ({ selectMock: vi.fn() }));
 vi.mock("@/lib/db", () => ({ db: { select: selectMock } }));
+vi.mock("@/lib/logging", () => ({
+  ErrorCategory: { DATABASE: "database" },
+  logSystemWarn: vi.fn(),
+}));
 vi.mock("@/lib/db/schema", () => ({
   workflowExecutions: {
     id: "id",
     workflowId: "workflow_id",
     startedAt: "started_at",
+    completedAt: "completed_at",
+    deletedAt: "deleted_at",
   },
   workflowExecutionLogs: {
     executionId: "execution_id",
@@ -21,8 +27,9 @@ vi.mock("drizzle-orm", () => ({
   desc: (value: unknown) => value,
   eq: (...args: unknown[]) => args,
   inArray: (...args: unknown[]) => args,
+  isNotNull: (value: unknown) => value,
   isNull: (value: unknown) => value,
-  ne: (...args: unknown[]) => args,
+  lt: (...args: unknown[]) => args,
 }));
 
 import {
@@ -31,9 +38,19 @@ import {
   resolveConsecutiveRuns,
 } from "@/plugins/pagerduty/steps/consecutive-core";
 
-/** Two chained queries: prior runs, then the log rows for this node. */
+/**
+ * Three chained queries: this run's start time, the runs before it, then the
+ * log rows showing which of those reached this node.
+ */
 function mockQueries(priorRuns: { id: string }[], reached: string[]) {
   selectMock
+    .mockReturnValueOnce({
+      from: () => ({
+        where: () => ({
+          limit: () => Promise.resolve([{ startedAt: new Date() }]),
+        }),
+      }),
+    })
     .mockReturnValueOnce({
       from: () => ({
         where: () => ({
@@ -99,6 +116,29 @@ describe("countConsecutiveRuns", () => {
     // check is enough to clear the streak.
     mockQueries([{ id: "exec-2" }, { id: "exec-1" }], ["exec-1"]);
     expect(await countConsecutiveRuns(CONTEXT, 3)).toBe(1);
+  });
+
+  /**
+   * The database is least healthy exactly when an incident is in progress. A
+   * page held back because a count query failed is the outcome this feature
+   * exists to prevent, so it pages instead.
+   */
+  it("pages anyway when the database will not answer", async () => {
+    selectMock.mockImplementation(() => {
+      throw new Error("connection pool exhausted");
+    });
+    expect(await countConsecutiveRuns(CONTEXT, 3)).toBe(3);
+  });
+
+  it("pages anyway when a query rejects rather than throws", async () => {
+    selectMock.mockReturnValue({
+      from: () => ({
+        where: () => ({
+          limit: () => Promise.reject(new Error("statement timeout")),
+        }),
+      }),
+    });
+    expect(await countConsecutiveRuns(CONTEXT, 2)).toBe(2);
   });
 
   it("fails open when the run has no identity to count against", async () => {

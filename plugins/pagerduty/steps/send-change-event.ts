@@ -16,9 +16,10 @@ import {
 import type { PagerDutyCredentials } from "../credentials";
 import {
   failureIsExternal,
+  MAX_EVENT_BYTES,
   MAX_SUMMARY_CHARS,
   postEventWithRetries,
-  resolveRoutingKey,
+  resolveRoutingKeyWithRetries,
   truncateRunes,
 } from "./pagerduty-core";
 
@@ -71,6 +72,39 @@ function parseDetails(
   return { details: raw };
 }
 
+/**
+ * A change event has no dedup key - PagerDuty offers none for them - so unlike
+ * an alert, a retry after a response that was actually delivered leaves two
+ * entries on the service timeline. A duplicate deploy marker is cosmetic and a
+ * missing one is not, so the retry stands; it is the one place this plugin's
+ * "retries are idempotent" reasoning does not hold, and it is worth knowing.
+ */
+function buildChangeEventBody(params: {
+  routingKey: string;
+  summary: string;
+  source: string;
+  details?: Record<string, unknown>;
+}): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    routing_key: params.routingKey,
+    payload: {
+      summary: truncateRunes(params.summary, MAX_SUMMARY_CHARS),
+      timestamp: new Date().toISOString(),
+      source: truncateRunes(params.source, MAX_SUMMARY_CHARS),
+      custom_details: params.details,
+    },
+  };
+
+  // Same ceiling as an alert: over it, PagerDuty rejects the whole event, so
+  // the details go rather than the marker.
+  if (new TextEncoder().encode(JSON.stringify(body)).length > MAX_EVENT_BYTES) {
+    (body.payload as Record<string, unknown>).custom_details = {
+      error: `Custom details were removed because the change event exceeded PagerDuty's ${MAX_EVENT_BYTES} byte limit.`,
+    };
+  }
+  return body;
+}
+
 async function stepHandler(
   input: SendChangeEventInput,
   credentials: PagerDutyCredentials
@@ -94,32 +128,47 @@ async function stepHandler(
     };
   }
 
-  const routingKey = await resolveRoutingKey(credentials, serviceId);
-  const result = routingKey.ok
-    ? await postEventWithRetries({
-        credentials,
-        path: CHANGE_EVENT_PATH,
-        body: {
-          routing_key: routingKey.value,
-          payload: {
-            summary: truncateRunes(summary, MAX_SUMMARY_CHARS),
-            timestamp: new Date().toISOString(),
-            source:
-              input.source?.trim() || input._context?.nodeName || "KeeperHub",
-            custom_details: parseDetails(input.customDetails),
-          },
-        },
-        maxRetries: resolveRetryAttempts(
-          input.retryAttempts,
-          RETRY_ATTEMPT_LIMITS
-        ),
-        baseDelayMs: resolveRetryDelayMs(input.retryDelay, RETRY_DELAY_LIMITS),
-        wait: sleep,
+  const maxRetries = resolveRetryAttempts(
+    input.retryAttempts,
+    RETRY_ATTEMPT_LIMITS
+  );
+  const baseDelayMs = resolveRetryDelayMs(input.retryDelay, RETRY_DELAY_LIMITS);
+
+  const routingKey = await resolveRoutingKeyWithRetries({
+    credentials,
+    serviceId,
+    maxRetries,
+    baseDelayMs,
+    wait: sleep,
+  });
+
+  const body = routingKey.ok
+    ? buildChangeEventBody({
+        routingKey: routingKey.value.routingKey,
+        summary,
+        source: input.source?.trim() || input._context?.nodeName || "KeeperHub",
+        details: parseDetails(input.customDetails),
       })
-    : routingKey;
+    : undefined;
+
+  const result =
+    routingKey.ok && body
+      ? await postEventWithRetries({
+          credentials,
+          path: CHANGE_EVENT_PATH,
+          body,
+          maxRetries,
+          baseDelayMs,
+          wait: sleep,
+        })
+      : routingKey;
 
   if (result.ok) {
-    return { success: true, delivered: true, message: result.value.message };
+    return {
+      success: true,
+      delivered: true,
+      message: "message" in result.value ? result.value.message : undefined,
+    };
   }
 
   logUserError(

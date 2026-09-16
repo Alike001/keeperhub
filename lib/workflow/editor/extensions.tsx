@@ -28,7 +28,9 @@ import { PagerDutyPreviewField } from "@/components/workflow/config/pagerduty-pr
 import {
   PagerDutyBackupConnectionField,
   PagerDutyEscalationPolicyField,
+  PagerDutyPriorityField,
   PagerDutyServiceField,
+  PagerDutyTriggerNodeField,
 } from "@/components/workflow/config/pagerduty-resource-field";
 import { TokenSelectField } from "@/components/workflow/config/token-select-field";
 import { integrationsAtom } from "@/lib/integrations-store";
@@ -37,6 +39,7 @@ import {
   registerFieldRenderer,
   registerIntegrationFormHandler,
 } from "@/lib/workflow/editor/extension-registry";
+import { nodesAtom } from "@/lib/workflow/store";
 
 // ============================================================================
 // Register Custom Field Renderers
@@ -741,6 +744,81 @@ function PagerDutyBackupConnectionFieldConnected({
         type: connection.type,
       }))}
       disabled={disabled}
+      onChange={onChange}
+      value={value}
+    />
+  );
+}
+
+registerFieldRenderer(
+  "pagerduty-priority-select",
+  ({ field, config, onUpdateConfig, disabled }) => (
+    <div className="space-y-2" key={field.key}>
+      <Label className="ml-1" htmlFor={field.key}>
+        {field.label}
+      </Label>
+      <PagerDutyPriorityField
+        disabled={disabled}
+        integrationId={configString(config.integrationId) || undefined}
+        onChange={(value) => onUpdateConfig(field.key, value)}
+        value={configString(config[field.key])}
+      />
+      {field.helpText && (
+        <p className="text-muted-foreground text-xs">{field.helpText}</p>
+      )}
+    </div>
+  )
+);
+
+registerFieldRenderer(
+  "pagerduty-trigger-node-select",
+  ({ field, config, onUpdateConfig, disabled }) => (
+    <div className="space-y-2" key={field.key}>
+      <Label className="ml-1" htmlFor={field.key}>
+        {field.label}
+      </Label>
+      <PagerDutyTriggerNodeFieldConnected
+        disabled={disabled}
+        onChange={(value) => onUpdateConfig(field.key, value)}
+        value={configString(config[field.key])}
+      />
+      {field.helpText && (
+        <p className="text-muted-foreground text-xs">{field.helpText}</p>
+      )}
+    </div>
+  )
+);
+
+/**
+ * The Trigger Incident nodes on this canvas.
+ *
+ * Their ids are what the dedup key is derived from, so the acknowledge or
+ * resolve closes the alert that trigger opened even on a branch where the
+ * trigger node never ran.
+ */
+function PagerDutyTriggerNodeFieldConnected({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const nodes = useAtomValue(nodesAtom);
+  const triggerNodes = nodes
+    .filter(
+      (node) => node.data?.config?.actionType === "pagerduty/trigger-incident"
+    )
+    .map((node) => ({
+      id: node.id,
+      label: node.data?.label || "Trigger Incident",
+    }));
+
+  return (
+    <PagerDutyTriggerNodeField
+      disabled={disabled}
+      nodes={triggerNodes}
       onChange={onChange}
       value={value}
     />

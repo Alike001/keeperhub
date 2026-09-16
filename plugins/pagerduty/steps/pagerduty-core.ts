@@ -20,6 +20,7 @@
  * config value reaches the host, so the plugin stays `egress: "fixed-host"`
  * and a workflow can never redirect it.
  */
+import { createHash } from "node:crypto";
 import { safeFetch } from "@/lib/safe-fetch";
 import { getErrorMessage } from "@/lib/utils";
 import {
@@ -58,8 +59,21 @@ const IDENTITY_TOKEN_URL = "https://identity.pagerduty.com/oauth/token";
 const REQUEST_TIMEOUT_MS = 10_000;
 const PLUGIN = "pagerduty";
 const ACCEPT_V2 = "application/vnd.pagerduty+json;version=2";
-/** Scopes the read paths need. services.read also covers reading a service's integrations. */
-const OAUTH_SCOPES = "services.read escalation_policies.read incidents.write";
+/**
+ * Scopes asked for, most useful first. The full set covers every action:
+ * reading services (which includes their integrations, hence the routing key),
+ * reading escalation policies, reading an incident back after an acknowledge
+ * or resolve, and creating one over REST.
+ *
+ * A client-credentials grant only issues scopes the app registration holds, so
+ * an app registered with the two read scopes - which is all the connection form
+ * tells people to grant - would be refused the full request. Rather than force
+ * everyone to over-grant, the exchange falls back to the minimal pair, and the
+ * actions that need more say so when PagerDuty refuses them.
+ */
+const OAUTH_SCOPES_FULL =
+  "services.read escalation_policies.read priorities.read incidents.read incidents.write";
+const OAUTH_SCOPES_MINIMAL = "services.read escalation_policies.read";
 /** Renew a little before expiry so a call never races the boundary. */
 const OAUTH_EXPIRY_SKEW_MS = 60_000;
 
@@ -70,12 +84,32 @@ export type PagerDutyService = {
   escalationPolicyName?: string;
   /** False when the service has no Events API v2 integration to route events through. */
   acceptsEvents: boolean;
+  /**
+   * PagerDuty's own service status. "disabled" and "maintenance" both swallow
+   * events: PagerDuty accepts them and creates no incident, which is invisible
+   * from the event response.
+   */
+  status?: string;
   htmlUrl?: string;
 };
 
 export type PagerDutyEscalationPolicy = {
   id: string;
   name: string;
+  htmlUrl?: string;
+};
+
+/**
+ * An account's incident priorities (P1, P2, ...). A paid-plan feature, so an
+ * account without it answers 402 or returns nothing, and only the REST
+ * create-incident action can set one: the Events API v2 payload has no
+ * priority field, and an alert-created incident takes its priority from the
+ * account's Event Orchestration rules instead.
+ */
+export type PagerDutyPriority = {
+  id: string;
+  name: string;
+  description?: string;
   htmlUrl?: string;
 };
 
@@ -103,6 +137,8 @@ export type PagerDutyResult<T> =
  * a header at all, and gives a clear error instead of a confusing 404.
  */
 const PAGERDUTY_ID = /^[A-Za-z0-9_-]{2,64}$/;
+/** Printable ASCII only: anything else cannot be sent as a header value. */
+const HEADER_SAFE_TOKEN = /^[\x21-\x7e]{1,256}$/;
 
 export function isPagerDutyId(value: string): boolean {
   return PAGERDUTY_ID.test(value);
@@ -169,27 +205,49 @@ function invalidateOAuthToken(credentials: PagerDutyCredentials): void {
 
 type OAuthTokenResponse = { access_token?: string; expires_in?: number };
 
+/**
+ * Cache key for an exchanged bearer token.
+ *
+ * The client secret is part of the key, via a hash so the map holds no
+ * credential. Leaving it out would mean two things, both bad: rotating a
+ * leaked secret would not invalidate the token issued to the old one, and two
+ * connections sharing a client id and subdomain - values that are not secret,
+ * the subdomain appears in every PagerDuty URL - would share a cached token
+ * without either secret ever being checked.
+ */
 function oauthCacheKey(credentials: PagerDutyCredentials): string {
+  const secretFingerprint = createHash("sha256")
+    .update(credentials.PAGERDUTY_OAUTH_CLIENT_SECRET ?? "")
+    .digest("hex")
+    .slice(0, 32);
   return [
     credentials.PAGERDUTY_OAUTH_CLIENT_ID ?? "",
     credentials.PAGERDUTY_SUBDOMAIN ?? "",
     isEuRegion(credentials) ? "eu" : "us",
+    secretFingerprint,
   ].join("|");
 }
 
+export function oauthScopeString(
+  credentials: PagerDutyCredentials,
+  scopes: string
+): string {
+  const region = isEuRegion(credentials) ? "eu" : "us";
+  return `as_account-${region}.${credentials.PAGERDUTY_SUBDOMAIN ?? ""} ${scopes}`;
+}
+
 async function fetchOAuthHeader(
-  credentials: PagerDutyCredentials
+  credentials: PagerDutyCredentials,
+  scopes: string = OAUTH_SCOPES_FULL
 ): Promise<PagerDutyResult<string>> {
   const clientId = credentials.PAGERDUTY_OAUTH_CLIENT_ID ?? "";
   const clientSecret = credentials.PAGERDUTY_OAUTH_CLIENT_SECRET ?? "";
-  const subdomain = credentials.PAGERDUTY_SUBDOMAIN ?? "";
-  const region = isEuRegion(credentials) ? "eu" : "us";
 
   const body = new URLSearchParams({
     grant_type: "client_credentials",
     client_id: clientId,
     client_secret: clientSecret,
-    scope: `as_account-${region}.${subdomain} ${OAUTH_SCOPES}`,
+    scope: oauthScopeString(credentials, scopes),
   });
 
   try {
@@ -200,6 +258,12 @@ async function fetchOAuthHeader(
       body: body.toString(),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+
+    // An app registered with fewer scopes than asked for is refused, so try
+    // again with the pair every connection is told to grant before giving up.
+    if (response.status === 400 && scopes !== OAUTH_SCOPES_MINIMAL) {
+      return await fetchOAuthHeader(credentials, OAUTH_SCOPES_MINIMAL);
+    }
 
     if (!response.ok) {
       return {
@@ -256,6 +320,19 @@ export async function resolveAuthHeader(
 ): Promise<PagerDutyResult<string>> {
   const token = credentials.PAGERDUTY_API_TOKEN?.trim();
   if (token) {
+    // A token pasted with a stray newline would make undici throw on the
+    // header, which the fetch catch would report as "could not reach
+    // PagerDuty" - a misleading answer to a fixable mistake.
+    if (!HEADER_SAFE_TOKEN.test(token)) {
+      return {
+        ok: false,
+        failure: {
+          message:
+            "The PagerDuty API token contains characters that cannot go in a request header - it was probably pasted with a line break or a space. Re-copy it in Settings, Connections.",
+          retryable: false,
+        },
+      };
+    }
     return { ok: true, value: `Token token=${token}` };
   }
 
@@ -288,19 +365,22 @@ export async function resolveAuthHeader(
   return await fetchOAuthHeader(credentials);
 }
 
-function restFailure(status: number, detail?: string): PagerDutyFailure {
+function restFailure(
+  status: number,
+  requiredScope = "services.read",
+  detail?: string
+): PagerDutyFailure {
   if (status === 401) {
     return {
       message:
-        "PagerDuty rejected the credentials (401). Rotate the token in Settings, Connections.",
+        "PagerDuty rejected the credentials (401). Either the token is wrong or has been revoked - rotate it in Settings, Connections - or the EU service region checkbox does not match the account, which fails in exactly the same way.",
       status,
       retryable: false,
     };
   }
   if (status === 403) {
     return {
-      message:
-        "PagerDuty refused the request (403). The credentials are valid but lack the read access this needs (services.read).",
+      message: `PagerDuty refused the request (403). The credentials are valid but lack the access this call needs (${requiredScope}). A read-only API key has every read; a scoped OAuth app has to be granted it, and a write needs a key that is not read-only.`,
       status,
       retryable: false,
     };
@@ -326,7 +406,8 @@ function restFailure(status: number, detail?: string): PagerDutyFailure {
 /** One authenticated GET against the REST API, with the failure already classified. */
 async function restGet<T>(
   credentials: PagerDutyCredentials,
-  path: string
+  path: string,
+  requiredScope = "services.read"
 ): Promise<PagerDutyResult<T>> {
   const auth = await resolveAuthHeader(credentials);
   if (!auth.ok) {
@@ -348,7 +429,7 @@ async function restGet<T>(
       return {
         ok: false,
         failure: {
-          ...restFailure(response.status),
+          ...restFailure(response.status, requiredScope),
           retryAfterMs: parseRetryAfterHeaderMs(
             response.headers?.get?.("retry-after")
           ),
@@ -378,6 +459,7 @@ type ServiceResponseItem = {
   id?: string;
   name?: string;
   html_url?: string;
+  status?: string;
   escalation_policy?: { id?: string; summary?: string };
   integrations?: ServiceIntegrationRef[];
 };
@@ -399,6 +481,7 @@ function toService(item: ServiceResponseItem): PagerDutyService | null {
     acceptsEvents: (item.integrations ?? []).some((integration) =>
       EVENTS_V2_INTEGRATION_TYPES.has(integration.type ?? "")
     ),
+    status: item.status,
     htmlUrl: item.html_url,
   };
 }
@@ -408,42 +491,159 @@ function toService(item: ServiceResponseItem): PagerDutyService | null {
  * whether it can take events at all. One page of 100 covers every account we
  * would show in a dropdown; the picker filters client-side from there.
  */
+const PAGE_SIZE = 100;
+/** Five pages is 500 services; past that the picker says it is showing a subset. */
+const MAX_PAGES = 5;
+
+/**
+ * Every service the account has, up to MAX_PAGES pages.
+ *
+ * Paginating matters for more than completeness: the picker warns that a
+ * stored service "is not in this account any more", and on a truncated list
+ * that warning would be false and would invite someone to repoint a working
+ * node at another team's service.
+ */
 export async function listServices(
   credentials: PagerDutyCredentials
-): Promise<PagerDutyResult<PagerDutyService[]>> {
-  const result = await restGet<{ services?: ServiceResponseItem[] }>(
-    credentials,
-    "/services?limit=100&sort_by=name&include%5B%5D=escalation_policies&include%5B%5D=integrations"
-  );
-  if (!result.ok) {
-    return result;
-  }
+): Promise<PagerDutyResult<{ services: PagerDutyService[]; truncated: boolean }>> {
   const services: PagerDutyService[] = [];
-  for (const item of result.value.services ?? []) {
-    const service = toService(item);
-    if (service) {
-      services.push(service);
+  let offset = 0;
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const result = await restGet<{
+      services?: ServiceResponseItem[];
+      more?: boolean;
+    }>(
+      credentials,
+      `/services?limit=${PAGE_SIZE}&offset=${offset}&sort_by=name&include%5B%5D=escalation_policies&include%5B%5D=integrations`
+    );
+    if (!result.ok) {
+      return result;
     }
+    for (const item of result.value.services ?? []) {
+      const service = toService(item);
+      if (service) {
+        services.push(service);
+      }
+    }
+    if (!result.value.more) {
+      return { ok: true, value: { services, truncated: false } };
+    }
+    offset += PAGE_SIZE;
   }
-  return { ok: true, value: services };
+
+  return { ok: true, value: { services, truncated: true } };
 }
 
 export async function listEscalationPolicies(
   credentials: PagerDutyCredentials
-): Promise<PagerDutyResult<PagerDutyEscalationPolicy[]>> {
+): Promise<
+  PagerDutyResult<{
+    escalationPolicies: PagerDutyEscalationPolicy[];
+    truncated: boolean;
+  }>
+> {
+  const escalationPolicies: PagerDutyEscalationPolicy[] = [];
+  let offset = 0;
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const result = await restGet<{
+      escalation_policies?: { id?: string; name?: string; html_url?: string }[];
+      more?: boolean;
+    }>(
+      credentials,
+      `/escalation_policies?limit=${PAGE_SIZE}&offset=${offset}&sort_by=name`,
+      "escalation_policies.read"
+    );
+    if (!result.ok) {
+      return result;
+    }
+    for (const item of result.value.escalation_policies ?? []) {
+      if (item.id && item.name) {
+        escalationPolicies.push({
+          id: item.id,
+          name: item.name,
+          htmlUrl: item.html_url,
+        });
+      }
+    }
+    if (!result.value.more) {
+      return { ok: true, value: { escalationPolicies, truncated: false } };
+    }
+    offset += PAGE_SIZE;
+  }
+
+  return { ok: true, value: { escalationPolicies, truncated: true } };
+}
+
+/**
+ * Resolved routing keys, cached briefly in process.
+ *
+ * The Events API and the REST API are separate availability domains, and the
+ * Events API is the one built to stay up. Reading the key over REST on every
+ * single page would hand REST's availability to the alerting path; a short
+ * cache keeps a REST blip from stopping a page that could otherwise be sent.
+ * Keyed by region, service and a fingerprint of the credential, so a rotated
+ * credential or a different account never reuses another's key.
+ */
+const routingKeys = new Map<
+  string,
+  { key: string; serviceStatus?: string; expiresAt: number }
+>();
+const ROUTING_KEY_TTL_MS = 5 * 60 * 1000;
+const SIX_MONTHS_MS = 182 * 24 * 60 * 60 * 1000;
+
+/** Exported for tests, which need a clean cache between cases. */
+export function clearRoutingKeyCache(): void {
+  routingKeys.clear();
+}
+
+function routingKeyCacheKey(
+  credentials: PagerDutyCredentials,
+  serviceId: string
+): string {
+  const credentialFingerprint = createHash("sha256")
+    .update(
+      [
+        credentials.PAGERDUTY_API_TOKEN ?? "",
+        credentials.PAGERDUTY_OAUTH_CLIENT_ID ?? "",
+        credentials.PAGERDUTY_OAUTH_CLIENT_SECRET ?? "",
+      ].join("|")
+    )
+    .digest("hex")
+    .slice(0, 32);
+  return [
+    isEuRegion(credentials) ? "eu" : "us",
+    serviceId,
+    credentialFingerprint,
+  ].join("|");
+}
+
+export async function listPriorities(
+  credentials: PagerDutyCredentials
+): Promise<PagerDutyResult<PagerDutyPriority[]>> {
   const result = await restGet<{
-    escalation_policies?: { id?: string; name?: string; html_url?: string }[];
-  }>(credentials, "/escalation_policies?limit=100&sort_by=name");
+    priorities?: {
+      id?: string;
+      name?: string;
+      description?: string;
+      self?: string;
+    }[];
+  }>(credentials, "/priorities?limit=100", "priorities.read");
   if (!result.ok) {
     return result;
   }
-  const policies: PagerDutyEscalationPolicy[] = [];
-  for (const item of result.value.escalation_policies ?? []) {
+  const priorities: PagerDutyPriority[] = [];
+  for (const item of result.value.priorities ?? []) {
     if (item.id && item.name) {
-      policies.push({ id: item.id, name: item.name, htmlUrl: item.html_url });
+      priorities.push({
+        id: item.id,
+        name: item.name,
+        description: item.description,
+      });
     }
   }
-  return { ok: true, value: policies };
+  return { ok: true, value: priorities };
 }
 
 /**
@@ -453,13 +653,34 @@ export async function listEscalationPolicies(
  * credential, and a workflow is exported, shared and listed. It is read here,
  * per run, from the service id the node stores.
  */
+export type ResolvedService = {
+  routingKey: string;
+  /** PagerDuty's service status, when it told us: active, warning, critical, maintenance, disabled. */
+  serviceStatus?: string;
+};
+
+/** A service in one of these states accepts events and creates no incident. */
+export function serviceSwallowsEvents(status: string | undefined): boolean {
+  return status === "disabled" || status === "maintenance";
+}
+
 export async function resolveRoutingKey(
   credentials: PagerDutyCredentials,
   serviceId: string
-): Promise<PagerDutyResult<string>> {
+): Promise<PagerDutyResult<ResolvedService>> {
   if (!isPagerDutyId(serviceId)) {
     return { ok: false, failure: invalidId("service", serviceId) };
   }
+
+  const cacheKey = routingKeyCacheKey(credentials, serviceId);
+  const cached = routingKeys.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return {
+      ok: true,
+      value: { routingKey: cached.key, serviceStatus: cached.serviceStatus },
+    };
+  }
+
   const service = await restGet<{ service?: ServiceResponseItem }>(
     credentials,
     `/services/${encodeURIComponent(serviceId)}?include%5B%5D=integrations`
@@ -510,7 +731,45 @@ export async function resolveRoutingKey(
       },
     };
   }
-  return { ok: true, value: key };
+  const serviceStatus = service.value.service?.status;
+  routingKeys.set(cacheKey, {
+    key,
+    serviceStatus,
+    expiresAt: Date.now() + ROUTING_KEY_TTL_MS,
+  });
+  return { ok: true, value: { routingKey: key, serviceStatus } };
+}
+
+/**
+ * Resolve the routing key, retrying the transient failures.
+ *
+ * Without this, the retry count on the node only covered the event itself,
+ * while two thirds of the requests a page makes - the service read and the
+ * integration read - failed on the first rate limit or 502.
+ */
+export async function resolveRoutingKeyWithRetries(params: {
+  credentials: PagerDutyCredentials;
+  serviceId: string;
+  maxRetries: number;
+  baseDelayMs: number;
+  wait: (ms: number) => Promise<void>;
+  onRetry?: (failure: PagerDutyFailure, attempt: number, delayMs: number) => void;
+}): Promise<PagerDutyResult<ResolvedService>> {
+  let result = await resolveRoutingKey(params.credentials, params.serviceId);
+
+  for (let retry = 1; retry <= params.maxRetries; retry++) {
+    if (result.ok || !result.failure.retryable) {
+      break;
+    }
+    const delayMs = result.failure.retryAfterMs ?? params.baseDelayMs * retry;
+    params.onRetry?.(result.failure, retry, delayMs);
+    if (delayMs > 0) {
+      await params.wait(delayMs);
+    }
+    result = await resolveRoutingKey(params.credentials, params.serviceId);
+  }
+
+  return result;
 }
 
 type EventsApiResponse = {
@@ -640,7 +899,11 @@ export async function getEscalationPolicy(
   }
   const result = await restGet<{
     escalation_policy?: { id?: string; name?: string; html_url?: string };
-  }>(credentials, `/escalation_policies/${encodeURIComponent(policyId)}`);
+  }>(
+    credentials,
+    `/escalation_policies/${encodeURIComponent(policyId)}`,
+    "escalation_policies.read"
+  );
 
   if (!result.ok) {
     if (result.failure.status === 404) {
@@ -667,6 +930,8 @@ export type CreateIncidentParams = {
   urgency?: "high" | "low";
   incidentKey?: string;
   escalationPolicyId?: string;
+  /** Account priority (P1, P2, ...). REST only; an event cannot carry one. */
+  priorityId?: string;
 };
 
 export type CreatedIncident = {
@@ -727,6 +992,12 @@ export async function createIncident(
       type: "escalation_policy_reference",
     };
   }
+  if (params.priorityId) {
+    incident.priority = {
+      id: params.priorityId,
+      type: "priority_reference",
+    };
+  }
 
   try {
     const response = await safeFetch(apiUrl(credentials, "/incidents"), {
@@ -754,7 +1025,7 @@ export async function createIncident(
       const detail = parsed.error?.errors?.length
         ? `${parsed.error.message ?? "PagerDuty rejected the incident"}: ${parsed.error.errors.join("; ")}`
         : (parsed.error?.message ??
-          restFailure(response.status).message);
+          restFailure(response.status, "incidents.write").message);
       return {
         ok: false,
         failure: {
@@ -833,6 +1104,8 @@ export type IncidentLookup = {
   status: "triggered" | "acknowledged" | "resolved" | "unknown";
   id?: string;
   htmlUrl?: string;
+  /** The priority PagerDuty ended up putting on the incident, when it has one. */
+  priority?: string;
 };
 
 /**
@@ -858,6 +1131,9 @@ export async function findIncidentByKey(
   const query = new URLSearchParams({
     incident_key: params.incidentKey,
     limit: "1",
+    // Without a range PagerDuty searches the last month, so a long-running
+    // incident would read back as "unknown". Six months is its maximum.
+    since: new Date(Date.now() - SIX_MONTHS_MS).toISOString(),
   });
   query.append("service_ids[]", params.serviceId);
   for (const status of ["triggered", "acknowledged", "resolved"]) {
@@ -865,8 +1141,13 @@ export async function findIncidentByKey(
   }
 
   const result = await restGet<{
-    incidents?: { id?: string; status?: string; html_url?: string }[];
-  }>(credentials, `/incidents?${query.toString()}`);
+    incidents?: {
+      id?: string;
+      status?: string;
+      html_url?: string;
+      priority?: { summary?: string; id?: string } | null;
+    }[];
+  }>(credentials, `/incidents?${query.toString()}`, "incidents.read");
   if (!result.ok) {
     return result;
   }
@@ -888,6 +1169,7 @@ export async function findIncidentByKey(
           : "unknown",
       id: incident.id,
       htmlUrl: incident.html_url,
+      priority: incident.priority?.summary,
     },
   };
 }

@@ -23,6 +23,14 @@ const SEVERITIES: ReadonlySet<string> = new Set([
 ]);
 
 /** Trim to a rune count, so a multi-byte summary is not cut mid-character. */
+/**
+ * UTF-8 byte length without Buffer: this module is imported by the node's
+ * preview, which runs in the browser.
+ */
+function byteLength(value: string): number {
+  return new TextEncoder().encode(value).length;
+}
+
 export function truncateRunes(value: string, max: number): string {
   const runes = [...value];
   return runes.length <= max ? value : runes.slice(0, max).join("");
@@ -115,7 +123,10 @@ export function buildTriggerEvent(params: {
     payload: {
       summary: truncateRunes(input.summary, MAX_SUMMARY_CHARS),
       severity: normaliseSeverity(input.severity),
-      source: input.source,
+      // PagerDuty documents no limit on source, but an unbounded templated
+      // value is how an event ends up over the size limit with nothing left
+      // to drop.
+      source: truncateRunes(input.source, MAX_SUMMARY_CHARS),
       timestamp: params.timestamp,
       component: omitEmpty(input.component),
       group: omitEmpty(input.group),
@@ -124,7 +135,7 @@ export function buildTriggerEvent(params: {
     },
   };
 
-  if (Buffer.byteLength(JSON.stringify(body), "utf8") <= MAX_EVENT_BYTES) {
+  if (byteLength(JSON.stringify(body)) <= MAX_EVENT_BYTES) {
     return { body, detailsDropped: false };
   }
 
@@ -132,6 +143,12 @@ export function buildTriggerEvent(params: {
     body.payload.custom_details = {
       error: `Custom details were removed because the event exceeded PagerDuty's ${MAX_EVENT_BYTES} byte limit.`,
     };
+  }
+  // Dropping the details is the only lever here; if the event is still too
+  // large, the links are the remaining unbounded field and they go too. The
+  // alert itself - summary, severity, routing - is never sacrificed.
+  if (byteLength(JSON.stringify(body)) > MAX_EVENT_BYTES) {
+    body.links = undefined;
   }
   return { body, detailsDropped: true };
 }

@@ -32,7 +32,10 @@ vi.mock("@/lib/credential-fetcher", () => ({
 vi.mock("@/lib/sleep", () => ({ sleep: vi.fn().mockResolvedValue(undefined) }));
 
 import { acknowledgeIncidentStep } from "@/plugins/pagerduty/steps/acknowledge-incident";
-import { clearOAuthTokenCache } from "@/plugins/pagerduty/steps/pagerduty-core";
+import {
+  clearOAuthTokenCache,
+  clearRoutingKeyCache,
+} from "@/plugins/pagerduty/steps/pagerduty-core";
 import { resolveIncidentStep } from "@/plugins/pagerduty/steps/resolve-incident";
 
 const CONTEXT = {
@@ -73,6 +76,7 @@ beforeEach(() => {
   mockFetchCredentials.mockReset();
   mockFetchCredentials.mockResolvedValue({ PAGERDUTY_API_TOKEN: "t" });
   clearOAuthTokenCache();
+  clearRoutingKeyCache();
 });
 
 describe("resolve incident", () => {
@@ -109,6 +113,50 @@ describe("resolve incident", () => {
    * this node's id would produce a key no alert has ever carried - PagerDuty
    * would answer 202 and drop it. Failing loudly is the only safe answer.
    */
+  /**
+   * The healthy branch of a check never runs the trigger node, so a template
+   * reference to its output cannot resolve there. Picking the trigger node
+   * derives the same key without needing it to have run.
+   */
+  it("derives the trigger node's key when the node is picked", async () => {
+    mockRoutingKey();
+    safeFetch.mockResolvedValueOnce(response(202, {}));
+
+    await resolveIncidentStep({
+      integrationId: "int-1",
+      pagerdutyServiceId: "PSKY1",
+      dedupKeyFromNodeId: "node-3",
+      _context: CONTEXT,
+    } as never);
+
+    const body = JSON.parse(
+      String(
+        (safeFetch.mock.calls[2] as [string, Record<string, unknown>])[1].body
+      )
+    );
+    expect(body.dedup_key).toBe("keeperhub/wf-8/node-3");
+  });
+
+  it("prefers an explicit key over the picked node", async () => {
+    mockRoutingKey();
+    safeFetch.mockResolvedValueOnce(response(202, {}));
+
+    await resolveIncidentStep({
+      integrationId: "int-1",
+      pagerdutyServiceId: "PSKY1",
+      dedupKeyFromNodeId: "node-3",
+      dedupKey: "vault-7",
+      _context: CONTEXT,
+    } as never);
+
+    const body = JSON.parse(
+      String(
+        (safeFetch.mock.calls[2] as [string, Record<string, unknown>])[1].body
+      )
+    );
+    expect(body.dedup_key).toBe("vault-7");
+  });
+
   it("refuses to run without a dedup key instead of sending one nothing matches", async () => {
     const result = await resolveIncidentStep({
       integrationId: "int-1",
@@ -118,7 +166,7 @@ describe("resolve incident", () => {
 
     expect(result).toMatchObject({ success: false });
     if (!result.success) {
-      expect(result.error).toContain("dedupKey");
+      expect(result.error).toContain("Trigger Incident node");
     }
     expect(safeFetch).not.toHaveBeenCalled();
   });
@@ -139,10 +187,11 @@ describe("resolve incident", () => {
       _context: CONTEXT,
     } as never);
 
+    // The read happens after the event, so this is the state observed
+    // afterwards - it cannot claim the incident was ALREADY resolved.
     expect(result).toMatchObject({
       delivered: true,
       incidentStatus: "resolved",
-      alreadyInTargetState: true,
     });
   });
 
@@ -222,9 +271,6 @@ describe("acknowledge incident", () => {
       _context: { ...CONTEXT, nodeType: "pagerduty/acknowledge-incident" },
     } as never);
 
-    expect(result).toMatchObject({
-      incidentStatus: "acknowledged",
-      alreadyInTargetState: true,
-    });
+    expect(result).toMatchObject({ incidentStatus: "acknowledged" });
   });
 });

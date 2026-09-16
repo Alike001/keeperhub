@@ -15,6 +15,9 @@ import {
   getEscalationPolicy,
 } from "./pagerduty-core";
 
+/** Sentinel for "leave it to PagerDuty"; Radix Select rejects an empty value. */
+const NO_PRIORITY = "none";
+
 const LOG_LABELS = {
   plugin_name: "pagerduty",
   action_name: "create-incident",
@@ -26,6 +29,8 @@ export type CreateIncidentCoreInput = {
   title: string;
   details?: string;
   urgency?: string;
+  /** Account priority (P1, P2, ...). REST only - an event cannot carry one. */
+  pagerdutyPriorityId?: string;
   incidentKey?: string;
   pagerdutyEscalationPolicyId?: string;
   /** Default true: a deleted policy pages the service's own rota instead of failing. */
@@ -47,6 +52,7 @@ type CreateIncidentStepResult =
       incidentNumber?: number;
       incidentUrl?: string;
       status?: string;
+      priorityId?: string;
       /** True when a configured escalation policy was gone and the service's own was used. */
       escalationPolicyFellBack?: boolean;
       error?: string;
@@ -146,14 +152,27 @@ async function stepHandler(
     };
   }
 
+  // "service-default" is the sentinel for "send no urgency at all": Radix
+  // rejects an empty option value, and an unrecognised value must not silently
+  // become the service default when the author picked High.
+  const urgency =
+    input.urgency === "low" || input.urgency === "high"
+      ? input.urgency
+      : undefined;
+
   const result = await createIncident(credentials, {
     serviceId,
     title,
     fromEmail,
     details: input.details,
-    urgency: input.urgency === "low" ? "low" : undefined,
+    urgency,
     incidentKey: input.incidentKey,
     escalationPolicyId: policy.policyId,
+    priorityId:
+      input.pagerdutyPriorityId?.trim() &&
+      input.pagerdutyPriorityId !== NO_PRIORITY
+        ? input.pagerdutyPriorityId.trim()
+        : undefined,
   });
 
   if (result.ok) {
@@ -164,6 +183,7 @@ async function stepHandler(
       incidentNumber: result.value.number,
       incidentUrl: result.value.htmlUrl,
       status: result.value.status,
+      priorityId: input.pagerdutyPriorityId?.trim() || undefined,
       escalationPolicyFellBack: policy.fellBack,
     };
   }

@@ -34,6 +34,7 @@ vi.mock("@/lib/sleep", () => ({ sleep: vi.fn().mockResolvedValue(undefined) }));
 import { createIncidentStep } from "@/plugins/pagerduty/steps/create-incident";
 import {
   clearOAuthTokenCache,
+  clearRoutingKeyCache,
   createIncident,
   findIncidentByKey,
   isHeaderSafeEmail,
@@ -57,6 +58,7 @@ beforeEach(() => {
   mockFetchCredentials.mockReset();
   mockFetchCredentials.mockResolvedValue(CREDS);
   clearOAuthTokenCache();
+  clearRoutingKeyCache();
 });
 
 describe("id validation", () => {
@@ -122,6 +124,12 @@ describe("From header safety", () => {
 });
 
 describe("create incident", () => {
+  /** The body of the last request, which is the incident POST in these cases. */
+  function lastBody(): unknown {
+    return (safeFetch.mock.calls.at(-1) as [string, Record<string, unknown>])[1]
+      .body;
+  }
+
   function run(overrides: Record<string, unknown> = {}) {
     return createIncidentStep({
       integrationId: "int-1",
@@ -189,6 +197,56 @@ describe("create incident", () => {
     if (!result.success) {
       expect(result.error).toContain("no longer exists");
     }
+  });
+
+  /** High urgency was silently dropped, so a high-urgency incident did not page. */
+  it("sends the urgency the author picked", async () => {
+    safeFetch.mockResolvedValue(response(201, { incident: { id: "PINC1" } }));
+    await run({ urgency: "high" });
+    const body = JSON.parse(String(lastBody()));
+    expect(body.incident.urgency).toBe("high");
+  });
+
+  it("sends low urgency too", async () => {
+    safeFetch.mockResolvedValue(response(201, { incident: { id: "PINC1" } }));
+    await run({ urgency: "low" });
+    expect(JSON.parse(String(lastBody())).incident.urgency).toBe("low");
+  });
+
+  it("leaves urgency to PagerDuty when the service default is chosen", async () => {
+    safeFetch.mockResolvedValue(response(201, { incident: { id: "PINC1" } }));
+    await run({ urgency: "service-default" });
+    expect(JSON.parse(String(lastBody())).incident.urgency).toBeUndefined();
+  });
+
+  it("sets the account priority when one is picked", async () => {
+    safeFetch.mockResolvedValue(response(201, { incident: { id: "PINC1" } }));
+    await run({ pagerdutyPriorityId: "PSLWBL8" });
+    expect(JSON.parse(String(lastBody())).incident.priority).toEqual({
+      id: "PSLWBL8",
+      type: "priority_reference",
+    });
+  });
+
+  it("sends no priority for the leave-it-to-PagerDuty sentinel", async () => {
+    safeFetch.mockResolvedValue(response(201, { incident: { id: "PINC1" } }));
+    await run({ pagerdutyPriorityId: "none" });
+    expect(JSON.parse(String(lastBody())).incident.priority).toBeUndefined();
+  });
+
+  it("falls back to the connection's From email", async () => {
+    mockFetchCredentials.mockResolvedValue({
+      PAGERDUTY_API_TOKEN: "t",
+      PAGERDUTY_FROM_EMAIL: "connection@acme.io",
+    });
+    safeFetch.mockResolvedValue(response(201, { incident: { id: "PINC1" } }));
+
+    await run({ fromEmail: "" });
+
+    const headers = (
+      safeFetch.mock.calls.at(-1) as [string, Record<string, unknown>]
+    )[1].headers as Record<string, string>;
+    expect(headers.From).toBe("connection@acme.io");
   });
 
   it("keeps a policy that still exists", async () => {

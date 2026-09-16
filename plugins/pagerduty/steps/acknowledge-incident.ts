@@ -33,6 +33,7 @@ export async function acknowledgeIncidentStep(
       runUpdateIncident({
         input,
         credentials: credentials as PagerDutyCredentials,
+        workflowId: input._context?.workflowId,
         action: "acknowledge",
       })
   );

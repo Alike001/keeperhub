@@ -29,7 +29,8 @@ import {
   failureIsExternal,
   type PagerDutyFailure,
   postEventWithRetries,
-  resolveRoutingKey,
+  resolveRoutingKeyWithRetries,
+  serviceSwallowsEvents,
 } from "./pagerduty-core";
 
 const RETRY_ATTEMPT_LIMITS = { defaultAttempts: 2, maxAttempts: 5 };
@@ -77,10 +78,14 @@ type TriggerIncidentResult =
       /** False when the event was held by the consecutive-runs guard, or soft-failed. */
       delivered: boolean;
       dedupKey: string;
-      status: "triggered" | "held";
+      status: "triggered" | "held" | "failed";
       consecutiveRuns: number;
       requiredRuns: number;
       detailsTruncated?: boolean;
+      /** PagerDuty's service status at send time. */
+      serviceStatus?: string;
+      /** True when the service was in maintenance, so no incident was raised. */
+      suppressedByService?: boolean;
       /** Whether a backup notification was attempted, and whether it landed. */
       backupAttempted?: boolean;
       backupDelivered?: boolean;
@@ -165,7 +170,7 @@ function toFailureResult(
     success: true,
     delivered: false,
     dedupKey,
-    status: "triggered",
+    status: "failed",
     consecutiveRuns: consecutive,
     requiredRuns: required,
     error: failure.message,
@@ -276,7 +281,32 @@ async function stepHandler(
     ? `${appUrl()}/workflows/${context.workflowId}`
     : undefined;
 
-  const routingKey = await resolveRoutingKey(credentials, serviceId);
+  const maxRetries = resolveRetryAttempts(
+    input.retryAttempts,
+    RETRY_ATTEMPT_LIMITS
+  );
+  const baseDelayMs = resolveRetryDelayMs(input.retryDelay, RETRY_DELAY_LIMITS);
+  const onRetry = (
+    failure: PagerDutyFailure,
+    attempt: number,
+    delayMs: number
+  ): void => {
+    logUserError(
+      ErrorCategory.EXTERNAL_SERVICE,
+      "[PagerDuty] Attempt failed, retrying",
+      failure.message,
+      { ...LOG_LABELS, attempt: String(attempt), retry_in_ms: String(delayMs) }
+    );
+  };
+
+  const routingKey = await resolveRoutingKeyWithRetries({
+    credentials,
+    serviceId,
+    maxRetries,
+    baseDelayMs,
+    wait: sleep,
+    onRetry,
+  });
   if (!routingKey.ok) {
     return toFailureResult(
       routingKey.failure,
@@ -294,8 +324,29 @@ async function stepHandler(
     );
   }
 
+  if (routingKey.value.serviceStatus === "disabled") {
+    const disabled: PagerDutyFailure = {
+      message: `PagerDuty service ${serviceId} is disabled. It accepts events and creates no incident, so this page would have gone nowhere. Re-enable the service in PagerDuty, or point this node at another one.`,
+      retryable: false,
+    };
+    return toFailureResult(
+      disabled,
+      failOnError,
+      dedupKey,
+      consecutiveRuns,
+      requiredRuns,
+      await notifyBackup({
+        input,
+        failure: disabled,
+        summary,
+        serviceId,
+        workflowUrl,
+      })
+    );
+  }
+
   const { body, detailsDropped } = buildTriggerEvent({
-    routingKey: routingKey.value,
+    routingKey: routingKey.value.routingKey,
     dedupKey,
     timestamp: new Date().toISOString(),
     input: {
@@ -318,21 +369,10 @@ async function stepHandler(
   const result = await postEventWithRetries({
     credentials,
     body,
-    maxRetries: resolveRetryAttempts(input.retryAttempts, RETRY_ATTEMPT_LIMITS),
-    baseDelayMs: resolveRetryDelayMs(input.retryDelay, RETRY_DELAY_LIMITS),
+    maxRetries,
+    baseDelayMs,
     wait: sleep,
-    onRetry: (failure, attempt, delayMs) => {
-      logUserError(
-        ErrorCategory.EXTERNAL_SERVICE,
-        "[PagerDuty] Attempt failed, retrying",
-        failure.message,
-        {
-          ...LOG_LABELS,
-          attempt: String(attempt),
-          retry_in_ms: String(delayMs),
-        }
-      );
-    },
+    onRetry,
   });
 
   if (!result.ok) {
@@ -352,6 +392,7 @@ async function stepHandler(
     );
   }
 
+  const suppressed = serviceSwallowsEvents(routingKey.value.serviceStatus);
   return {
     success: true,
     delivered: true,
@@ -360,7 +401,11 @@ async function stepHandler(
     consecutiveRuns,
     requiredRuns,
     detailsTruncated: detailsDropped,
-    message: result.value.message,
+    serviceStatus: routingKey.value.serviceStatus,
+    suppressedByService: suppressed,
+    message: suppressed
+      ? `PagerDuty accepted the event, but the service is in ${routingKey.value.serviceStatus} and will not raise an incident from it.`
+      : result.value.message,
   };
 }
 

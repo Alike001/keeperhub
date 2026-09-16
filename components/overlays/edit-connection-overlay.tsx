@@ -380,6 +380,47 @@ export function EditConnectionForm({
           />
         );
       }
+      if (field.type === "checkbox") {
+        // A checkbox has to bind `checked`, not `value`: e.target.value is the
+        // element's value attribute, so the generic text branch below stored
+        // an empty string however the box was ticked, and every plugin reading
+        // the flag saw it as unset.
+        const checked =
+          (config[field.configKey] ?? String(field.defaultValue ?? false)) ===
+          "true";
+        return (
+          <div className="space-y-2" key={field.id}>
+            <div className="flex items-center gap-2">
+              <input
+                checked={checked}
+                className="size-4 rounded border-input accent-primary"
+                id={field.id}
+                onChange={(e) =>
+                  updateConfig(field.configKey, String(e.target.checked))
+                }
+                type="checkbox"
+              />
+              <Label htmlFor={field.id}>{field.label}</Label>
+            </div>
+            {(field.helpText || field.helpLink) && (
+              <p className="text-muted-foreground text-xs">
+                {field.helpText}
+                {field.helpLink && (
+                  <a
+                    className="underline hover:text-foreground"
+                    href={field.helpLink.url}
+                    rel="noopener noreferrer"
+                    target="_blank"
+                  >
+                    {field.helpLink.text}
+                  </a>
+                )}
+              </p>
+            )}
+          </div>
+        );
+      }
+
       return (
         <div className="space-y-2" key={field.id}>
           <Label htmlFor={field.id}>{field.label}</Label>

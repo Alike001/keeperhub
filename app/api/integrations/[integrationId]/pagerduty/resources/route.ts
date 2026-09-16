@@ -5,8 +5,10 @@ import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { requireScope } from "@/lib/middleware/require-scope";
 import {
   listEscalationPolicies,
+  listPriorities,
   listServices,
   type PagerDutyEscalationPolicy,
+  type PagerDutyPriority,
   type PagerDutyService,
   subdomainFromHtmlUrl,
 } from "@/plugins/pagerduty/steps/pagerduty-core";
@@ -15,8 +17,11 @@ import { getCredentialMapping, getIntegration } from "@/plugins/registry";
 export type PagerDutyResourcesResponse = {
   services?: PagerDutyService[];
   escalationPolicies?: PagerDutyEscalationPolicy[];
+  priorities?: PagerDutyPriority[];
   /** Which PagerDuty account these came from, for the "who am I paging" line. */
   accountSubdomain?: string;
+  /** True when the account has more than this route will page through. */
+  truncated?: boolean;
 };
 
 /**
@@ -88,36 +93,56 @@ export async function GET(
   const credentials = getCredentialMapping(plugin, integration.config);
 
   const resource = new URL(request.url).searchParams.get("resource");
-  const wantPolicies = resource === "escalation-policies";
 
-  const result = wantPolicies
-    ? await listEscalationPolicies(credentials)
-    : await listServices(credentials);
-
-  if (!result.ok) {
-    // PagerDuty's own status is echoed for 401/403/402/404 so the picker can
-    // say what is wrong; anything else is reported as an upstream failure.
-    const status =
-      result.failure.status && result.failure.status < 500
-        ? result.failure.status
-        : 502;
-    return NextResponse.json({ error: result.failure.message }, { status });
+  if (resource === "priorities") {
+    const priorities = await listPriorities(credentials);
+    if (!priorities.ok) {
+      return upstreamError(priorities.failure.message);
+    }
+    return NextResponse.json({ priorities: priorities.value });
   }
 
-  const items = result.value as (
-    | PagerDutyService
-    | PagerDutyEscalationPolicy
-  )[];
-  const accountSubdomain = items
-    .map((item) => subdomainFromHtmlUrl(item.htmlUrl))
-    .find((subdomain) => subdomain !== undefined);
+  if (resource === "escalation-policies") {
+    const policies = await listEscalationPolicies(credentials);
+    if (!policies.ok) {
+      return upstreamError(policies.failure.message);
+    }
+    return NextResponse.json({
+      escalationPolicies: policies.value.escalationPolicies,
+      truncated: policies.value.truncated,
+      accountSubdomain: firstSubdomain(policies.value.escalationPolicies),
+    });
+  }
 
-  return NextResponse.json(
-    wantPolicies
-      ? {
-          escalationPolicies: items as PagerDutyEscalationPolicy[],
-          accountSubdomain,
-        }
-      : { services: items as PagerDutyService[], accountSubdomain }
-  );
+  const services = await listServices(credentials);
+  if (!services.ok) {
+    return upstreamError(services.failure.message);
+  }
+  return NextResponse.json({
+    services: services.value.services,
+    truncated: services.value.truncated,
+    accountSubdomain: firstSubdomain(services.value.services),
+  });
+}
+
+/**
+ * PagerDuty's status is deliberately not echoed as this route's own.
+ *
+ * A 401 from PagerDuty means its token is wrong; a 401 from a KeeperHub route
+ * means the session expired, and any client handling that watches for one
+ * would sign the user out because a PagerDuty token was stale. The message
+ * carries the real cause.
+ */
+function upstreamError(message: string): NextResponse {
+  return NextResponse.json({ error: message }, { status: 502 });
+}
+
+function firstSubdomain(items: { htmlUrl?: string }[]): string | undefined {
+  for (const item of items) {
+    const subdomain = subdomainFromHtmlUrl(item.htmlUrl);
+    if (subdomain) {
+      return subdomain;
+    }
+  }
+  return;
 }

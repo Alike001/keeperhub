@@ -65,7 +65,9 @@ export type ActionConfigFieldBase = {
     | "pagerduty-service-select" // Services read live from the node's PagerDuty connection
     | "pagerduty-escalation-policy-select" // Escalation policies read live from that connection
     | "pagerduty-preview" // Read-only payload and incident preview for a PagerDuty node
-    | "pagerduty-backup-connection-select"; // Existing Discord/Slack/Telegram connection used when a page fails
+    | "pagerduty-backup-connection-select" // Existing Discord/Slack/Telegram connection used when a page fails
+    | "pagerduty-priority-select" // Account incident priorities, read live (REST only)
+    | "pagerduty-trigger-node-select"; // A Trigger Incident node in this workflow, for the dedup key
 
   // For chain-select: filter by chain type - one ("evm") or several (["evm", "solana"])
   chainTypeFilter?: string | string[];

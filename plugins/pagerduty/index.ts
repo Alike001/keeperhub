@@ -46,10 +46,10 @@ const retryFields: ActionConfigFieldBase[] = [
   },
   {
     key: "failOnError",
-    label: "Fail workflow if PagerDuty rejects the event",
+    label: "Fail the workflow if the page could not be delivered",
     type: "fail-on-error-switch",
     helpText:
-      "On by default. Turn it off to keep the run going and branch on the node's `delivered` output instead - the usual way to send a backup notification when a page could not be delivered.",
+      "On by default, and it covers every way a page fails to land: a rejection, a timeout, an outage, a deleted service. Turn it off to keep the run going and branch on the node's `delivered` or `status` output instead.",
   },
 ];
 
@@ -67,20 +67,32 @@ const dedupKeyField: ActionConfigFieldBase = {
  * resolve must name the alert it is closing, so this one is required and
  * points at the trigger node's output.
  */
+const triggerNodeField: ActionConfigFieldBase = {
+  key: "dedupKeyFromNodeId",
+  label: "Alert opened by",
+  type: "pagerduty-trigger-node-select",
+  helpText:
+    "The Trigger Incident node in this workflow whose alert this closes. Its dedup key is derived here, so the two always match. This is a node reference rather than a template like {{Trigger Incident.dedupKey}} on purpose: on the healthy branch of a check the trigger node never ran, so a template reference to its output cannot resolve and the run would fail.",
+};
+
 const targetDedupKeyField: ActionConfigFieldBase = {
   key: "dedupKey",
   label: "Dedup key of the alert",
   type: "template-input",
-  required: true,
-  placeholder: "{{Trigger Incident.dedupKey}}",
+  placeholder: "Leave blank to use the key of the node above",
   helpText:
-    "PagerDuty identifies the alert by this key, and requires it for acknowledge and resolve. Reference the trigger node's dedupKey output so the two always match - a key no alert has used is accepted with a 202 and then dropped, which looks exactly like success. The service must be the same one the trigger used, too.",
+    "Only needed when the trigger sets its own dedup key: put the same value here. PagerDuty requires a key for acknowledge and resolve, and drops an event whose key matches no open alert - with a 202, so it looks exactly like success. The service must be the same one the trigger used, too.",
 };
 
 const verifyField: ActionConfigFieldBase = {
   key: "verifyWithPagerDuty",
   label: "Check the incident afterwards",
-  type: "fail-on-error-switch",
+  type: "select",
+  defaultValue: "false",
+  options: [
+    { value: "false", label: "No" },
+    { value: "true", label: "Yes, read the incident back" },
+  ],
   helpText:
     "Off by default. PagerDuty answers 202 to an acknowledge or a resolve even when it had nothing to apply it to - the alert was already resolved, the key was never used, or the event went to a different service - so the response alone cannot tell you what happened. Turning this on reads the incident back and reports its actual status. Needs incidents.read on a scoped OAuth app; a read-only API token already has it. A service that groups alerts produces incidents with no incident key, so the answer can be \"unknown\", which is never treated as a failure.",
 };
@@ -98,11 +110,11 @@ const pagerDutyPlugin: IntegrationPlugin = {
       id: "apiToken",
       label: "REST API token",
       type: "password",
-      placeholder: "u+XXXXXXXXXXXXXXXXXXXX",
+      placeholder: "20-character key from PagerDuty",
       configKey: "apiToken",
       envVar: "PAGERDUTY_API_TOKEN",
       helpText:
-        "PagerDuty: Integrations, Developer Tools, API Access Keys, Create New API Key - tick Read-only API Key. Needs the Admin or Account Owner role, and PagerDuty shows the key once. Read-only covers Trigger, Acknowledge, Resolve and Change Event. Leave blank to use scoped OAuth below. Docs: ",
+        "PagerDuty: Integrations, Developer Tools, API Access Keys, Create New API Key - tick Read-only API Key. Creating one of those needs the Admin or Account Owner role; a personal read-only token from User Settings works too. PagerDuty shows the key once. Read-only covers Trigger, Acknowledge, Resolve and Change Event. Leave blank to use scoped OAuth below. Docs: ",
       helpLink: {
         text: "support.pagerduty.com/main/docs/api-access-keys",
         url: "https://support.pagerduty.com/main/docs/api-access-keys",
@@ -180,7 +192,11 @@ const pagerDutyPlugin: IntegrationPlugin = {
       outputFields: [
         { field: "delivered", description: "Whether PagerDuty accepted the event" },
         { field: "dedupKey", description: "Key that identifies the alert" },
-        { field: "status", description: "triggered, or held by the consecutive-runs guard" },
+        {
+          field: "status",
+          description:
+            "triggered, held by the consecutive-runs guard, or failed when the event could not be delivered",
+        },
         { field: "consecutiveRuns", description: "Runs in a row that reached this node" },
         { field: "requiredRuns", description: "Runs in a row configured before paging" },
         { field: "error", description: "Why the event was not delivered, when it was not" },
@@ -188,6 +204,14 @@ const pagerDutyPlugin: IntegrationPlugin = {
         { field: "backupDelivered", description: "Whether the backup notification landed" },
         { field: "backupChannel", description: "discord, slack or telegram" },
         { field: "backupError", description: "Why the backup notification failed, when it did" },
+        { field: "serviceStatus", description: "PagerDuty's service status when the event was sent" },
+        {
+          field: "suppressedByService",
+          description:
+            "True when the service was in maintenance, so PagerDuty took the event and raised no incident",
+        },
+        { field: "detailsTruncated", description: "True when custom details were dropped for size" },
+        { field: "message", description: "PagerDuty's own response message" },
       ],
       configFields: [
         serviceField,
@@ -291,7 +315,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
               label: "Backup connection",
               type: "pagerduty-backup-connection-select",
               helpText:
-                "Optional, and the answer to a PagerDuty outage: when the event cannot be delivered after the retries above, the same alert is posted here instead. Only existing Discord, Slack and Telegram connections are offered, so the node never gains a URL a workflow could point elsewhere. The run is still marked failed - this is about waking someone up, not about hiding the failure.",
+                "Optional, and the answer to a PagerDuty outage: when the event cannot be delivered after the retries above, the same alert - plus why PagerDuty refused it - is posted here instead. Only existing Discord, Slack and Telegram connections are offered, so the node never gains a URL a workflow could point elsewhere. The backup fires either way; whether the run itself is then marked failed is the switch above.",
             },
             {
               key: "backupDestination",
@@ -328,12 +352,14 @@ const pagerDutyPlugin: IntegrationPlugin = {
             "Incident status when the check is on: triggered, acknowledged, resolved, or unknown",
         },
         {
-          field: "alreadyInTargetState",
-          description: "True when the incident was already resolved",
+          field: "incidentPriority",
+          description: "The incident's priority when the check is on and it has one",
         },
+        { field: "incidentUrl", description: "Link to the incident, when the check found it" },
       ],
       configFields: [
         serviceField,
+        triggerNodeField,
         targetDedupKeyField,
         verifyField,
         { type: "group", label: "Delivery", fields: retryFields },
@@ -357,12 +383,14 @@ const pagerDutyPlugin: IntegrationPlugin = {
             "Incident status when the check is on: triggered, acknowledged, resolved, or unknown",
         },
         {
-          field: "alreadyInTargetState",
-          description: "True when the incident was already acknowledged",
+          field: "incidentPriority",
+          description: "The incident's priority when the check is on and it has one",
         },
+        { field: "incidentUrl", description: "Link to the incident, when the check found it" },
       ],
       configFields: [
         serviceField,
+        triggerNodeField,
         targetDedupKeyField,
         verifyField,
         { type: "group", label: "Delivery", fields: retryFields },
@@ -460,11 +488,21 @@ const pagerDutyPlugin: IntegrationPlugin = {
           key: "urgency",
           label: "Urgency",
           type: "select",
+          defaultValue: "service-default",
           options: [
-            { value: "", label: "Service default" },
+            { value: "service-default", label: "Service default" },
             { value: "high", label: "High" },
             { value: "low", label: "Low" },
           ],
+          helpText:
+            "High urgency notifies on-call the way the escalation policy says; low urgency does not page. Left at the service default, PagerDuty decides from the service's urgency rule.",
+        },
+        {
+          key: "pagerdutyPriorityId",
+          label: "Priority",
+          type: "pagerduty-priority-select",
+          helpText:
+            "The account's incident priorities (P1, P2, and so on), read from PagerDuty. A paid-plan feature: an account without it shows nothing here. Only this REST action can set a priority - an Events API alert takes its priority from the account's Event Orchestration rules instead.",
         },
         {
           key: "incidentKey",

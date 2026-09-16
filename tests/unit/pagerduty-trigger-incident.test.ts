@@ -48,7 +48,10 @@ vi.mock("@/plugins/pagerduty/steps/consecutive-core", async (original) => {
   };
 });
 
-import { clearOAuthTokenCache } from "@/plugins/pagerduty/steps/pagerduty-core";
+import {
+  clearOAuthTokenCache,
+  clearRoutingKeyCache,
+} from "@/plugins/pagerduty/steps/pagerduty-core";
 import { triggerIncidentStep } from "@/plugins/pagerduty/steps/trigger-incident";
 
 const CONTEXT = {
@@ -70,12 +73,13 @@ function response(status: number, body: unknown = {}) {
 }
 
 /** Service lookup, then integration lookup, then the event itself. */
-function mockHappyPath(eventStatus = 202) {
+function mockHappyPath(eventStatus = 202, serviceStatus = "active") {
   safeFetch
     .mockResolvedValueOnce(
       response(200, {
         service: {
           id: "PSKY1",
+          status: serviceStatus,
           integrations: [
             { id: "PI1", type: "events_api_v2_inbound_integration" },
           ],
@@ -110,6 +114,7 @@ beforeEach(() => {
   mockCountConsecutiveRuns.mockReset();
   mockCountConsecutiveRuns.mockResolvedValue(1);
   clearOAuthTokenCache();
+  clearRoutingKeyCache();
 });
 
 describe("trigger incident", () => {
@@ -194,6 +199,101 @@ describe("trigger incident", () => {
     if (result.success) {
       expect(result.error).toContain("no longer exists");
     }
+  });
+
+  /**
+   * A Condition branching on `status` must not read an undelivered page as a
+   * sent one.
+   */
+  it("reports status failed on a soft failure, not triggered", async () => {
+    safeFetch.mockResolvedValue(response(404, {}));
+    const result = await run({ failOnError: false });
+    expect(result).toMatchObject({ status: "failed" });
+  });
+
+  /**
+   * A disabled service takes the event with a 202 and raises nothing, which
+   * the event response cannot reveal. The service read can, so it does.
+   */
+  it("refuses to page a disabled service instead of reporting success", async () => {
+    safeFetch
+      .mockResolvedValueOnce(
+        response(200, {
+          service: {
+            id: "PSKY1",
+            status: "disabled",
+            integrations: [
+              { id: "PI1", type: "events_api_v2_inbound_integration" },
+            ],
+          },
+        })
+      )
+      .mockResolvedValueOnce(
+        response(200, { integration: { integration_key: "R1" } })
+      );
+
+    const result = await run();
+    expect(result).toMatchObject({ success: false });
+    if (!result.success) {
+      expect(result.error).toContain("disabled");
+    }
+    // Three calls would mean the event was sent anyway.
+    expect(safeFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("says so when a maintenance window will swallow the event", async () => {
+    mockHappyPath(202, "maintenance");
+    const result = await run();
+    expect(result).toMatchObject({
+      delivered: true,
+      suppressedByService: true,
+      serviceStatus: "maintenance",
+    });
+    if (result.success) {
+      expect(result.message).toContain("maintenance");
+    }
+  });
+
+  it("retries the routing-key read, not only the event", async () => {
+    safeFetch
+      .mockResolvedValueOnce(response(500, {}))
+      .mockResolvedValueOnce(
+        response(200, {
+          service: {
+            id: "PSKY1",
+            status: "active",
+            integrations: [
+              { id: "PI1", type: "events_api_v2_inbound_integration" },
+            ],
+          },
+        })
+      )
+      .mockResolvedValueOnce(
+        response(200, { integration: { integration_key: "R1" } })
+      )
+      .mockResolvedValueOnce(response(202, { dedup_key: "k" }));
+
+    const result = await run({ retryAttempts: 2 });
+    expect(result).toMatchObject({ delivered: true });
+  });
+
+  it("passes the run's organization when it reaches for the backup connection", async () => {
+    safeFetch
+      .mockResolvedValueOnce(response(404, {}))
+      .mockResolvedValueOnce(response(204, {}));
+    mockFetchCredentials
+      .mockResolvedValueOnce({ PAGERDUTY_API_TOKEN: "t" })
+      .mockResolvedValueOnce({
+        webhookUrl: "https://discord.com/api/webhooks/1/abc",
+      });
+
+    await run({ failOnError: false, backupIntegrationId: "int-discord" });
+
+    // Org scoping is what stops a workflow naming another organisation's
+    // connection as its backup.
+    expect(mockFetchCredentials).toHaveBeenLastCalledWith("int-discord", {
+      organizationId: "org-1",
+    });
   });
 
   it("sends the backup notification when the page cannot be delivered", async () => {
