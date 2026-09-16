@@ -1,5 +1,6 @@
 import { ADDRESS_BOOK_SELECTION_KEY } from "@/lib/address-book-selection";
 import { evaluateShowWhen } from "@/lib/workflow/editor/show-when";
+import { SYSTEM_ACTION_TYPES as SYSTEM_ACTION_TYPE_LIST } from "@/lib/workflow/executor/system-action-types";
 import {
   type ActionConfigField,
   type ActionConfigFieldBase,
@@ -7,13 +8,9 @@ import {
   getAllActions,
 } from "@/plugins/registry";
 
-const SYSTEM_ACTION_TYPES = new Set([
-  "Database Query",
-  "HTTP Request",
-  "Condition",
-  "For Each",
-  "Collect",
-]);
+// Built from the shared union so this validator, the executor dispatch table,
+// and the egress map cannot drift apart when a system action is added.
+const SYSTEM_ACTION_TYPES = new Set<string>(SYSTEM_ACTION_TYPE_LIST);
 
 const RESERVED_CONFIG_KEYS = new Set([
   "actionType",
@@ -630,8 +627,9 @@ export function validateWorkflowActionConfigs(
 
 // Returns true if any known action node in `nodes` is in draft state — i.e.
 // its config contains only actionType, reserved keys, and underscore-prefixed
-// metadata keys with no user-supplied parameters. Used by the PATCH handler to
-// block enabling a workflow before all action nodes are configured.
+// metadata keys with no user-supplied parameters. Actions that declare no
+// config fields are exempt. Used by the PATCH handler to block enabling a
+// workflow before all action nodes are configured.
 export function hasDraftActionNodes(
   nodes: WorkflowNodeForValidation[]
 ): boolean {
@@ -650,7 +648,14 @@ export function hasDraftActionNodes(
     if (SYSTEM_ACTION_TYPES.has(actionType)) {
       continue;
     }
-    if (!findActionById(actionType)) {
+    const action = findActionById(actionType);
+    if (!action) {
+      continue;
+    }
+    // An action that declares no config fields has nothing for the user to
+    // fill in, so its config can only ever hold reserved keys. Treating it as
+    // draft would make every workflow that uses one permanently un-enablable.
+    if (flattenConfigFields(action.configFields).length === 0) {
       continue;
     }
     const hasUserParams = Object.keys(config).some(

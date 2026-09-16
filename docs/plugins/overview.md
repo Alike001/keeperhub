@@ -13,7 +13,8 @@ Plugins provide the actions available in your workflows. Each plugin adds one or
 |--------|----------|---------|---------------------|
 | [Web3](/plugins/web3) | Blockchain | Balance checks, contract reads/writes, transfers, calldata decoding, risk assessment | Wallet (for writes) |
 | [Code](/plugins/code) | Code | Execute custom JavaScript in a sandboxed VM | None |
-| [Math](/plugins/math) | Math | Aggregation operations (sum, count, average, median, min, max, product) | None |
+| [Math](/plugins/math) | Math | Aggregation operations (sum, count, average, median, min, max, product), tolerance comparison, number formatting | None |
+| [Data](/plugins/data) | Data | Encode/decode strings, hash values (keccak256, SHA-2, SHA3, RIPEMD-160, BLAKE2b), extract named fields, flatten findings, static config | None |
 | [Safe](/plugins/safe) | Protocol | Safe multisig owners, threshold, nonce, module status, pending transactions | API key (for pending txs) |
 | [Aave V3](/plugins/aave-v3) | Protocol | Supply, borrow, repay, collateral management, health factor monitoring | Wallet (for writes) |
 | [Aave V4](/plugins/aave-v4) | Protocol | Hub-and-Spoke supply, borrow, repay, collateral management via the Lido Spoke | Wallet (for writes) |
@@ -21,11 +22,14 @@ Plugins provide the actions available in your workflows. Each plugin adds one or
 | [Ajna](/plugins/ajna) | Protocol | Liquidation keeper operations, vault rebalancing, buffer management | Wallet (for writes) |
 | [Chainlink](/plugins/chainlink) | Protocol | Oracle price feeds -- latest prices, round data, decimals, feed metadata | None |
 | [Chronicle](/plugins/chronicle) | Protocol | Verifiable oracle price feeds with Schnorr signature verification | None (whitelisted caller) |
+| [Coinbase cbETH](/plugins/coinbase-cbeth) | Protocol | Read-only cbETH reads on Ethereum mainnet: exchange rate, balance, total supply | None |
 | [Compound V3](/plugins/compound) | Protocol | Supply, withdraw, base/collateral/borrow balance monitoring | Wallet (for writes) |
 | [CoW Swap](/plugins/cowswap) | Protocol | Order pre-signing, fill monitoring, conditional orders, order cancellation | Wallet (for writes) |
 | [Curve](/plugins/curve) | Protocol | Pool swaps, LP management, virtual prices, CRV token operations | Wallet (for writes) |
 | [Ethena](/plugins/ethena) | Protocol | sUSDe staking vault, cooldown/unstake, USDe and ENA balances | Wallet (for writes) |
+| [Euler V2](/plugins/euler-v2) | Protocol | ERC-4626 vault deposit/mint/withdraw/redeem, liquidity, borrow demand, interest accrual, vault configuration | Wallet (for writes) |
 | [Frax Ether V2](/plugins/frax-ether-v2) | Protocol | Liquid staking on Ethereum mainnet. Mint frxETH 1:1 from native ETH, or mint and stake directly into sfrxETH in one transaction | Wallet (for writes) |
+| [LayerZero](/plugins/layerzero) | Protocol | Crosschain OFT fee quotes, transfer previews, peer and approval checks, endpoint send library and DVN configuration reads | Wallet (for the approve action) |
 | [Lido](/plugins/lido) | Protocol | Wrap/unwrap stETH to wstETH, exchange rates, balances across Ethereum, Base, Sepolia | Wallet (for writes) |
 | [Morpho](/plugins/morpho) | Protocol | Supply, borrow, repay, liquidate, collateral management, position tracking, market monitoring | Wallet (for writes) |
 | [Pendle](/plugins/pendle) | Protocol | Yield tokenization, market data, PT/YT/SY balances, mint/redeem | Wallet (for writes) |

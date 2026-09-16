@@ -18,7 +18,12 @@ import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import type { ErrorStatus } from "@/lib/errors/execution-status";
 import { ErrorCategory, logSystemWarn, logWarn } from "@/lib/logging";
 import type { NA_ERROR_TYPE } from "@/lib/metrics/metric-constants";
-import type { ErrorContext, MetricLabels, MetricsCollector } from "../types";
+import {
+  type ErrorContext,
+  type MetricLabels,
+  type MetricsCollector,
+  TRIGGER_TYPES,
+} from "../types";
 
 // Use global singletons to prevent duplicate registration during hot reload
 // This is safe because each pod has its own Node.js process
@@ -197,6 +202,42 @@ const executionsUnconfirmed = getOrCreateGauge(
   "keeperhub_executions_unconfirmed",
   "Executions currently in the unconfirmed state (transaction broadcast, receipt not yet readable), by kind (workflow or direct)",
   ["kind"]
+);
+
+// KEEP-1042: how far back the step-log table reaches, and how much disk the
+// execution tables hold. Both prod failures this job exists to prevent were
+// size-driven -- the volume alarm on 2026-09-01 and the CPU saturation on
+// 2026-09-02, where analytics de-TOASTed jsonb out of a table nothing pruned.
+// DB-sourced (see getExecutionRetentionStatsFromDb) so one collector reports
+// them rather than every pod.
+const executionLogOldestAgeSeconds = getOrCreateGauge(
+  dbRegistry,
+  "keeperhub_execution_log_oldest_age_seconds",
+  "Age in seconds of the oldest row in workflow_execution_logs",
+  []
+);
+
+const executionTableBytes = getOrCreateGauge(
+  dbRegistry,
+  "keeperhub_execution_table_bytes",
+  "Total on-disk size (heap, indexes and TOAST) of an execution table, by table",
+  ["table"]
+);
+
+// pending_transactions rows still in `pending` between 15 minutes and 24 hours
+// after submission, by chain. An unreferenced same-nonce fee-escalation path
+// was deleted from lib/web3/gas-strategy.ts; nothing bumps a stuck transaction
+// automatically, so this gauge is the whole response - it makes a backlog page
+// a human instead of failing silently. The 24-hour ceiling is what lets it
+// recover: see getStuckPendingTransactionCountsFromDb. DB-sourced, so the
+// value is the same on every scrape rather than depending on which pod last
+// handled a request. Cardinality is bounded by the number of configured
+// chains.
+const web3PendingTransactionsStuck = getOrCreateGauge(
+  dbRegistry,
+  "keeperhub_web3_pending_transactions_stuck",
+  "Pending transactions unconfirmed between 15 minutes and 24 hours after submission, by chain_id",
+  ["chain_id"]
 );
 
 // KEEP-545: the previous DB-sourced gauge `keeperhub_workflow_execution_errors_total`
@@ -869,6 +910,17 @@ const workflowExecutionsStartedTotal = getOrCreateCounter(
   ["trigger_type"]
 );
 
+// prom-client only materialises a labelled child series on its first inc(),
+// so a low-volume label like webhook can go its entire lifetime without ever
+// being observed at 0 (it is "born" already at 1 or 2). increase() over any
+// window then reads 0 even though real executions happened, because there
+// is no earlier sample to diff against. Pre-registering every known
+// trigger_type at 0 on module load (every pod, on every start) guarantees
+// Prometheus always has a starting point to compute increase() from.
+for (const triggerType of TRIGGER_TYPES) {
+  workflowExecutionsStartedTotal.inc({ trigger_type: triggerType }, 0);
+}
+
 // KEEP-612 detection signal. lib/safe-fetch.ts increments this every time
 // a SSRF-blocklisted destination (or DNS-resolve-mismatch) is refused. The
 // `shadow` label distinguishes enforce-mode rejects (shadow=false, the
@@ -1199,6 +1251,82 @@ export function recordWorkflowExecutionErrorByWorkflow(labels: {
     org_slug: labels.orgSlug,
     error_type: labels.errorType,
   });
+}
+
+// ─── KEEP-1042 execution retention ───────────────────────────────────────────
+// Emitted by the `retention` CronJob's route. The job runs in whichever app pod
+// the service picks, so these live in apiRegistry: the counter is summed across
+// pods, and the freshness gauge must be read with max() -- pods that never
+// served a run export the initial 0.
+
+const retentionRowsPurged = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_execution_retention_rows_purged_total",
+  "Execution rows deleted (or output_raw nulled) by the retention job, by pass",
+  ["pass"]
+);
+
+const retentionRuns = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_execution_retention_runs_total",
+  "Retention job runs by result",
+  ["result"]
+);
+
+// Seconds since the retention job last completed a run. This is the health
+// signal for the job, NOT the oldest-row age: enterprise orgs keep a year of
+// logs, so min(started_at) is pinned by them and would not move at all if the
+// short-window passes silently stopped working.
+const retentionLastSuccess = getOrCreateGauge(
+  apiRegistry,
+  "keeperhub_execution_retention_last_success_timestamp_seconds",
+  "Unix timestamp of the last successful retention run (read with max() across pods)",
+  []
+);
+
+export function recordRetentionRowsPurged(pass: string, rows: number): void {
+  if (rows > 0) {
+    retentionRowsPurged.inc({ pass }, rows);
+  }
+}
+
+export function recordRetentionRun(result: "success" | "failure"): void {
+  retentionRuns.inc({ result });
+  if (result === "success") {
+    retentionLastSuccess.set(Date.now() / 1000);
+  }
+}
+
+// How many organizations the job resolved onto each retention window. This is
+// the check that the window an organization gets is the window it pays for:
+// most organizations have no subscription row and fall back to the default, and
+// until this job nothing ever read `logRetentionDays`, so a wrong or missing
+// plan value cost nothing and could be sitting there unnoticed. Bounded
+// cardinality -- one series per distinct window, four today.
+const retentionWindowOrganizations = getOrCreateGauge(
+  apiRegistry,
+  "keeperhub_execution_retention_window_organizations",
+  "Organizations resolved onto each step-log retention window, by window length in days",
+  ["retention_days"]
+);
+
+const retentionWindowRows = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_execution_retention_window_rows_total",
+  "Step-log rows purged by the plan-window pass, by window length in days",
+  ["retention_days"]
+);
+
+export function recordRetentionWindow(
+  retentionDays: number,
+  organizationCount: number,
+  rows: number
+): void {
+  const label = { retention_days: String(retentionDays) };
+  retentionWindowOrganizations.set(label, organizationCount);
+  if (rows > 0) {
+    retentionWindowRows.inc(label, rows);
+  }
 }
 
 const slowQueries = getOrCreateCounter(
@@ -1778,6 +1906,8 @@ async function refreshDbMetricsNow(): Promise<void> {
       getWorkflowStatsFromDb,
       getLastFinishedExecutionAgeSecondsFromDb,
       getUnconfirmedExecutionCountsFromDb,
+      getExecutionRetentionStatsFromDb,
+      getStuckPendingTransactionCountsFromDb,
       getWorkflowErrorsByWorkflowFromDb,
       getSystemErrorsByCategoryFromDb,
       getStepStatsFromDb,
@@ -1797,6 +1927,8 @@ async function refreshDbMetricsNow(): Promise<void> {
       workflowStats,
       lastFinishedAgeSeconds,
       unconfirmedCounts,
+      retentionStats,
+      stuckPendingTxCounts,
       errorsByWorkflow,
       systemErrorsByCategoryRows,
       stepStats,
@@ -1815,6 +1947,8 @@ async function refreshDbMetricsNow(): Promise<void> {
       getWorkflowStatsFromDb(),
       getLastFinishedExecutionAgeSecondsFromDb(),
       getUnconfirmedExecutionCountsFromDb(),
+      getExecutionRetentionStatsFromDb(),
+      getStuckPendingTransactionCountsFromDb(),
       getWorkflowErrorsByWorkflowFromDb(),
       getSystemErrorsByCategoryFromDb(),
       getStepStatsFromDb(),
@@ -1861,6 +1995,36 @@ async function refreshDbMetricsNow(): Promise<void> {
         unconfirmedCounts.workflow
       );
       executionsUnconfirmed.set({ kind: "direct" }, unconfirmedCounts.direct);
+    }
+
+    // Same null handling again: on a query error keep the last real reading
+    // rather than reporting a table that suddenly holds nothing.
+    if (retentionStats !== null) {
+      if (retentionStats.oldestLogAgeSeconds !== null) {
+        executionLogOldestAgeSeconds.set(retentionStats.oldestLogAgeSeconds);
+      }
+      executionTableBytes.set(
+        { table: "workflow_execution_logs" },
+        retentionStats.logTableBytes
+      );
+      executionTableBytes.set(
+        { table: "workflow_executions" },
+        retentionStats.executionTableBytes
+      );
+    }
+
+    // Reset before populating so a chain that has drained its
+    // backlog goes back to reporting nothing rather than pinning its last
+    // non-zero value forever. On a query error skip the reset entirely and
+    // keep the previous reading, matching the null handling above.
+    if (stuckPendingTxCounts !== null) {
+      web3PendingTransactionsStuck.reset();
+      for (const row of stuckPendingTxCounts) {
+        web3PendingTransactionsStuck.set(
+          { chain_id: String(row.chainId) },
+          row.count
+        );
+      }
     }
 
     // KEEP-545: the per-org error gauge that used to live here was removed.

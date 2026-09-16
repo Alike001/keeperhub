@@ -7,6 +7,14 @@ description: "KeeperHub Analytics API - monitor workflow performance, gas usage,
 
 The Analytics API provides insights into workflow and direct execution performance, gas usage, and execution trends across your organization.
 
+## Authentication
+
+All analytics routes accept either a session cookie or an organization API key (`Authorization: Bearer $KEEPERHUB_API_KEY`) except the two that are session-only:
+
+- **`GET /api/analytics/summary`**, **`GET /api/analytics/time-series`**, **`GET /api/analytics/networks`**, **`GET /api/analytics/runs`**, and **`GET /api/analytics/spend-cap`** accept a `kh_` organization key with the `mcp:read` scope. A legacy key with no scope is admitted (an unscoped key means full access). A session caller carries no scope and is unaffected - the scope gate applies to key callers only.
+- **`GET /api/analytics/stream`** is session-only: it is a server-sent-events feed consumed by a browser `EventSource`, which cannot send an `Authorization` header, so a key has no way to use it.
+- **`GET /api/analytics/runs/{executionId}/steps`** is session-only: it reads the caller's organization from the session.
+
 ## Get Analytics Summary
 
 ```http
@@ -55,24 +63,39 @@ GET /api/analytics/time-series
 
 Returns time-bucketed run counts for charting execution volume over time.
 
+Bucket width is chosen from the width of the window: 5 minutes up to 2 hours,
+1 hour up to 2 days, 6 hours up to 14 days, and 1 day beyond that. Every bucket
+in the window is returned, including the ones with no runs.
+
 ### Query Parameters
 
-Same as summary endpoint.
+Same as the summary endpoint, plus:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `tz` | string | IANA time zone the buckets are truncated in, for example `Europe/Berlin` (default: `UTC`). An unrecognised value falls back to `UTC`. |
 
 ### Response
 
 ```json
 {
+  "intervalMs": 86400000,
   "buckets": [
     {
       "timestamp": "2024-01-01T00:00:00Z",
-      "runCount": 42,
-      "successCount": 40,
-      "failedCount": 2
+      "success": 40,
+      "error": 2,
+      "cancelled": 0,
+      "skipped": 0,
+      "pending": 0,
+      "running": 0
     }
   ]
 }
 ```
+
+`timestamp` is the instant the bucket starts, so with `tz=Europe/Berlin` a daily
+bucket starts at midnight Berlin time rather than midnight UTC.
 
 ## Get Network Breakdown
 
@@ -131,9 +154,9 @@ Returns a unified list of both workflow executions and direct executions with pa
 {
   "runs": [
     {
-      "id": "exec_123",
+      "id": "hjsuassmcb19zvfpzi38r",
       "source": "workflow",
-      "workflowId": "wf_456",
+      "workflowId": "y3y0xneior3njl90uoyih",
       "workflowName": "Monitor ETH Balance",
       "status": "success",
       "createdAt": "2024-01-01T00:00:00Z",
@@ -141,7 +164,7 @@ Returns a unified list of both workflow executions and direct executions with pa
       "durationMs": 5000
     },
     {
-      "id": "direct_789",
+      "id": "9k2x7mwqcp5zvt0hnj1ab",
       "source": "direct",
       "type": "transfer",
       "network": "ethereum",
