@@ -30,17 +30,32 @@ Returns aggregated analytics for the organization including run counts, success 
 | `range` | string | Time range: `24h`, `7d`, `30d`, `90d`, `custom` (default: `30d`) |
 | `customStart` | string | ISO timestamp for custom range start |
 | `customEnd` | string | ISO timestamp for custom range end |
+| `projectId` | string | Restrict the figures to one workflow project |
 
 ### Response
 
 ```json
 {
   "totalRuns": 1250,
-  "successfulRuns": 1180,
-  "failedRuns": 70,
-  "successRate": 94.4,
-  "totalGasUsedWei": "15000000000000000",
-  "avgExecutionTimeMs": 2340
+  "successCount": 1180,
+  "errorCount": 70,
+  "cancelledCount": 0,
+  "skippedCount": 0,
+  "successRate": 0.944,
+  "avgDurationMs": 2340,
+  "totalGasWei": "15000000000000000",
+  "sponsoredGasWei": "2000000000000000",
+  "activeRuns": 3,
+  "previousPeriod": {
+    "totalRuns": 1180,
+    "successCount": 1100,
+    "errorCount": 80,
+    "cancelledCount": 0,
+    "skippedCount": 0,
+    "avgDurationMs": 2510,
+    "totalGasWei": "14000000000000000",
+    "sponsoredGasWei": "1800000000000000"
+  }
 }
 ```
 
@@ -49,11 +64,16 @@ Returns aggregated analytics for the organization including run counts, success 
 | Field | Type | Description |
 |-------|------|-------------|
 | `totalRuns` | number | Combined count of workflow executions and direct executions |
-| `successfulRuns` | number | Number of executions that completed successfully |
-| `failedRuns` | number | Number of executions that failed |
-| `successRate` | number | Percentage of successful executions (0-100) |
-| `totalGasUsedWei` | string | Total gas consumed in wei across both workflow executions and direct executions |
-| `avgExecutionTimeMs` | number | Average execution duration in milliseconds |
+| `successCount` | number | Runs that completed successfully |
+| `errorCount` | number | Runs that failed |
+| `cancelledCount` | number | Workflow runs that were cancelled |
+| `skippedCount` | number | Workflow runs whose steps were skipped |
+| `successRate` | number | Fraction of runs that succeeded, `0` to `1`, not a percentage. The dashboard renders it as a percentage by multiplying by 100 (`components/analytics/kpi-cards.tsx`), so a consumer that wants one has to do the same |
+| `avgDurationMs` | number or null | Mean duration in milliseconds, or `null` when the window holds no completed run to average |
+| `totalGasWei` | string | Every wei the runs burned over the range, sponsored gas included. A decimal string, because the figure overflows a JavaScript number |
+| `sponsoredGasWei` | string | The sponsored portion of `totalGasWei`, read from the gas-credit ledger. A subset rather than a second figure: adding the two double counts, and the wallet-paid share is the subtraction |
+| `activeRuns` | number | Runs in flight at the moment of the request, counted for the organization rather than the window |
+| `previousPeriod` | object or null | The same counts over the window immediately before this one, so a caller can render deltas. It carries `totalRuns`, `successCount`, `errorCount`, `cancelledCount`, `skippedCount`, `avgDurationMs`, `totalGasWei` and `sponsoredGasWei`, and deliberately not `successRate` or `activeRuns`: derive the previous rate from its own `successCount / totalRuns` |
 
 ## Get Time Series Data
 
@@ -115,18 +135,17 @@ Same as summary endpoint.
 {
   "networks": [
     {
-      "network": "ethereum",
-      "runCount": 520,
-      "gasUsedWei": "8000000000000000"
-    },
-    {
-      "network": "base",
-      "runCount": 380,
-      "gasUsedWei": "2500000000000000"
+      "network": "8453",
+      "executionCount": 380,
+      "successCount": 372,
+      "errorCount": 8,
+      "totalGasWei": "2500000000000000"
     }
   ]
 }
 ```
+
+`network` is the chain id as a string, not a name; the analytics dashboard maps it to a display name for the chart. `executionCount` counts settled runs only, so an in-flight execution does not appear here before it finishes.
 
 ## List Runs
 
@@ -147,6 +166,8 @@ Returns a unified list of both workflow executions and direct executions with pa
 | `source` | string | Filter by source: `workflow`, `direct` |
 | `limit` | number | Results per page (default: 50) |
 | `cursor` | string | Pagination cursor from previous response |
+| `page` | number | One-based page number, an alternative to `cursor`. Values below 1 are clamped to 1 |
+| `projectId` | string | Restrict the listing to one workflow project |
 
 ### Response
 
@@ -156,28 +177,72 @@ Returns a unified list of both workflow executions and direct executions with pa
     {
       "id": "hjsuassmcb19zvfpzi38r",
       "source": "workflow",
+      "status": "success",
+      "startedAt": "2024-01-01T00:00:00Z",
+      "completedAt": "2024-01-01T00:00:05Z",
+      "durationMs": 5000,
       "workflowId": "y3y0xneior3njl90uoyih",
       "workflowName": "Monitor ETH Balance",
-      "status": "success",
-      "createdAt": "2024-01-01T00:00:00Z",
-      "completedAt": "2024-01-01T00:00:05Z",
-      "durationMs": 5000
-    },
-    {
-      "id": "9k2x7mwqcp5zvt0hnj1ab",
-      "source": "direct",
-      "type": "transfer",
-      "network": "ethereum",
-      "status": "success",
-      "transactionHash": "0x...",
+      "directType": null,
+      "network": "8453",
+      "networks": ["8453"],
+      "gasNetworks": ["8453"],
+      "gasCostWei": "21000000000000",
       "gasUsedWei": "21000000000000",
-      "createdAt": "2024-01-01T00:01:00Z",
-      "completedAt": "2024-01-01T00:01:15Z"
+      "transactionHashes": [
+        {
+          "hash": "0x...",
+          "nodeId": "n1",
+          "nodeName": "Write Contract",
+          "chainId": 8453,
+          "network": "8453",
+          "iterationIndex": null,
+          "verified": true,
+          "receiptStatus": "success",
+          "blockNumber": 19000000,
+          "gasUsed": "21000000000000",
+          "verifiedAt": "2024-01-01T00:00:06Z"
+        }
+      ],
+      "totalSteps": 3,
+      "completedSteps": 3,
+      "error": null,
+      "errorCode": null,
+      "errorType": null,
+      "errorCategory": null
     }
   ],
-  "nextCursor": "cursor_abc123"
+  "nextCursor": null,
+  "total": 1250,
+  "page": 1,
+  "pageSize": 50,
+  "stepLogRetentionCutoff": "2024-01-01T00:00:00Z"
 }
 ```
+
+`startedAt`, not `createdAt`: a run is dated from when it started, and a run that
+has not finished carries `completedAt: null` and `durationMs: null`. `directType`
+is set on direct executions (`transfer`, `contract_call`, and so on) and `null`
+on workflow runs, where `source`, `workflowId` and `workflowName` carry the
+identity instead.
+
+`transactionHashes` is an array on both sources, one entry per on-chain write in
+submission order, with a direct execution surfacing its single hash as a
+one-element array so both render through the same code. Each entry carries the
+receipt verification KeeperHub performed independently (`verified`,
+`receiptStatus`, `blockNumber`, `gasUsed`, `verifiedAt`), which is the part a
+caller cannot reconstruct from the chain alone. An empty array means the run
+produced no on-chain write, or finalized before the column was backfilled.
+
+`networks` is every chain the run's steps targeted, including read-only steps;
+`gasNetworks` is the subset its gas landed on. A multi-chain run can therefore
+have a longer `networks` than `gasNetworks`, which is why `network` and the gas
+figures are only meaningful together when that list holds one entry.
+
+`stepLogRetentionCutoff` is optional and appears when the organization's step
+logs have been aged out: a run older than the instant it names is listed with its
+status and duration but has no steps behind it, rather than being blank for the
+same reason a run that recorded nothing is.
 
 ## Get Run Step Logs
 
@@ -185,25 +250,42 @@ Returns a unified list of both workflow executions and direct executions with pa
 GET /api/analytics/runs/{executionId}/steps
 ```
 
-Returns detailed step-by-step logs for a specific execution.
+Returns the step log for one execution, in the order the steps ran.
 
 ### Response
 
+A bare array, with no envelope:
+
 ```json
-{
-  "steps": [
-    {
-      "nodeId": "node_1",
-      "nodeName": "Trigger",
-      "status": "success",
-      "input": {...},
-      "output": {...},
-      "durationMs": 120,
-      "timestamp": "2024-01-01T00:00:00Z"
-    }
-  ]
-}
+[
+  {
+    "id": "st_hjsuassmcb19zvfpzi",
+    "nodeId": "node_1",
+    "nodeName": "Trigger",
+    "nodeType": "trigger/manual",
+    "status": "success",
+    "startedAt": "2024-01-01T00:00:00Z",
+    "completedAt": "2024-01-01T00:00:00.120Z",
+    "durationMs": 120,
+    "error": null,
+    "iterationIndex": null,
+    "forEachNodeId": null,
+    "network": null,
+    "gasCostWei": null,
+    "sponsored": false
+  }
+]
 ```
+
+A step's input and output are not part of this response: the log carries what the
+run did (`nodeName`, `nodeType`, `status`, timings, `error`) and the on-chain
+detail where there was a write (`network`, `gasCostWei`, `sponsored`). Read a
+step's own data from the execution's stored output if you need it.
+
+`iterationIndex` and `forEachNodeId` are set on steps inside a For Each body, and
+`null` elsewhere. An empty array is the expected answer for a run whose step logs
+retention has taken, which the runs listing reports through
+`stepLogRetentionCutoff`.
 
 ## Get Spend Cap Data
 
