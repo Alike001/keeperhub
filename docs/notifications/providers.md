@@ -16,6 +16,12 @@ KeeperHub supports multiple notification channels. Configure connections to enab
 A connection is private to whoever created it unless its visibility is widened
 to specific members or to the whole organization.
 
+Connections stay owned by their creator. Deactivating that person's account
+freezes the connections they added, for the whole organization; recreate them
+under an active member to restore service. Removing someone from the
+organization without deactivating their account leaves the connections
+working, so rotate or delete the credential as part of offboarding.
+
 ## Available Connection Types
 
 ### Email

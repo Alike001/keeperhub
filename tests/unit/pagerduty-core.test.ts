@@ -92,11 +92,19 @@ describe("resolveAuthHeader", () => {
     }
   });
 
-  it("asks for credentials when the connection holds none", async () => {
+  /**
+   * The runtime hands back an empty credential set for a deleted connection
+   * and for one whose creator was deactivated, not only for an unfilled form,
+   * so the message has to name all three causes.
+   */
+  it("names every reason there are no credentials, not just an empty form", async () => {
     const result = await resolveAuthHeader({});
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.failure.message).toContain("no credentials");
+      expect(result.failure.message).toContain("removed");
+      expect(result.failure.message).toContain("deactivated");
+      expect(result.failure.message).toContain("REST API token");
+      expect(result.failure.retryable).toBe(false);
     }
   });
 });

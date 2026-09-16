@@ -32,6 +32,14 @@ The first four use the Events API v2 and work with a read-only credential. Creat
 
 The connection belongs to the organization it is created in and is not visible to any other organization.
 
+### What happens when the person who added it leaves
+
+A connection stays owned by whoever created it.
+
+- **Deactivated account:** KeeperHub freezes every connection that person created, for the whole organization and immediately. Workflows using them fail with a message saying so. The fix is to recreate the connection under an active member - editing it is not enough, because it keeps its original owner.
+- **Removed from the organization, account still active:** the connection keeps working. Removing someone from a team does not revoke the PagerDuty credential they configured, so rotate the key in PagerDuty and update the connection, or delete it, as part of offboarding.
+- **Someone else edits it:** rotating the token through **Edit** takes effect on the next run. Removing the connection in KeeperHub does not revoke the key at PagerDuty; delete it there too, under **Integrations > Developer Tools > API Access Keys**.
+
 ### Scoped OAuth instead of a token
 
 PagerDuty recommends scoped OAuth over account-wide keys, and the plugin accepts either. Register an app under **Integrations > Developer Tools > App Registration**, set Functionality to **Scoped OAuth**, and grant only:

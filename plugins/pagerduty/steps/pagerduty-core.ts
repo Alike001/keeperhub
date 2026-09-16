@@ -264,11 +264,18 @@ export async function resolveAuthHeader(
     credentials.PAGERDUTY_OAUTH_CLIENT_SECRET &&
     credentials.PAGERDUTY_SUBDOMAIN;
   if (!hasOAuth) {
+    // An empty credential set is not only "the form was left blank". The
+    // runtime also hands back nothing when the connection has been deleted,
+    // when it belongs to another organisation, and when the person who
+    // created it has been deactivated - KeeperHub freezes their credentials
+    // for everyone, which is the point of the freeze, but it looks identical
+    // from here. Naming all three saves an hour of staring at a connection
+    // that appears fine in Settings.
     return {
       ok: false,
       failure: {
         message:
-          "This PagerDuty connection has no credentials. Add a REST API token, or an OAuth client id, secret and subdomain.",
+          "No PagerDuty credentials are available for this node. Either the connection holds none (add a REST API token, or an OAuth client id, secret and subdomain), or it has been removed, or the person who created it has been deactivated - which freezes the connections they added. Recreating the connection under an active member fixes the last case; editing it does not, because it stays owned by its creator.",
         retryable: false,
       },
     };
