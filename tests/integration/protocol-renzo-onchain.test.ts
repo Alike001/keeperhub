@@ -65,6 +65,21 @@ describe("Renzo on-chain integration", () => {
     );
   });
 
+  /**
+   * Resolves when the deployed bytecode dispatched the calldata: the call
+   * returned hex or it reverted with CALL_EXCEPTION carrying revert data.
+   *
+   * The revert data is what makes this mean anything. A selector the contract
+   * has never heard of also fails with CALL_EXCEPTION, because it falls
+   * through and reverts with no returndata, so accepting any CALL_EXCEPTION
+   * would pass for a function that does not exist:
+   *
+   *   RestakeManager 0xdeadbeef    -> CALL_EXCEPTION, data null
+   *   RestakeManager depositETH()  -> CALL_EXCEPTION, data 0x21607339
+   *
+   * Requiring non-null data is what makes the assertion mean what the test
+   * name says.
+   */
   async function simulateBytecodeCall(tx: {
     to: string;
     data: string;
@@ -85,6 +100,12 @@ describe("Renzo on-chain integration", () => {
         "code" in err &&
         err.code === "CALL_EXCEPTION"
       ) {
+        const revertData = (err as { data?: unknown }).data;
+        if (revertData == null) {
+          throw new Error(
+            `Selector ${tx.data.slice(0, 10)} on ${tx.to} reverted with no return data, which is what an unknown selector does. The deployed bytecode did not dispatch this call.`
+          );
+        }
         return;
       }
       throw err;
