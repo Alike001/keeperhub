@@ -23,6 +23,7 @@ const DECIMAL_PATTERN = /^[0-9]+$/;
 const BASE64_STANDARD_CHARS = /[+/]/;
 const BASE64_URL_SAFE_CHARS = /[-_]/;
 const BASE64_TRAILING_PADDING = /=+$/;
+const BASE64_WHITESPACE = /\s+/g;
 const BASE64_DASH = /-/g;
 const BASE64_UNDERSCORE = /_/g;
 const BASE64_PLUS = /\+/g;
@@ -180,9 +181,16 @@ function toBytes(value: string, encoding: InputEncoding): Uint8Array {
  * not recognise and hands back a shorter buffer, so one mistyped character in
  * a payload would hash cleanly as different bytes. Anything that is not one
  * unambiguous encoding of some byte string is refused.
+ *
+ * Line breaks are the exception, and are stripped rather than refused. MIME
+ * wraps base64 at 64 or 76 columns, which is what openssl, PEM bodies and most
+ * mail and HTTP tooling emit, and the decoded bytes are identical either way.
+ * Refusing it would be worse than useless here: the message would send the
+ * caller to Text encoding, which hashes the base64 characters and the newlines
+ * and returns a digest that looks entirely valid over input they never meant.
  */
 function fromBase64(value: string): Uint8Array {
-  const trimmed = value.trim();
+  const trimmed = value.trim().replace(BASE64_WHITESPACE, "");
 
   // The alphabets differ in exactly two characters, so a string carrying both
   // encodes nothing in either and guessing which was meant is a coin toss.
@@ -419,7 +427,11 @@ export function hashValues(input: HashCoreInput): HashResult {
     // noble CHash intersections, and resolving a call against that union is
     // fragile. Assignability to one plain signature is not.
     const hasher: (bytes: Uint8Array) => Uint8Array = HASHERS[algorithm];
-    const map: Record<string, string> = {};
+    // Object.create(null) rather than a literal: assigning the key "__proto__"
+    // on a normal object hits the inherited setter, which ignores a string, so
+    // the row vanishes while count and result still include it. The value is a
+    // JSON array of arbitrary strings, so that key is reachable.
+    const map = Object.create(null) as Record<string, string>;
     const hashed: string[] = [];
     let digestBytes = 0;
 

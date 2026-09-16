@@ -188,7 +188,7 @@ Set `itemsPath` on an entry to point at a nested array instead.
 
 ## Hash
 
-Hashes a string, or a JSON array of strings, one way. Unlike Encode / Decode the result cannot be turned back into the input. The common cases are deriving a function selector or an event topic for a raw log filter, and hashing packed bytes into a CREATE2 salt or a mapping storage slot.
+Hashes a string, or a JSON array of strings, one way. Unlike Encode / Decode the result cannot be turned back into the input. The common cases are deriving a function selector or an event topic for a raw log filter, and hashing a byte payload that reached the workflow already encoded.
 
 ### Inputs
 
@@ -214,11 +214,11 @@ Hashes a string, or a JSON array of strings, one way. Unlike Encode / Decode the
 
 ### Notes
 
-- `keccak256` is the hash the EVM uses: function selectors, event topics, CREATE2 addresses, mapping storage slots. It is the default because almost every on-chain use wants it.
+- `keccak256` is the hash the EVM uses: function selectors and event topics, including the topic that carries an indexed `string` or `bytes` argument. It is the default because almost every on-chain use wants it.
 - **`sha3-256` is not `keccak256`.** Ethereum adopted Keccak before NIST finalised SHA-3, and NIST then changed the padding byte. The two give unrelated results for the same input, and the wrong one is a perfectly valid hash that simply matches nothing on chain. Pick `sha3-256` only if a non-EVM protocol asked for it by that name.
-- `inputEncoding` is never inferred from a leading `0x`. Given `0x1234`, `utf8` hashes the six characters and `hex` hashes the two bytes; both succeed and disagree. Signatures are `utf8`; salts, packed ABI data and storage keys are `hex`.
+- `inputEncoding` is never inferred from a leading `0x`. Given `0x1234`, `utf8` hashes the six characters and `hex` hashes the two bytes; both succeed and disagree. Signatures are `utf8`; a raw byte payload from an upstream node is `hex`.
 - `hex` requires a whole number of bytes. `0x123` is refused rather than read as `0x0123`, because which nibble is missing is the caller's to say, not the node's to guess.
-- `base64` input is for a payload that arrived encoded -- a webhook body, a signed blob -- where decoding it to text first would corrupt any byte that is not valid UTF-8. It accepts either alphabet, standard or URL-safe, with or without padding, but not a mixture of the two, and it refuses a non-canonical final character rather than decoding it silently.
+- `base64` input is for a payload that arrived encoded -- a webhook body, a signed blob -- where decoding it to text first would corrupt any byte that is not valid UTF-8. It accepts either alphabet, standard or URL-safe, with or without padding, but not a mixture of the two, and it refuses a non-canonical final character rather than decoding it silently. Line breaks are stripped, so MIME-wrapped input from `openssl base64` or a PEM body works as it stands.
 - `base64url` output swaps `+` and `/` for `-` and `_` and drops the padding, so a digest can go into a URL, a filename or a header without further escaping.
 - For a digest as a decimal number, feed the `hex` output into Encode / Decode with `hex-to-decimal`, which stays exact above 2^53. There is no decimal output format because that composition already covers it.
 - `outputBytes: 4` turns a function signature into its selector. Adding `padTo: 32` turns that selector into the `bytes32` topic that filters an anonymous `LogNote` event -- padding is on the right because that is where the EVM puts it, with the selector left-aligned in the topic word.
@@ -277,18 +277,23 @@ Keccak hash of those in the topic, not the value, so the filter needs the hash:
 Hash the raw value, not an ABI-encoded form: the spec encodes indexed `bytes`
 and `string` in place, as raw contents with no padding and no length prefix.
 
-Hash packed bytes rather than text, taking the input from Encode / Decode:
+Hash bytes rather than text, taking the input from Encode / Decode:
 
 ```
--> Encode / Decode (Key Word):
+-> Encode / Decode (Amount Word):
      operation: decimal-to-hex
-     value: {{@config:Static Config.result.slot}}
+     value: {{@config:Static Config.result.amount}}
      numberFormat: uint256
--> Hash (Storage Slot):
+-> Hash (Commitment):
      algorithm: keccak256
-     value: {{@encode:Key Word.result}}
+     value: {{@encode:Amount Word.result}}
      inputEncoding: hex
 ```
+
+Note that `hex` takes one run of hex digits, with the `0x` prefix only at the
+front. There is no node that concatenates two hex values, so a derivation over
+several packed words -- `keccak256(key . slot)` for a mapping storage slot, or a
+CREATE2 salt -- cannot be assembled from this plugin today.
 
 Hash a payload that arrived base64-encoded, then emit the digest URL-safe:
 

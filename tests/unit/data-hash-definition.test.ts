@@ -169,8 +169,8 @@ describe("data/hash definition", () => {
       expect(config.outputFormat).toBe("hex");
     });
 
-    // The widths carry an `example` for the AI prompt builder but no
-    // `defaultValue`, so the form still opens on a whole digest.
+    // The widths default to blank, so the form opens on a whole digest and the
+    // generated config says "leave blank" rather than naming a width.
     it("leaves the widths unset, so a full digest is the default", () => {
       const config = buildConfigForActionTypeChange(ACTION_TYPE, {});
 
@@ -179,15 +179,17 @@ describe("data/hash definition", () => {
     });
   });
 
-  // generateAIActionPrompts emits a value for every visible field, falling back
-  // to 10 for a number with neither example nor defaultValue. Without the
-  // examples below the canonical example would read "truncate to 10 bytes, pad
-  // to 10" - parseable, so the all-actions test would pass, but nonsense for a
-  // model to copy.
+  // generateAIActionPrompts reads example, then defaultValue, then a type
+  // default of 10, and the line it builds is the canonical config for this
+  // action in the workflow-generation prompt. A width of 4 and 32 there would
+  // seed every generated node to truncate to a selector; a type default of 10
+  // would be worse still. A blank default reads as "leave blank".
   describe("AI prompt example", () => {
-    it("suggests the selector-to-topic widths rather than the fallback", () => {
-      expect(field("outputBytes").example).toBe("4");
-      expect(field("padTo").example).toBe("32");
+    it("leaves the widths blank rather than seeding a truncation", () => {
+      expect(field("outputBytes").example).toBeUndefined();
+      expect(field("padTo").example).toBeUndefined();
+      expect(field("outputBytes").defaultValue).toBe("");
+      expect(field("padTo").defaultValue).toBe("");
     });
 
     it("produces a coherent example config", () => {
@@ -205,8 +207,8 @@ describe("data/hash definition", () => {
 
       expect(example.algorithm).toBe("keccak256");
       expect(example.inputEncoding).toBe("utf8");
-      expect(example.outputBytes).toBe("4");
-      expect(example.padTo).toBe("32");
+      expect(example.outputBytes).toBe("");
+      expect(example.padTo).toBe("");
       expect(example.outputFormat).toBe("hex");
     });
   });

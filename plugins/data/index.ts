@@ -344,7 +344,7 @@ const dataPlugin: IntegrationPlugin = {
           ],
           defaultValue: "keccak256",
           helpTip:
-            "keccak256 is the hash the EVM uses: function selectors, event topics, CREATE2 addresses, mapping storage slots.\n\nSHA3-256 is NOT the same thing. Ethereum adopted Keccak before NIST changed the padding, so the two give completely different results for the same input. Pick SHA3-256 only if a non-EVM protocol asked for it by that name.",
+            "keccak256 is the hash the EVM uses: function selectors and event topics, including the topic that carries an indexed string or bytes argument.\n\nSHA3-256 is NOT the same thing. Ethereum adopted Keccak before NIST changed the padding, so the two give completely different results for the same input. Pick SHA3-256 only if a non-EVM protocol asked for it by that name.",
           example: "keccak256",
         },
         {
@@ -371,27 +371,26 @@ const dataPlugin: IntegrationPlugin = {
           ],
           defaultValue: "utf8",
           helpTip:
-            "How the value is read before hashing, and the easiest thing to get wrong.\n\nGiven 0x1234, Text hashes the six characters 0 x 1 2 3 4, while Hex bytes hashes the two bytes 0x12 0x34. Both succeed and give different answers.\n\nFunction and event signatures are Text. CREATE2 salts, packed ABI data and storage keys are Hex bytes. Base64 is for a payload that arrived encoded - a webhook body, a signed blob - where decoding it to text first would corrupt any byte that is not valid UTF-8.\n\nBase64 accepts either alphabet, standard or URL-safe, with or without padding, but not a mixture of the two.",
+            "How the value is read before hashing, and the easiest thing to get wrong.\n\nGiven 0x1234, Text hashes the six characters 0 x 1 2 3 4, while Hex bytes hashes the two bytes 0x12 0x34. Both succeed and give different answers.\n\nFunction and event signatures are Text. A raw byte payload from an upstream node is Hex bytes. Base64 is for a payload that arrived encoded - a webhook body, a signed blob - where decoding it to text first would corrupt any byte that is not valid UTF-8.\n\nBase64 accepts either alphabet, standard or URL-safe, with or without padding, but not a mixture of the two.",
           example: "utf8",
         },
-        // Both widths carry an `example` but deliberately no `defaultValue`.
+        // Both widths carry `defaultValue: ""` and deliberately no `example`.
         //
-        // defaultValue would seed the form, and the right default is "blank" -
-        // a whole digest. example feeds generateAIActionPrompts only, which emits
-        // a value for every visible field and falls back to 10 for a number with
-        // neither. 4 and 32 together are the selector-to-topic case, so the
-        // generated example is coherent instead of "truncate to 10, pad to 10".
-        //
-        // Both are strings: ActionConfigFieldBase.example is typed string, as is
-        // defaultValue (flatten-findings uses defaultValue "100" for its number
-        // field for the same reason).
+        // generateAIActionPrompts reads example, then defaultValue, then a type
+        // default of 10, and the JSON it builds is the canonical config for this
+        // action in the workflow-generation prompt. An example of 4 and 32 there
+        // seeds every generated Hash node to truncate to a selector, so "sha256
+        // the webhook body" would return a 4-byte value and raise nothing. A
+        // blank default emits "outputBytes":"" instead, which reads as "leave
+        // blank" and matches the helpTip. The form is unaffected: it already
+        // opens blank.
         {
           key: "outputBytes",
           label: "Output bytes",
           type: "number",
           min: 1,
           placeholder: "32",
-          example: "4",
+          defaultValue: "",
           helpTip:
             "Keep only the first N bytes of the digest. Leave blank for the full digest.\n\nSet 4 to turn a function signature into its selector:\nfrob(bytes32,address,address,address,int256,int256) -> 0x76088703\n\nA truncated digest is not the shorter standard hash of the same family. SHA-512 cut to 32 bytes is not SHA-512/256, and BLAKE2b-256 is not BLAKE2b-512 cut down: both mix the output length into their initial state. Truncate for a selector, not to derive a shorter named hash.",
         },
@@ -401,7 +400,7 @@ const dataPlugin: IntegrationPlugin = {
           type: "number",
           min: 1,
           placeholder: "32",
-          example: "32",
+          defaultValue: "",
           helpTip:
             "Right-pad the result with zero bytes to this width. Leave blank for no padding.\n\nWith Output bytes 4 and Pad to 32 you get the 32-byte topic that filters an anonymous LogNote event:\n0x7608870300000000000000000000000000000000000000000000000000000000\n\nPadding is on the right because that is where the EVM puts it - the selector sits left-aligned in the topic word.",
         },
@@ -416,7 +415,7 @@ const dataPlugin: IntegrationPlugin = {
           ],
           defaultValue: "hex",
           helpTip:
-            "hex is what every on-chain use wants: a topic, a bytes32 argument, a storage slot.\n\nbase64url swaps + and / for - and _ and drops the padding, so the digest can go into a URL, a filename or a header without further escaping.\n\nFor a digest as a decimal number, feed hex into Encode / Decode with Hex to decimal, which stays exact above 2^53.",
+            "hex is what every on-chain use wants: a topic or a bytes32 argument.\n\nbase64url swaps + and / for - and _ and drops the padding, so the digest can go into a URL, a filename or a header without further escaping.\n\nFor a digest as a decimal number, feed hex into Encode / Decode with Hex to decimal, which stays exact above 2^53.",
         },
       ],
     },

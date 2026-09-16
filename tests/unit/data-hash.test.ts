@@ -300,6 +300,25 @@ describe("data/hash", () => {
   });
 
   describe("arrays", () => {
+    // Assigning "__proto__" on a plain object literal hits the inherited
+    // setter, which ignores a string, so the row vanishes while count and
+    // result still report it. The value is a JSON array of arbitrary strings,
+    // so the key is reachable from a workflow.
+    it("keeps a __proto__ entry in map", async () => {
+      const result = (await run({
+        value: JSON.stringify(["abc", "__proto__", "xyz"]),
+      })) as HashSuccess;
+
+      expect(result.count).toBe(3);
+      expect(Object.keys(result.map)).toHaveLength(3);
+      expect(result.map.__proto__).toBe(ethers.id("__proto__"));
+      expect(result.result).toEqual([
+        ethers.id("abc"),
+        ethers.id("__proto__"),
+        ethers.id("xyz"),
+      ]);
+    });
+
     it("hashes a JSON array and keys map by the original value", async () => {
       const result = (await run({
         value: JSON.stringify([FROB_SIG, FORK_SIG, GRAB_SIG]),
@@ -693,6 +712,25 @@ describe("data/hash", () => {
 
       expect(std.result).toBe("xkZ2XdQj2/HKYuqMSzQbWJeGByg=");
       expect(url.result).toBe("xkZ2XdQj2_HKYuqMSzQbWJeGByg");
+    });
+
+    // MIME wraps base64 at 64 or 76 columns, which is what openssl, PEM bodies
+    // and most mail tooling emit. Refusing it would send the caller to Text
+    // encoding, which hashes the base64 characters and the newlines and returns
+    // a digest that looks valid over input they never meant.
+    it("accepts MIME line-wrapped base64", async () => {
+      const oneLine = (await run({
+        value: "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo=",
+        inputEncoding: "base64",
+      })) as HashSuccess;
+      const wrapped = (await run({
+        value: "YWJjZGVmZ2hpamts\nbW5vcHFyc3R1dnd4\neXo=",
+        inputEncoding: "base64",
+      })) as HashSuccess;
+
+      expect(wrapped.success).toBe(true);
+      expect(wrapped.result).toBe(oneLine.result);
+      expect(oneLine.result).toBe(ethers.id("abcdefghijklmnopqrstuvwxyz"));
     });
 
     describe("refusals", () => {
