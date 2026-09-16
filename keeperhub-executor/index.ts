@@ -333,6 +333,15 @@ async function dispatchExecution(params: {
         scheduleId,
         db,
         correlationId: latency?.correlationId,
+        // Same anchors the k8s-job branch passes: the in-process engine is the
+        // process that sees started/completed, so it records the timeline - but
+        // `observed` and `received` were stamped on this instance before the
+        // hand-off. Passing the id alone left the queue leg unmeasured and the
+        // observed -> broadcast interval with no in-process series at all.
+        latencyEpochs: {
+          receivedAt: latency?.at("received"),
+          observedAt: latency?.at("observed"),
+        },
       });
       break;
     }

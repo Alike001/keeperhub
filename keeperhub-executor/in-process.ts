@@ -31,10 +31,34 @@ export async function executeInProcess(params: {
   db: PostgresJsDatabase<DbSchema>;
   /** Latency correlation (issue #2289): the id minted at SQS receive. */
   correlationId?: string;
+  /**
+   * Latency observation anchors (issue #2289): the executor's own stage
+   * stamps, so this process records one timeline rather than starting a
+   * second, unrelated one. Same shape the k8s-job branch passes.
+   */
+  latencyEpochs?: { receivedAt?: number; observedAt?: number };
 }): Promise<void> {
   const { workflowId, executionId, input, triggerType, scheduleId, db } =
     params;
+  const { receivedAt, observedAt } = params.latencyEpochs ?? {};
   const latency = new ExecutionLatency(params.correlationId);
+  // The timeline belongs to the executor's instance: it stamps `observed`
+  // when the event-tracker's message is received and `received` at SQS
+  // receive, both before this hand-off (index.ts:895-898), and it passes the
+  // epochs down because this process is the one that sees started/completed.
+  // Without them stageMs("received", "started") and
+  // stageMs("observed", "broadcast") are permanently undefined here, which
+  // left the in-process queue leg measured nowhere (index.ts skips the
+  // dispatch histogram for this target) and left the headline observed ->
+  // broadcast histogram with no in-process series at all. Unlike the k8s-job
+  // branch there is no cross-process hand-off to preserve, so the epochs are
+  // re-marked rather than re-derived. A caller that starts the run itself
+  // rather than receiving it has no earlier anchor, so the hand-off is the
+  // receive stamp in that case.
+  if (observedAt !== undefined) {
+    latency.mark("observed", observedAt);
+  }
+  latency.mark("received", receivedAt ?? Date.now());
   const startTime = Date.now();
 
   console.log(
@@ -112,7 +136,6 @@ export async function executeInProcess(params: {
       workflowId,
       executionId,
       triggerType,
-      totalMs: duration,
     });
     console.log(
       `[Executor:InProcess] Completed in ${duration}ms correlationId=${latency.correlationId}`
@@ -193,9 +216,8 @@ function recordInProcessLatency(params: {
   workflowId: string;
   executionId: string;
   triggerType: ApiExecuteTriggerType;
-  totalMs: number;
 }): void {
-  const { latency, workflowId, executionId, triggerType, totalMs } = params;
+  const { latency, workflowId, executionId, triggerType } = params;
   // The write path marked its broadcast into the per-execution sidecar; take
   // it (read-and-discard for exactly this execution id) now that the run has
   // returned and the marker can only belong to this execution.
@@ -215,11 +237,25 @@ function recordInProcessLatency(params: {
       }
     );
   }
-  getMetricsCollector().recordLatency(MetricNames.EXECUTOR_EXECUTION_LATENCY, totalMs, {
-    [LabelKeys.TRIGGER_TYPE]: triggerType,
-    [LabelKeys.DISPATCH_TARGET]: "in-process",
-    [LabelKeys.STAGE]: "completed",
-  });
+  // receive -> terminal, the interval METRICS_REFERENCE.md documents for this
+  // metric, rather than this process's own lifetime: the executor's receive
+  // stamp is the anchor (threaded in as latencyEpochs), so the in-process
+  // series means the same thing as the k8s-job series that
+  // observation-applier.ts records from KH_RECEIVED_AT. Measuring from the
+  // hand-off instead would silently exclude the executor-side pre-dispatch
+  // work and put a second interval in the same histogram.
+  const totalMs = latency.totalMs();
+  if (totalMs !== undefined) {
+    getMetricsCollector().recordLatency(
+      MetricNames.EXECUTOR_EXECUTION_LATENCY,
+      totalMs,
+      {
+        [LabelKeys.TRIGGER_TYPE]: triggerType,
+        [LabelKeys.DISPATCH_TARGET]: "in-process",
+        [LabelKeys.STAGE]: "completed",
+      }
+    );
+  }
   const obsToBroadcast = latency.stageMs("observed", "broadcast");
   if (obsToBroadcast !== undefined) {
     getMetricsCollector().recordLatency(

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, type Mock, vi } from "vitest";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -112,6 +112,64 @@ describe("executeInProcess broadcast marker cleanup (issue #2289 blocking item)"
       "error",
       expect.objectContaining({ error: "boom after broadcast" })
     );
+  });
+
+  it("threads the executor's epochs into the in-process timeline", async () => {
+    // The executor stamps observed/received on its own instance before the
+    // hand-off. Passing only the correlation id left stageMs("received",
+    // "started") and stageMs("observed", "broadcast") permanently undefined
+    // here, so the in-process queue leg was measured nowhere (index.ts skips
+    // the dispatch histogram for this target) and the headline observed ->
+    // broadcast histogram had no in-process series at all.
+    const { executeWorkflow } = await import(
+      "../lib/workflow/executor/executor.workflow"
+    );
+    vi.mocked(executeWorkflow).mockImplementationOnce(async () => {
+      const { markBroadcast } = await import("./lib/broadcast-marker");
+      markBroadcast("exec-timeline");
+      return { success: true, results: {}, outputs: {} };
+    });
+
+    await executeInProcess({
+      workflowId: "wf-1",
+      executionId: "exec-timeline",
+      input: {},
+      triggerType: "event",
+      db: {} as never,
+      correlationId: "corr-timeline",
+      latencyEpochs: { receivedAt: 1_000, observedAt: 900 },
+    });
+
+    const { logInfo } = await import("../lib/logging");
+    const line = vi
+      .mocked(logInfo)
+      .mock.calls.find(([message]) => message === "execution latency stages");
+    expect(line).toBeDefined();
+    const labels = line?.[1] as Record<string, string>;
+    expect(labels.correlation_id).toBe("corr-timeline");
+    // Both executor epochs survive into the emitted timeline: the sample line
+    // documented in the PR description is now producible on this path.
+    expect(labels.observedAt).toBe(new Date(900).toISOString());
+    expect(labels.receivedAt).toBe(new Date(1_000).toISOString());
+    // The queue leg and the headline interval both exist now.
+    expect(Number(labels.queueToStartMs)).toBeGreaterThanOrEqual(0);
+    expect(Number(labels.observed_to_broadcast_ms)).toBeGreaterThanOrEqual(0);
+    // receive -> terminal, anchored to the executor's receive stamp (epoch
+    // 1_000) rather than to this process's own start a few ms ago.
+    expect(Number(labels.totalMs)).toBeGreaterThan(1_000_000);
+
+    // All three in-process series are recorded: dispatch (received ->
+    // started), execution (received -> terminal) and the headline broadcast.
+    const { getMetricsCollector } = await import("../lib/metrics");
+    const recorded = vi
+      .mocked(getMetricsCollector)
+      .mock.results.flatMap((result) =>
+        (result.value as { recordLatency: Mock }).recordLatency.mock.calls.map(
+          (call) => call[1] as number
+        )
+      );
+    expect(recorded).toHaveLength(3);
+    expect(recorded.some((ms) => ms > 1_000_000)).toBe(true);
   });
 
   it("a failing run with no broadcast marker cleans up nothing and still reports the error", async () => {

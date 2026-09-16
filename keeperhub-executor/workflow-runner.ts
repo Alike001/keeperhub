@@ -47,7 +47,6 @@ import {
 import {
   enableBroadcastMarkers,
   peekBroadcastMarker,
-  takeBroadcastMarker,
 } from "./lib/broadcast-marker";
 import { collectLatencyObservations } from "./lib/latency-observations";
 import { shipMetricsToExecutor } from "./lib/ship-metrics";
