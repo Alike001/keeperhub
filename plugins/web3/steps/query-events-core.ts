@@ -45,10 +45,18 @@ export function isNearHeadBatch(
   return toBlockIsLatest && toBlock - batchEnd < TIP_SAFETY_MARGIN_BLOCKS;
 }
 
+// The topic array an argument filter compiles to, or null for "every
+// occurrence of this event" -- see event-arg-filter-core.ts.
+export type EventTopicFilter = (string | null)[] | null;
+
 function resolveEventFilter(
   contract: ethers.Contract,
-  eventName: string
-): ethers.DeferredTopicFilter {
+  eventName: string,
+  topics: EventTopicFilter
+): ethers.DeferredTopicFilter | (string | null)[] {
+  if (topics) {
+    return topics;
+  }
   const eventFilter = contract.filters[eventName]?.();
   if (eventFilter === undefined || eventFilter === null) {
     throw new Error(`Could not create filter for event '${eventName}'`);
@@ -62,10 +70,11 @@ async function fetchFixedBatch(
   parsedAbi: AbiEntry[],
   eventName: string,
   start: number,
-  end: number
+  end: number,
+  topics: EventTopicFilter
 ): Promise<BatchQueryResult> {
   const contract = new ethers.Contract(contractAddress, parsedAbi, provider);
-  const eventFilter = resolveEventFilter(contract, eventName);
+  const eventFilter = resolveEventFilter(contract, eventName, topics);
   const events = await contract.queryFilter(eventFilter, start, end);
   return { events, actualEnd: end };
 }
@@ -88,16 +97,53 @@ async function fetchFixedBatch(
 // scanned and, if a caller checkpoints off `toBlock`, risking a skipped
 // range on the next run. The highest event block actually returned is the
 // only value this exact call can vouch for.
+// When the tip batch comes back empty there is no event block to derive
+// `actualEnd` from, and `start - 1` (scanned nothing) is the only value the
+// query itself can vouch for. That was a rare case while every query carried
+// the bare event signature and a busy contract almost always returned
+// something. An argument filter inverts it: matching nothing in the last
+// few hundred blocks is the normal outcome, so the step would routinely
+// report a `toBlock` below its own `fromBlock` while reporting success.
+//
+// So an empty tip batch falls back to the head, minus the same
+// TIP_SAFETY_MARGIN_BLOCKS that decides which batch is a tip batch: the
+// margin is this file's existing statement of how far two replicas behind
+// one endpoint may diverge near the head. The head read is a second call
+// that may land on a different replica, so subtracting the margin keeps the
+// reported range at or behind what the query covered -- understating it by
+// a few blocks, which a checkpointing caller re-scans harmlessly, rather
+// than overstating it and skipping a range for good.
+//
+// It stays a floor, never a claim: if the head read fails, or lands at or
+// below `start`, the conservative `start - 1` is reported unchanged.
+async function resolveEmptyTipEnd(
+  provider: ethers.JsonRpcProvider,
+  start: number
+): Promise<number> {
+  try {
+    const head = await provider.getBlockNumber();
+    const vouched = head - TIP_SAFETY_MARGIN_BLOCKS;
+    return vouched >= start ? vouched : start - 1;
+  } catch {
+    return start - 1;
+  }
+}
+
 async function fetchTipBatch(
   provider: ethers.JsonRpcProvider,
   contractAddress: string,
   parsedAbi: AbiEntry[],
   eventName: string,
-  start: number
+  start: number,
+  topics: EventTopicFilter
 ): Promise<BatchQueryResult> {
   const contract = new ethers.Contract(contractAddress, parsedAbi, provider);
-  const eventFilter = resolveEventFilter(contract, eventName);
+  const eventFilter = resolveEventFilter(contract, eventName, topics);
   const events = await contract.queryFilter(eventFilter, start, "latest");
+
+  if (events.length === 0) {
+    return { events, actualEnd: await resolveEmptyTipEnd(provider, start) };
+  }
 
   const actualEnd = events.reduce(
     (max, event) => Math.max(max, event.blockNumber),
@@ -124,7 +170,8 @@ export async function queryBatchWithRetry(
   eventName: string,
   start: number,
   end: number,
-  isTipBatch: boolean
+  isTipBatch: boolean,
+  topics: EventTopicFilter = null
 ): Promise<BatchQueryResult> {
   let lastError: unknown;
 
@@ -132,14 +179,22 @@ export async function queryBatchWithRetry(
     try {
       return await rpcManager.executeWithFailover((provider) =>
         isTipBatch
-          ? fetchTipBatch(provider, contractAddress, parsedAbi, eventName, start)
+          ? fetchTipBatch(
+              provider,
+              contractAddress,
+              parsedAbi,
+              eventName,
+              start,
+              topics
+            )
           : fetchFixedBatch(
               provider,
               contractAddress,
               parsedAbi,
               eventName,
               start,
-              end
+              end,
+              topics
             )
       );
     } catch (error) {

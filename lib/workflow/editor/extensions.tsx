@@ -12,6 +12,7 @@ import { KeeperHubLogo } from "@/components/icons/keeperhub-logo";
 import { SendGridConnectionSection } from "@/components/settings/sendgrid-connection-section";
 import { Web3WalletSection } from "@/components/settings/web3-wallet-section";
 import { Label } from "@/components/ui/label";
+import { AbiEventArgsField } from "@/components/workflow/config/abi-event-args-field";
 import { AbiEventSelectField } from "@/components/workflow/config/abi-event-select-field";
 import { AbiWithAutoFetchField } from "@/components/workflow/config/abi-with-auto-fetch-field";
 import { ArgsListField } from "@/components/workflow/config/args-list-field";
@@ -149,6 +150,37 @@ registerFieldRenderer(
         <AbiEventSelectField
           abiValue={abiValue}
           disabled={disabled}
+          field={field}
+          onChange={(val: unknown) => onUpdateConfig(field.key, val)}
+          value={value}
+        />
+      </div>
+    );
+  }
+);
+
+/**
+ * ABI Event Args Field
+ * One input per indexed parameter of the selected event, with the ones no
+ * topic can match on disabled rather than offered and left to fail at the RPC.
+ */
+registerFieldRenderer(
+  "abi-event-args",
+  ({ field, config, onUpdateConfig, disabled }) => {
+    const abiValue =
+      (config[field.abiField || "abi"] as string | undefined) || "";
+    const eventValue =
+      (config[field.abiEventField || "eventName"] as string | undefined) || "";
+    const value =
+      (config[field.key] as string | undefined) || field.defaultValue || "";
+
+    return (
+      <div className="space-y-2" key={field.key}>
+        <ProtocolFieldLabel field={field} />
+        <AbiEventArgsField
+          abiValue={abiValue}
+          disabled={disabled}
+          eventValue={eventValue}
           field={field}
           onChange={(val: unknown) => onUpdateConfig(field.key, val)}
           value={value}
