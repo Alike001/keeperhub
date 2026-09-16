@@ -625,16 +625,6 @@ const DEFAULT_CHAINS: NewChain[] = [
     defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "solana-testnet" }),
   },
   // Arc Mainnet (Circle) - USDC is the native gas token, not ETH.
-  //
-  // No EXPLORER_CONFIG_TEMPLATES entry and no chainToDefaultIdMap line,
-  // deliberately: Arc mainnet has no reachable block explorer. arcscan.app
-  // does not resolve, arc-scan.org serves a Next.js app rather than a
-  // Blockscout API and returns 403 on /tx and /address to a non-browser
-  // client, and explorer.arc.io is behind Circle's Cloudflare Access. There is
-  // nothing for explorerUrl or explorerApiUrl to point at, so the chain is
-  // seeded without an explorer_configs row - the EXPLORER_CONFIGS map below
-  // warns and skips rather than throwing. Add both entries the day Circle
-  // ships a public explorer.
   {
     chainId: getChainConfigValue("arc-mainnet", "chainId", 5042),
     name: "Arc",
@@ -749,6 +739,22 @@ const EXPLORER_CONFIG_TEMPLATES: Record<
     explorerUrl: "https://explore.mainnet.tempo.xyz",
     explorerApiType: "blockscout",
     explorerApiUrl: "https://explore.mainnet.tempo.xyz/api",
+    explorerTxPath: "/tx/{hash}",
+    explorerAddressPath: "/address/{address}",
+    explorerContractPath: "/address/{address}?tab=contract",
+  },
+  // Arc Mainnet - Blockscout frontend went live 2026-09-16, but its
+  // /api/v2/* is still behind a Cloudflare challenge (verified live), unlike
+  // testnet's API which resolves cleanly. explorerApiType/explorerApiUrl are
+  // deliberately omitted: fetchContractAbi and fetchContractTransactions both
+  // guard on `explorerApiUrl && explorerApiType` and degrade to
+  // "Explorer API not configured for this chain" rather than throwing, so
+  // ABI auto-fetch correctly stays off while transactionLink/addressLink
+  // (which only need explorerUrl) start working. Add the API fields once
+  // explorer.arc.io/api stops being challenge-gated.
+  5042: {
+    chainType: "evm",
+    explorerUrl: "https://explorer.arc.io",
     explorerTxPath: "/tx/{hash}",
     explorerAddressPath: "/address/{address}",
     explorerContractPath: "/address/{address}?tab=contract",
@@ -1063,6 +1069,7 @@ async function seedChains() {
     Solana: 101,
     "Solana Devnet": 103,
     "Arc Testnet": 5_042_002,
+    Arc: 5042,
   };
 
   const EXPLORER_CONFIGS: NewExplorerConfig[] = DEFAULT_CHAINS.map((chain) => {
