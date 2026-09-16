@@ -37,6 +37,7 @@ import { SHUTDOWN_TIMEOUT_MS } from "../lib/workflow/executor/runner-constants";
 import type { WorkflowEdge, WorkflowNode } from "../lib/workflow/store";
 import { loadWorkflowForExecution } from "../lib/workflow/load-for-execution";
 import type { ApiExecuteTriggerType } from "./api-execute";
+import { isRepresentableEpochMs } from "./latency";
 import {
   applyExecutionResult,
   initializeExecutionProgress,
@@ -315,10 +316,14 @@ async function main(): Promise<void> {
     // cannot write the executor's histograms directly; point samples can).
     const marker = peekBroadcastMarker(executionId);
     if (marker) {
+      // Same guard as the executor side: this stamp is rendered as an ISO
+      // string, and a value outside the representable Date window would throw
+      // here - outside any try - and fail a run that already succeeded.
+      const broadcastAt = isRepresentableEpochMs(marker.broadcastAt)
+        ? new Date(marker.broadcastAt).toISOString()
+        : "unrepresentable";
       console.log(
-        `[Runner] Broadcast stage: executionId=${executionId}${correlationSuffix} broadcastAt=${new Date(
-          marker.broadcastAt
-        ).toISOString()}`
+        `[Runner] Broadcast stage: executionId=${executionId}${correlationSuffix} broadcastAt=${broadcastAt}`
       );
     }
     const receivedAt = process.env.KH_RECEIVED_AT

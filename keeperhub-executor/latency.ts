@@ -60,16 +60,83 @@ export function generateCorrelationId(): string {
   return randomBytes(8).toString("hex");
 }
 
+/**
+ * The largest epoch-ms stamp the platform can render as a Date. `new Date(ms)`
+ * is valid for |ms| <= 8.64e15 and `toISOString()` throws RangeError outside
+ * that window - a producer emitting microseconds (1e16) is a plain finite JSON
+ * number that lands there. One definition shared by the message schema (the
+ * producer contract) and the consumers (the guard that stops a bad stamp from
+ * failing a run): observability must not be able to fail a transaction.
+ */
+export const MAX_DATE_EPOCH_MS = 8_640_000_000_000_000;
+
+export function isRepresentableEpochMs(value: number): boolean {
+  return (
+    Number.isFinite(value) &&
+    Number.isInteger(value) &&
+    Math.abs(value) <= MAX_DATE_EPOCH_MS
+  );
+}
+
+/** ISO-8601 for a stamp, or undefined when it is outside that window. */
+function toIsoString(at: number): string | undefined {
+  return isRepresentableEpochMs(at) ? new Date(at).toISOString() : undefined;
+}
+
+/**
+ * A correlation id that is safe everywhere it travels: the "correlation-id"
+ * label on the runner's Job (a Kubernetes label value caps at 63 characters,
+ * must start and end alphanumeric, and admits only [A-Za-z0-9_.-] in between),
+ * the KH_CORRELATION_ID env var and the structured log line.
+ * generateCorrelationId() mints 16 hex chars, well inside this; the allowlist
+ * exists for ids reused from the trigger message, which a producer supplies.
+ * Defined once so the label, the env var and the logs stay in step.
+ */
+export const SAFE_CORRELATION_ID =
+  /^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?$/;
+
+export function isSafeCorrelationId(value: string): boolean {
+  return SAFE_CORRELATION_ID.test(value);
+}
+
 export class ExecutionLatency {
   readonly correlationId: string;
   private readonly marks = new Map<LatencyStage, number>();
 
-  constructor(correlationId: string = generateCorrelationId()) {
-    this.correlationId = correlationId;
+  /**
+   * An id that cannot be used where it is carried - absent, or not a valid
+   * Kubernetes label value - is discarded in favour of a locally minted one,
+   * exactly as if the message had not carried one. The id is pure
+   * observability metadata and it is written straight into the runner Job's
+   * metadata labels (k8s-job.ts), where an over-long or slash-bearing value
+   * fails Job creation, turning a bad correlation id into a workflow that
+   * never runs. Falling back keeps the run, keeps the label valid and keeps
+   * the logs joinable on a local id.
+   */
+  constructor(correlationId?: string) {
+    this.correlationId =
+      correlationId !== undefined && isSafeCorrelationId(correlationId)
+        ? correlationId
+        : generateCorrelationId();
   }
 
-  /** Record a stage at the given epoch ms. First mark wins; later calls no-op. */
+  /**
+   * Record a stage at the given epoch ms. First mark wins; later calls no-op.
+   *
+   * A stamp the platform cannot represent as a Date is dropped rather than
+   * stored. Stage timestamps are rendered with `new Date(at).toISOString()` in
+   * toLogFields, which throws RangeError outside the representable window (a
+   * producer emitting microseconds, 1e16, lands there). On the in-process path
+   * that throw lands in executeInProcess's catch and writes status "error" for
+   * a run that succeeded; on the k8s-job path it lands after the Job is already
+   * created. An unusable stamp costs the observation, never the transaction,
+   * and a run with no observed stamp simply records no observed->broadcast
+   * interval instead of a fabricated zero.
+   */
   mark(stage: LatencyStage, at: number = Date.now()): void {
+    if (!isRepresentableEpochMs(at)) {
+      return;
+    }
     if (!this.marks.has(stage)) {
       this.marks.set(stage, at);
     }
@@ -110,7 +177,10 @@ export class ExecutionLatency {
     for (const stage of STAGE_ORDER) {
       const at = this.marks.get(stage);
       if (at !== undefined) {
-        fields[`${stage}At`] = new Date(at).toISOString();
+        const iso = toIsoString(at);
+        if (iso !== undefined) {
+          fields[`${stage}At`] = iso;
+        }
       }
     }
     const queueToStart = this.stageMs("received", "started");

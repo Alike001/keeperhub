@@ -231,6 +231,77 @@ describe("latency metric constants", () => {
   });
 });
 
+// The invariant this PR states for itself: observability must not be able to
+// fail a transaction. `new Date(1e16).toISOString()` throws RangeError, and
+// 1e16 is a plain finite JSON number every layer upstream accepts - so a
+// producer emitting microseconds reached the throw. On the in-process path it
+// landed in executeInProcess's catch and wrote status "error" for a run that
+// succeeded. These pin the guard that makes that impossible.
+describe("latency observation guards", () => {
+  const UNREPRESENTABLE = 1e16;
+  const MAX_DATE_EPOCH_MS = 8_640_000_000_000_000;
+
+  it("drops a stamp the Date constructor cannot represent", () => {
+    const latency = new ExecutionLatency("corr-guard");
+    expect(() => latency.mark("observed", UNREPRESENTABLE)).not.toThrow();
+    expect(latency.has("observed")).toBe(false);
+    expect(latency.at("observed")).toBeUndefined();
+  });
+
+  it("keeps a stamp at the edge of the representable window", () => {
+    const latency = new ExecutionLatency("corr-guard");
+    latency.mark("observed", MAX_DATE_EPOCH_MS);
+    expect(latency.toLogFields().observedAt).toBe(
+      new Date(MAX_DATE_EPOCH_MS).toISOString()
+    );
+  });
+
+  it("records no observed -> broadcast leg for a dropped stamp", () => {
+    const latency = new ExecutionLatency("corr-guard");
+    latency.mark("observed", UNREPRESENTABLE);
+    latency.mark("broadcast", 5_000);
+    // Absent, not fabricated: a stripped stamp must not surface as a 0ms leg.
+    expect(latency.broadcastMs()).toBeUndefined();
+  });
+
+  it("emits the log line without throwing on a dropped stamp", () => {
+    const latency = new ExecutionLatency("corr-guard");
+    latency.mark("observed", UNREPRESENTABLE);
+    latency.mark("received", 100);
+    latency.mark("completed", 200);
+
+    expect(() =>
+      latency.emitLog({
+        workflowId: "wf-1",
+        executionId: "exec-1",
+        triggerType: "event",
+        dispatchTarget: "k8s-job",
+      })
+    ).not.toThrow();
+
+    const [, labels] = logInfoMock.mock.calls[0];
+    expect(labels).toMatchObject({ correlation_id: "corr-guard" });
+    expect(labels?.observedAt).toBeUndefined();
+    expect(labels?.observed_to_broadcast_ms).toBeUndefined();
+  });
+
+  it("replaces a correlation id that cannot be a Kubernetes label value", () => {
+    // A 64-char value, a slash, a leading dash and an empty string all fail
+    // Job creation (k8s-job.ts writes the id into the Job's labels).
+    for (const unsafe of ["a".repeat(64), "bad/id", "-leading", ""]) {
+      expect(new ExecutionLatency(unsafe).correlationId).toMatch(
+        /^[0-9a-f]{16}$/
+      );
+    }
+  });
+
+  it("keeps a correlation id that is safe as a label value", () => {
+    expect(new ExecutionLatency("abcd1234efgh5678").correlationId).toBe(
+      "abcd1234efgh5678"
+    );
+  });
+});
+
 describe("event message schema with latency correlation", () => {
   it("accepts an event message carrying correlationId + observedAt", () => {
     const parsed = executorMessageSchema.safeParse({
@@ -252,6 +323,43 @@ describe("event message schema with latency correlation", () => {
       triggerData: { eventName: "Transfer" },
     });
     expect(parsed.success).toBe(true);
+  });
+
+  it("rejects a microsecond-scale observedAt (guards the producer contract)", () => {
+    // 1e16 is a plain finite JSON number: nothing upstream rejects it, and
+    // `new Date(1e16).toISOString()` throws RangeError downstream.
+    const parsed = executorMessageSchema.safeParse({
+      triggerType: "event",
+      workflowId: "wf-1",
+      userId: "u-1",
+      triggerData: {},
+      observedAt: 1e16,
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("rejects a fractional observedAt", () => {
+    const parsed = executorMessageSchema.safeParse({
+      triggerType: "event",
+      workflowId: "wf-1",
+      userId: "u-1",
+      triggerData: {},
+      observedAt: 1_000.5,
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("rejects a correlationId that cannot be a Kubernetes label value", () => {
+    for (const correlationId of ["a".repeat(64), "bad/id"]) {
+      const parsed = executorMessageSchema.safeParse({
+        triggerType: "event",
+        workflowId: "wf-1",
+        userId: "u-1",
+        triggerData: {},
+        correlationId,
+      });
+      expect(parsed.success).toBe(false);
+    }
   });
 
   it("rejects a malformed observedAt (guards the producer contract)", () => {
