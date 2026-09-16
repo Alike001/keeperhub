@@ -13,8 +13,9 @@ KeeperHub supports multiple notification channels. Configure connections to enab
 2. Under Organization, select **Connections**
 3. View existing connections or add new ones
 
-A connection is private to whoever created it unless its visibility is widened
-to specific members or to the whole organization.
+A connection created inside an organization is shared with that organization;
+a personal one, created without an organization, stays private to its creator.
+Either way it is never visible to another organization.
 
 Connections stay owned by their creator. Deactivating that person's account
 freezes the connections they added, for the whole organization; recreate them

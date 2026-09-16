@@ -380,7 +380,7 @@ function restFailure(
   }
   if (status === 403) {
     return {
-      message: `PagerDuty refused the request (403). The credentials are valid but lack the access this call needs (${requiredScope}). A read-only API key has every read; a scoped OAuth app has to be granted it, and a write needs a key that is not read-only.`,
+      message: `PagerDuty refused the request (403). The credentials are valid but lack the access this call needs (${requiredScope}). A read-only API key covers every read; a write needs one that is not read-only, so a node that creates incidents needs its own connection holding a full-access key.`,
       status,
       retryable: false,
     };
@@ -1022,10 +1022,20 @@ export async function createIncident(
       if (response.status === 401) {
         invalidateOAuthToken(credentials);
       }
-      const detail = parsed.error?.errors?.length
-        ? `${parsed.error.message ?? "PagerDuty rejected the incident"}: ${parsed.error.errors.join("; ")}`
-        : (parsed.error?.message ??
-          restFailure(response.status, "incidents.write").message);
+      // PagerDuty answers a 403 here with "Access Denied", which does not
+      // tell anyone that the connection is holding the read-only key the
+      // setup instructions told them to make. For the credential statuses the
+      // explanation leads and PagerDuty's own words follow it.
+      const said = parsed.error?.errors?.length
+        ? `${parsed.error.message ?? "rejected"}: ${parsed.error.errors.join("; ")}`
+        : parsed.error?.message;
+      const credentialProblem =
+        response.status === 401 ||
+        response.status === 402 ||
+        response.status === 403;
+      const detail = credentialProblem
+        ? `${restFailure(response.status, "incidents.write").message}${said ? ` (PagerDuty said: "${said}")` : ""}`
+        : (said ?? restFailure(response.status, "incidents.write").message);
       return {
         ok: false,
         failure: {

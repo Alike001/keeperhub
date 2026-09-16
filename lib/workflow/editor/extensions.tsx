@@ -598,7 +598,7 @@ registerFieldRenderer(
   "fail-on-error-switch",
   ({ field, config, onUpdateConfig, disabled }) => (
     <FailOnErrorSwitchField
-      description={field.helpTip}
+      description={field.helpTip ?? field.helpText}
       disabled={disabled}
       id={field.key}
       key={field.key}
@@ -778,6 +778,8 @@ registerFieldRenderer(
         {field.label}
       </Label>
       <PagerDutyTriggerNodeFieldConnected
+        currentDedupKey={configString(config.dedupKey)}
+        currentServiceId={configString(config.pagerdutyServiceId)}
         disabled={disabled}
         onChange={(value) => onUpdateConfig(field.key, value)}
         value={configString(config[field.key])}
@@ -799,10 +801,14 @@ registerFieldRenderer(
 function PagerDutyTriggerNodeFieldConnected({
   value,
   disabled,
+  currentServiceId,
+  currentDedupKey,
   onChange,
 }: {
   value: string;
   disabled?: boolean;
+  currentServiceId?: string;
+  currentDedupKey?: string;
   onChange: (value: string) => void;
 }) {
   const nodes = useAtomValue(nodesAtom);
@@ -813,10 +819,16 @@ function PagerDutyTriggerNodeFieldConnected({
     .map((node) => ({
       id: node.id,
       label: node.data?.label || "Trigger Incident",
+      // Carried so the picker can catch a service or dedup key that will not
+      // match what that trigger opened.
+      serviceId: configString(node.data?.config?.pagerdutyServiceId),
+      dedupKey: configString(node.data?.config?.dedupKey),
     }));
 
   return (
     <PagerDutyTriggerNodeField
+      currentDedupKey={currentDedupKey}
+      currentServiceId={currentServiceId}
       disabled={disabled}
       nodes={triggerNodes}
       onChange={onChange}

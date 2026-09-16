@@ -55,6 +55,8 @@ export type TriggerIncidentCoreInput = {
   group?: string;
   class?: string;
   customDetails?: string | Record<string, unknown>;
+  /** One per line: "text | url", or a bare url. */
+  links?: string;
   /** Runs in a row that must reach this node before it pages. 1 pages immediately. */
   consecutiveRuns?: number | string;
   retryAttempts?: number | string;
@@ -65,6 +67,8 @@ export type TriggerIncidentCoreInput = {
   backupIntegrationId?: string;
   /** Slack channel or Telegram chat id, when the backup connection needs one. */
   backupDestination?: string;
+  /** "true" to treat a maintenance window as an undelivered page. */
+  treatMaintenanceAsUndelivered?: boolean | string;
 };
 
 export type TriggerIncidentInput = StepInput &
@@ -82,6 +86,8 @@ type TriggerIncidentResult =
       consecutiveRuns: number;
       requiredRuns: number;
       detailsTruncated?: boolean;
+      /** True when the summary template rendered empty and a fallback title was sent. */
+      summaryFellBack?: boolean;
       /** PagerDuty's service status at send time. */
       serviceStatus?: string;
       /** True when the service was in maintenance, so no incident was raised. */
@@ -133,6 +139,33 @@ function buildCustomDetails(
   base.keeperhub_execution_id = context.executionId ?? "unknown";
   base.keeperhub_node = context.nodeName ?? "PagerDuty";
   return base;
+}
+
+const LINK_SEPARATOR = /\s*\|\s*/;
+
+/**
+ * Parse the links field. A responder's first move is usually to open the
+ * transaction or the dashboard, so a malformed line is skipped rather than
+ * failing the page.
+ */
+function parseLinks(raw: string | undefined): { href: string; text: string }[] {
+  if (!raw?.trim()) {
+    return [];
+  }
+  const links: { href: string; text: string }[] = [];
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const [first, second] = trimmed.split(LINK_SEPARATOR);
+    const href = (second ?? first).trim();
+    if (!href.startsWith("https://")) {
+      continue;
+    }
+    links.push({ href, text: (second ? first : href).trim() });
+  }
+  return links;
 }
 
 function toFailureResult(
@@ -246,14 +279,22 @@ async function stepHandler(
     };
   }
 
-  const summary = input.summary?.trim();
-  if (!summary) {
-    return {
-      success: false,
-      error:
-        "Summary is empty, and PagerDuty requires one. It becomes the alert title - check the template it is built from.",
-      errorClass: ExecutionErrorType.USER,
-    };
+  // An empty summary is a broken template, not a reason to stay silent. The
+  // alert goes out with a title that says what happened and carries the
+  // template that produced nothing, because a page with a poor title beats no
+  // page at all - the same fail-open reasoning the consecutive-runs guard uses.
+  const configuredSummary = input.summary?.trim();
+  const summaryFellBack = !configuredSummary;
+  const summary =
+    configuredSummary ||
+    `${context.nodeName || "PagerDuty"}: alert fired, and its summary template rendered empty`;
+  if (summaryFellBack) {
+    logUserError(
+      ErrorCategory.VALIDATION,
+      "[PagerDuty] Summary template rendered empty, paging with a fallback title",
+      input.summary,
+      LOG_LABELS
+    );
   }
 
   const consecutiveRuns = await countConsecutiveRuns(
@@ -356,11 +397,17 @@ async function stepHandler(
       component: input.component,
       group: input.group,
       class: input.class,
-      customDetails: buildCustomDetails(input.customDetails, {
-        workflowId: context.workflowId,
-        executionId: context.executionId,
-        nodeName: context.nodeName,
-      }),
+      customDetails: {
+        ...buildCustomDetails(input.customDetails, {
+          workflowId: context.workflowId,
+          executionId: context.executionId,
+          nodeName: context.nodeName,
+        }),
+        ...(summaryFellBack
+          ? { keeperhub_summary_template: input.summary ?? "" }
+          : {}),
+      },
+      links: parseLinks(input.links),
       client: CLIENT_NAME,
       clientUrl: workflowUrl,
     },
@@ -393,6 +440,35 @@ async function stepHandler(
   }
 
   const suppressed = serviceSwallowsEvents(routingKey.value.serviceStatus);
+
+  // A maintenance window is usually deliberate, so it is reported rather than
+  // failed - but a window somebody forgot to end is indistinguishable from one
+  // in progress, and it swallows every page. The node can be told to treat it
+  // as undelivered, which fires the backup like any other lost page.
+  const treatMaintenanceAsFailure =
+    input.treatMaintenanceAsUndelivered === true ||
+    input.treatMaintenanceAsUndelivered === "true";
+  if (suppressed && treatMaintenanceAsFailure) {
+    const swallowed: PagerDutyFailure = {
+      message: `PagerDuty accepted the event, but service ${serviceId} is in ${routingKey.value.serviceStatus} and raises no incident from it, so nobody was paged.`,
+      retryable: false,
+    };
+    return toFailureResult(
+      swallowed,
+      failOnError,
+      dedupKey,
+      consecutiveRuns,
+      requiredRuns,
+      await notifyBackup({
+        input,
+        failure: swallowed,
+        summary,
+        serviceId,
+        workflowUrl,
+      })
+    );
+  }
+
   return {
     success: true,
     delivered: true,
@@ -401,6 +477,7 @@ async function stepHandler(
     consecutiveRuns,
     requiredRuns,
     detailsTruncated: detailsDropped,
+    summaryFellBack,
     serviceStatus: routingKey.value.serviceStatus,
     suppressedByService: suppressed,
     message: suppressed

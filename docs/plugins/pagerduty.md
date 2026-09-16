@@ -61,13 +61,15 @@ Open an alert, or update the one already open for the same dedup key.
 
 **Inputs:** PagerDuty service (picked from your account), Summary (becomes the alert title), Severity (`critical`, `error`, `warning`, `info`), Source, Dedup key, and optional Component, Group, Class and Custom details. Supports `{{NodeName.field}}` variables throughout.
 
-**Outputs:** `delivered`, `dedupKey`, `status` (`triggered` or `held`), `consecutiveRuns`, `requiredRuns`, `error`, and the backup fields below.
+**Outputs:** `delivered`, `dedupKey`, `status` (`triggered`, `held`, or `failed`), `consecutiveRuns`, `requiredRuns`, `error`, `summaryFellBack`, `serviceStatus`, and the backup fields below.
 
 **Deduplication.** Leave the dedup key blank and the node uses one key per node, so a check that keeps failing updates one alert instead of paging on every run. Put a vault address or chain id in the field to page per subject instead. Once an alert is resolved, the next trigger with the same key opens a new one.
 
 **Paging only after several failures.** Set **Consecutive runs before paging** to hold a flapping check. With 3, the first two runs that reach the node are held and the third pages. Any run that does not reach the node resets the count, so one healthy check clears it. Held runs are recorded in the output, not silently dropped.
 
-**Severity is not urgency.** Severity describes the condition. Who gets woken, and how fast, comes from the service's escalation policy and its incident urgency rule, which the node shows under the service picker.
+**Severity, urgency and priority are three different things.** Severity describes the condition. On a service using dynamic urgency, `critical` and `error` page at high urgency while `warning` and `info` do not; on other services the service's urgency rule decides. Priority (P1, P2) cannot be set on an event at all: PagerDuty assigns it from the service's Event Orchestration rules, or you set it directly with Create Incident.
+
+**An empty summary still pages.** If the summary template renders to nothing, the alert goes out with a title saying so and carries the template in its details, and the output sets `summaryFellBack`. A page with a poor title beats no page.
 
 **When to use:** A keeper has stopped submitting, a vault crossed a liquidation threshold, a bridge stalled, a balance ran dry.
 
@@ -85,7 +87,7 @@ Close, or acknowledge, the alert carrying a given dedup key.
 
 **Inputs:** PagerDuty service, Dedup key of the alert (required), and an optional check of the incident afterwards.
 
-**Outputs:** `delivered`, `dedupKey`, and, when the check is on, `incidentStatus`, `alreadyInTargetState` and `incidentUrl`.
+**Outputs:** `delivered`, `dedupKey`, and, when the check is on, `incidentStatus`, `incidentUrl` and `incidentPriority`. The status is the one observed after the event was sent; the Events API is asynchronous, so it can still show the previous state for a moment.
 
 Both actions need the dedup key of the alert they are closing. Pick the **Trigger Incident node** whose alert this closes and the same key is derived here; only set the dedup key field when that trigger uses a key of its own, in which case put the same value on both nodes.
 
@@ -98,7 +100,7 @@ PagerDuty answers `202 Accepted` to an acknowledge or a resolve whether or not i
 Schedule (every 5 min)
   -> Check keeper health
   -> Condition: healthy?
-       true  -> PagerDuty: Resolve Incident ({{Page on-call.dedupKey}})
+       true  -> PagerDuty: Resolve Incident (alert opened by: Page on-call)
        false -> PagerDuty: Trigger Incident
 ```
 

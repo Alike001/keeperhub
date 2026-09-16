@@ -153,13 +153,91 @@ describe("trigger incident", () => {
     expect(safeFetch).not.toHaveBeenCalled();
   });
 
-  it("refuses a summary that templated to nothing, rather than sending a blank alert", async () => {
+  /**
+   * A broken template is not a reason to stay silent. The page goes out with
+   * a title that says what happened, carrying the template that produced
+   * nothing so it can be fixed.
+   */
+  it("still pages when the summary template renders empty", async () => {
+    mockHappyPath();
     const result = await run({ summary: "   " });
-    expect(result).toMatchObject({ success: false });
-    if (!result.success) {
-      expect(result.error).toContain("Summary is empty");
-    }
-    expect(safeFetch).not.toHaveBeenCalled();
+
+    expect(result).toMatchObject({
+      success: true,
+      delivered: true,
+      summaryFellBack: true,
+    });
+    const body = JSON.parse(
+      String(
+        (safeFetch.mock.calls[2] as [string, Record<string, unknown>])[1].body
+      )
+    );
+    expect(body.payload.summary).toContain("summary template rendered empty");
+    expect(body.payload.summary).toContain("Page on-call");
+    expect(body.payload.custom_details.keeperhub_summary_template).toBe("   ");
+  });
+
+  it("does not claim a fallback when the summary is fine", async () => {
+    mockHappyPath();
+    const result = await run();
+    expect(result).toMatchObject({ summaryFellBack: false });
+  });
+
+  it("puts the links a responder needs on the alert", async () => {
+    mockHappyPath();
+    await run({
+      links:
+        "Etherscan | https://etherscan.io/tx/0xabc\nhttps://grafana.example.com/d/keepers\nnot a url\n",
+    });
+
+    const body = JSON.parse(
+      String(
+        (safeFetch.mock.calls[2] as [string, Record<string, unknown>])[1].body
+      )
+    );
+    expect(body.links).toEqual([
+      { href: "https://etherscan.io/tx/0xabc", text: "Etherscan" },
+      {
+        href: "https://grafana.example.com/d/keepers",
+        text: "https://grafana.example.com/d/keepers",
+      },
+    ]);
+  });
+
+  it("fires the backup for a maintenance window when told to", async () => {
+    safeFetch
+      .mockResolvedValueOnce(
+        response(200, {
+          service: {
+            id: "PSKY1",
+            status: "maintenance",
+            integrations: [
+              { id: "PI1", type: "events_api_v2_inbound_integration" },
+            ],
+          },
+        })
+      )
+      .mockResolvedValueOnce(
+        response(200, { integration: { integration_key: "R1" } })
+      )
+      .mockResolvedValueOnce(response(202, {}))
+      .mockResolvedValueOnce(response(204, {}));
+    mockFetchCredentials
+      .mockResolvedValueOnce({ PAGERDUTY_API_TOKEN: "t" })
+      .mockResolvedValueOnce({
+        webhookUrl: "https://discord.com/api/webhooks/1/abc",
+      });
+
+    const result = await run({
+      failOnError: false,
+      treatMaintenanceAsUndelivered: true,
+      backupIntegrationId: "int-discord",
+    });
+
+    expect(result).toMatchObject({
+      delivered: false,
+      backupDelivered: true,
+    });
   });
 
   it("holds the page until the configured run streak is reached", async () => {

@@ -18,7 +18,7 @@ const serviceField: ActionConfigFieldBase = {
   type: "pagerduty-service-select",
   required: true,
   helpText:
-    "Read from the account behind the selected connection. The workflow stores the service id, never its routing key, so a service renamed in PagerDuty needs no change here. An acknowledge or a resolve must name the same service as the trigger it is closing: PagerDuty drops an update that arrives through a different service's routing key.",
+    "Read from the selected connection's account. The node stores the service id, so renaming the service in PagerDuty changes nothing here.",
 };
 
 const retryFields: ActionConfigFieldBase[] = [
@@ -69,10 +69,10 @@ const dedupKeyField: ActionConfigFieldBase = {
  */
 const triggerNodeField: ActionConfigFieldBase = {
   key: "dedupKeyFromNodeId",
-  label: "Alert opened by",
+  label: "Trigger Incident node this closes",
   type: "pagerduty-trigger-node-select",
   helpText:
-    "The Trigger Incident node in this workflow whose alert this closes. Its dedup key is derived here, so the two always match. This is a node reference rather than a template like {{Trigger Incident.dedupKey}} on purpose: on the healthy branch of a check the trigger node never ran, so a template reference to its output cannot resolve and the run would fail.",
+    "Its dedup key is reused here, so the two always match. Pick the node rather than referencing its output: on the healthy branch the trigger never ran, so a template reference cannot resolve.",
 };
 
 const targetDedupKeyField: ActionConfigFieldBase = {
@@ -84,18 +84,20 @@ const targetDedupKeyField: ActionConfigFieldBase = {
     "Only needed when the trigger sets its own dedup key: put the same value here. PagerDuty requires a key for acknowledge and resolve, and drops an event whose key matches no open alert - with a 202, so it looks exactly like success. The service must be the same one the trigger used, too.",
 };
 
-const verifyField: ActionConfigFieldBase = {
-  key: "verifyWithPagerDuty",
-  label: "Check the incident afterwards",
-  type: "select",
-  defaultValue: "false",
-  options: [
-    { value: "false", label: "No" },
-    { value: "true", label: "Yes, read the incident back" },
-  ],
-  helpText:
-    "Off by default. PagerDuty answers 202 to an acknowledge or a resolve even when it had nothing to apply it to - the alert was already resolved, the key was never used, or the event went to a different service - so the response alone cannot tell you what happened. Turning this on reads the incident back and reports its actual status. Needs incidents.read on a scoped OAuth app; a read-only API token already has it. A service that groups alerts produces incidents with no incident key, so the answer can be \"unknown\", which is never treated as a failure.",
-};
+function verifyField(defaultValue: "true" | "false"): ActionConfigFieldBase {
+  return {
+    key: "verifyWithPagerDuty",
+    label: "Confirm with PagerDuty afterwards",
+    type: "select",
+    defaultValue,
+    options: [
+      { value: "true", label: "Yes, read the incident back" },
+      { value: "false", label: "No" },
+    ],
+    helpText:
+      "PagerDuty answers 202 even when nothing matched. On, the node reads the incident back and reports its real status. Needs incidents.read, which a read-only key already has.",
+  };
+}
 
 const pagerDutyPlugin: IntegrationPlugin = {
   type: "pagerduty",
@@ -108,7 +110,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
   formFields: [
     {
       id: "apiToken",
-      label: "REST API token",
+      label: "API access key",
       type: "password",
       placeholder: "20-character key from PagerDuty",
       configKey: "apiToken",
@@ -188,7 +190,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
       category: "PagerDuty",
       stepFunction: "triggerIncidentStep",
       stepImportPath: "trigger-incident",
-      docUrl: "https://developer.pagerduty.com/docs/events-api-v2/trigger-events/",
+      docUrl: "https://docs.keeperhub.com/plugins/pagerduty",
       outputFields: [
         { field: "delivered", description: "Whether PagerDuty accepted the event" },
         { field: "dedupKey", description: "Key that identifies the alert" },
@@ -237,7 +239,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
             { value: "info", label: "Info" },
           ],
           helpText:
-            "How bad the condition is. Who gets woken up is the service's urgency rule and escalation policy, not this field.",
+            "How bad the condition is. On a service using dynamic urgency, critical and error page at high urgency while warning and info do not; on other services the urgency rule decides. Priority (P1, P2) cannot be set on an event at all - PagerDuty assigns it from the service's Event Orchestration rules, or use Create Incident to set one directly.",
         },
         {
           key: "source",
@@ -261,7 +263,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
               placeholder: "1",
               example: "2",
               helpText:
-                "1 pages the first time this node is reached. 2 holds the first run and pages on the second run in a row that reaches it. A run that does not reach this node resets the count, so one healthy check clears the streak. Held runs are recorded in the run history, not silent.",
+                "Pages on the Nth run in a row that reaches this node; one run that does not reach it resets the count. On a schedule of every X minutes, N delays the first page by about (N-1) times X - at 3 on an hourly cron that is two hours. Held runs are recorded, not silent. Default 1.",
             },
           ],
         },
@@ -299,6 +301,16 @@ const pagerDutyPlugin: IntegrationPlugin = {
               helpText:
                 "JSON object shown on the incident. The workflow, run and node ids are added automatically. Dropped with a note if the event would exceed PagerDuty's 512 KB limit.",
             },
+            {
+              key: "links",
+              label: "Links",
+              type: "template-textarea",
+              rows: 3,
+              placeholder:
+                "Etherscan | https://etherscan.io/tx/{{Check Vault.hash}}",
+              helpText:
+                "One per line, as text | url, or just a url. They become clickable links on the incident - an explorer transaction or a dashboard is usually the first thing a responder wants.",
+            },
           ],
         },
         {
@@ -308,14 +320,14 @@ const pagerDutyPlugin: IntegrationPlugin = {
         },
         {
           type: "group",
-          label: "If PagerDuty cannot be reached",
+          label: "If the page cannot be delivered",
           fields: [
             {
               key: "backupIntegrationId",
               label: "Backup connection",
               type: "pagerduty-backup-connection-select",
               helpText:
-                "Optional, and the answer to a PagerDuty outage: when the event cannot be delivered after the retries above, the same alert - plus why PagerDuty refused it - is posted here instead. Only existing Discord, Slack and Telegram connections are offered, so the node never gains a URL a workflow could point elsewhere. The backup fires either way; whether the run itself is then marked failed is the switch above.",
+                "When the page cannot be delivered, the same alert and the reason are posted here instead. Only existing Discord, Slack and Telegram connections are offered, so a workflow cannot point this at a new host.",
             },
             {
               key: "backupDestination",
@@ -323,7 +335,19 @@ const pagerDutyPlugin: IntegrationPlugin = {
               type: "template-input",
               placeholder: "#alerts, or a Telegram chat id",
               helpText:
-                "Needed for Slack and Telegram. A Discord connection already carries its webhook, so leave this blank for one.",
+                "Slack and Telegram need one; a Discord connection already carries its webhook.",
+            },
+            {
+              key: "treatMaintenanceAsUndelivered",
+              label: "Treat a maintenance window as undelivered",
+              type: "select",
+              defaultValue: "false",
+              options: [
+                { value: "false", label: "No, report it and carry on" },
+                { value: "true", label: "Yes, fire the backup" },
+              ],
+              helpText:
+                "A service in a maintenance window takes the event and raises no incident. Off, the node reports that. On, it is treated like any other undelivered page, so the backup fires.",
             },
           ],
         },
@@ -342,7 +366,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
       category: "PagerDuty",
       stepFunction: "resolveIncidentStep",
       stepImportPath: "resolve-incident",
-      docUrl: "https://developer.pagerduty.com/docs/events-api-v2/trigger-events/",
+      docUrl: "https://docs.keeperhub.com/plugins/pagerduty",
       outputFields: [
         { field: "delivered", description: "Whether PagerDuty accepted the event" },
         { field: "dedupKey", description: "Key of the alert that was resolved" },
@@ -361,7 +385,10 @@ const pagerDutyPlugin: IntegrationPlugin = {
         serviceField,
         triggerNodeField,
         targetDedupKeyField,
-        verifyField,
+        // On by default for a resolve: an incident that quietly stays open is
+        // the failure this action exists to prevent, and the check is what
+        // turns PagerDuty's unconditional 202 into an answer.
+        verifyField("true"),
         { type: "group", label: "Delivery", fields: retryFields },
       ],
     },
@@ -369,11 +396,11 @@ const pagerDutyPlugin: IntegrationPlugin = {
       slug: "acknowledge-incident",
       label: "Acknowledge Incident",
       description:
-        "Acknowledge the alert carrying this dedup key. PagerDuty drops it silently when no open alert matches, and acknowledging an acknowledged alert changes nothing",
+        "Acknowledge the alert carrying this dedup key. This stops PagerDuty escalating it, so use it only once a human has been told - an automated acknowledge means nobody is paged further",
       category: "PagerDuty",
       stepFunction: "acknowledgeIncidentStep",
       stepImportPath: "acknowledge-incident",
-      docUrl: "https://developer.pagerduty.com/docs/events-api-v2/trigger-events/",
+      docUrl: "https://docs.keeperhub.com/plugins/pagerduty",
       outputFields: [
         { field: "delivered", description: "Whether PagerDuty accepted the event" },
         { field: "dedupKey", description: "Key of the alert that was acknowledged" },
@@ -392,7 +419,10 @@ const pagerDutyPlugin: IntegrationPlugin = {
         serviceField,
         triggerNodeField,
         targetDedupKeyField,
-        verifyField,
+        // On by default for a resolve: an incident that quietly stays open is
+        // the failure this action exists to prevent, and the check is what
+        // turns PagerDuty's unconditional 202 into an answer.
+        verifyField("true"),
         { type: "group", label: "Delivery", fields: retryFields },
       ],
     },
@@ -404,7 +434,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
       category: "PagerDuty",
       stepFunction: "sendChangeEventStep",
       stepImportPath: "send-change-event",
-      docUrl: "https://developer.pagerduty.com/docs/events-api-v2/send-change-events/",
+      docUrl: "https://docs.keeperhub.com/plugins/pagerduty",
       outputFields: [
         { field: "delivered", description: "Whether PagerDuty accepted the change event" },
       ],
@@ -436,14 +466,13 @@ const pagerDutyPlugin: IntegrationPlugin = {
     },
     {
       slug: "create-incident",
-      label: "Create Incident (REST)",
+      label: "Create Incident (override policy, urgency, priority)",
       description:
         "Create an incident directly, with an escalation policy override and urgency. Needs a write-capable token",
       category: "PagerDuty",
       stepFunction: "createIncidentStep",
       stepImportPath: "create-incident",
-      docUrl:
-        "https://developer.pagerduty.com/api-reference/a7d81b0e9200f-create-an-incident",
+      docUrl: "https://docs.keeperhub.com/plugins/pagerduty",
       outputFields: [
         { field: "incidentId", description: "PagerDuty incident id" },
         { field: "incidentNumber", description: "Incident number" },

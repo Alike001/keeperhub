@@ -477,18 +477,46 @@ export function PagerDutyPriorityField({
  * exactly the branch where the trigger node did not run, so a reference to its
  * output would be unresolved and the run would fail.
  */
+export type TriggerNodeChoice = {
+  id: string;
+  label: string;
+  /** The service that trigger pages, so a mismatch can be caught here. */
+  serviceId?: string;
+  /** Set when that trigger uses a dedup key of its own rather than the derived one. */
+  dedupKey?: string;
+};
+
+/**
+ * Picks the Trigger Incident node whose alert an acknowledge or resolve
+ * closes, and catches the two ways this silently closes nothing.
+ *
+ * PagerDuty drops an update that names a different service from the trigger,
+ * or a dedup key no alert carries, and answers 202 to both - so neither shows
+ * up at run time. The editor has the trigger node's own configuration, so it
+ * can say so while there is still someone reading.
+ */
 export function PagerDutyTriggerNodeField({
   value,
   disabled,
   nodes,
+  currentServiceId,
+  currentDedupKey,
   onChange,
 }: {
   value: string;
   disabled?: boolean;
-  nodes: { id: string; label: string }[];
+  nodes: TriggerNodeChoice[];
+  currentServiceId?: string;
+  currentDedupKey?: string;
   onChange: (value: string) => void;
 }) {
   const selected = nodes.find((node) => node.id === value);
+  const serviceMismatch =
+    selected?.serviceId &&
+    currentServiceId &&
+    selected.serviceId !== currentServiceId;
+  const dedupKeyMissing =
+    Boolean(selected?.dedupKey?.trim()) && !currentDedupKey?.trim();
 
   if (nodes.length === 0) {
     return (
@@ -517,11 +545,31 @@ export function PagerDutyTriggerNodeField({
           ))}
         </SelectContent>
       </Select>
+
       {Boolean(value) && !selected && (
         <Notice tone="warning">
           The trigger node this pointed at is gone from the workflow. Pick
           another, or set the dedup key by hand - otherwise this closes
           nothing.
+        </Notice>
+      )}
+
+      {serviceMismatch && (
+        <Notice tone="warning">
+          {selected?.label} pages service{" "}
+          <code className="font-mono">{selected?.serviceId}</code>, and this
+          node names <code className="font-mono">{currentServiceId}</code>.
+          PagerDuty drops an update that arrives through a different service,
+          and answers 202 while doing it, so this would close nothing and look
+          like it worked. Use the same service on both.
+        </Notice>
+      )}
+
+      {dedupKeyMissing && (
+        <Notice tone="warning">
+          {selected?.label} sets its own dedup key (
+          <code className="font-mono">{selected?.dedupKey}</code>). Put the
+          same value in the dedup key field below, or this closes nothing.
         </Notice>
       )}
     </div>
