@@ -480,7 +480,84 @@ function buildConfigFieldsFromAction(
   return fields;
 }
 
+/**
+ * The ABI output parameters of the function an action calls.
+ *
+ * Returns undefined when the contract or function cannot be resolved, which
+ * leaves the caller to fall back rather than guess at a shape.
+ */
+function resolveAbiOutputs(
+  def: ProtocolDefinition,
+  action: ProtocolAction
+): Array<{ name?: string }> | undefined {
+  const contract = def.contracts?.[action.contract];
+  if (!contract?.abi) {
+    return;
+  }
+  try {
+    const parsed = JSON.parse(contract.abi) as Array<{
+      type?: string;
+      name?: string;
+      outputs?: Array<{ name?: string }>;
+    }>;
+    const fn = parsed.find(
+      (entry) => entry.type === "function" && entry.name === action.function
+    );
+    return fn?.outputs;
+  } catch {
+    return;
+  }
+}
+
+/**
+ * Template paths for a read action's return value.
+ *
+ * These have to mirror structureAbiOutputs (plugins/web3/steps/
+ * structure-abi-result.ts), which is what actually shapes `result` at
+ * runtime: a single named output is keyed by its ABI name, a single unnamed
+ * one is the bare value, and several are keyed by name or unnamedOutput<i>.
+ *
+ * The declared `outputs` overrides supply labels only. Using an override's
+ * name as the path is what this function used to do, and it produced a
+ * suggestion that resolved to undefined whenever the ABI named nothing --
+ * the workflow saved, ran, and read empty. The on-chain ABI is the authority
+ * on the shape; the override is the authority on the wording.
+ */
+function buildReadOutputPaths(
+  def: ProtocolDefinition,
+  action: ProtocolAction
+): Array<{ field: string; description: string }> {
+  const declared = action.outputs ?? [];
+  const labelAt = (index: number, fallback: string): string =>
+    declared[index]?.label ?? fallback;
+
+  const abiOutputs = resolveAbiOutputs(def, action);
+  if (!abiOutputs || abiOutputs.length === 0) {
+    // Nothing to key by: readContractCore returns the raw decoded values.
+    return [{ field: "result", description: labelAt(0, "Result") }];
+  }
+
+  if (abiOutputs.length === 1) {
+    const name = abiOutputs[0].name?.trim();
+    return [
+      {
+        field: name ? `result.${name}` : "result",
+        description: labelAt(0, name ?? "Result"),
+      },
+    ];
+  }
+
+  return abiOutputs.map((output, index) => {
+    const name = output.name?.trim() || `unnamedOutput${index}`;
+    return {
+      field: `result.${name}`,
+      description: labelAt(index, name),
+    };
+  });
+}
+
 function buildOutputFieldsFromAction(
+  def: ProtocolDefinition,
   action: ProtocolAction
 ): Array<{ field: string; description: string }> {
   const outputs: Array<{ field: string; description: string }> = [];
@@ -489,10 +566,8 @@ function buildOutputFieldsFromAction(
   // Write actions still have ABI-derived outputs at the model layer, but
   // writeContractCore returns result: undefined, so surfacing them would
   // create template suggestions that resolve to undefined at runtime.
-  if (action.type === "read" && action.outputs) {
-    for (const output of action.outputs) {
-      outputs.push({ field: output.name, description: output.label });
-    }
+  if (action.type === "read") {
+    outputs.push(...buildReadOutputPaths(def, action));
   }
 
   outputs.push({
@@ -530,7 +605,7 @@ export function protocolActionToPluginAction(
     requiresCredentials: action.type === "write",
     ...(action.type === "write" ? { credentialIntegrationType: "web3" } : {}),
     configFields: buildConfigFieldsFromAction(def, action),
-    outputFields: buildOutputFieldsFromAction(action),
+    outputFields: buildOutputFieldsFromAction(def, action),
     ...(action.docUrl ? { docUrl: action.docUrl } : {}),
   };
 }
