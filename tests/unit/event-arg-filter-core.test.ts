@@ -16,7 +16,10 @@ const WITH_ARRAY = ethers.EventFragment.from(
 );
 const UNINDEXED_ONLY = ethers.EventFragment.from("event Plain(uint256 amount)");
 
-const ALICE = "0x51C72848c68a965f66FA7a88855F9f7784502a7F";
+// A shaped-but-meaningless address: these tests check encoding and
+// validation, so a real deployment would only invite the question of which
+// one it is.
+const ALICE = "0x1111111111111111111111111111111111111111";
 
 function ok(raw: string | undefined, fragment: ethers.EventFragment) {
   const result = buildEventArgTopics(raw, fragment);
