@@ -2368,6 +2368,69 @@ describe("ChainProviderManager", () => {
       expect(created).toHaveLength(afterReconnect);
       await mgr.destroy();
     });
+
+    it("reconnects a state-only chain that goes silent past the ceiling", async () => {
+      const { created, mgr } = makeStalenessManager(60_000);
+      // No log subscriber at all. `subscribeToState` attaches the block
+      // listener and starts the heartbeat the same way `subscribeToLogs`
+      // does, so this chain does expect blocks and a silent one is a
+      // dropped subscription, not an idle provider.
+      await mgr.subscribeToState({
+        chainId: CHAIN_A,
+        wssUrl: "ws://a",
+        contractAddress: ADDR_A,
+        callData: "0x18160ddd",
+        handler: vi.fn(),
+      });
+      const reasons: string[] = [];
+      mgr.onDisconnect(CHAIN_A, (ev) => {
+        reasons.push(ev.reason);
+      });
+
+      await created[0].emitBlock(1000);
+      await vi.advanceTimersByTimeAsync(92_100);
+
+      expect(reasons).toContain("block_staleness");
+      // The reconnect has to put the block listener and the heartbeat back,
+      // otherwise `headBlock` freezes at its pre-drop value, `sampleState`
+      // never runs again and nothing is left to notice.
+      expect(created.length).toBeGreaterThanOrEqual(2);
+      const replacement = created[created.length - 1];
+      expect(replacement.hasBlockHandler()).toBe(true);
+      await mgr.destroy();
+    });
+
+    it("keeps watching a mixed chain after the log subscriber leaves", async () => {
+      const { created, mgr } = makeStalenessManager(60_000);
+      const unsubscribeLogs = await mgr.subscribeToLogs({
+        chainId: CHAIN_A,
+        wssUrl: "ws://a",
+        address: ADDR_A,
+        topic0: TOPIC_EMITTED,
+        handler: vi.fn(),
+      });
+      await mgr.subscribeToState({
+        chainId: CHAIN_A,
+        wssUrl: "ws://a",
+        contractAddress: ADDR_A,
+        callData: "0x18160ddd",
+        handler: vi.fn(),
+      });
+      const reasons: string[] = [];
+      mgr.onDisconnect(CHAIN_A, (ev) => {
+        reasons.push(ev.reason);
+      });
+
+      await created[0].emitBlock(1000);
+      // The log subscriber leaves, the state subscriber stays. The chain is
+      // still live, so the watchdog must still cover it.
+      unsubscribeLogs();
+
+      await vi.advanceTimersByTimeAsync(92_100);
+
+      expect(reasons).toContain("block_staleness");
+      await mgr.destroy();
+    });
   });
 
   describe("destroy", () => {

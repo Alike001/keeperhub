@@ -1780,11 +1780,16 @@ export class ChainProviderManager {
       // still set. Scheduled rather than awaited: a drain dispatches to
       // handlers that may each sleep seconds of jitter, and awaiting it would
       // hold the chain reconnecting long after the socket was healthy.
-      if (
-        !this.isDestroyed &&
-        entry.provider &&
-        entry.subscribers.size > 0
-      ) {
+      //
+      // Log-scoped on purpose, unlike the guards in `detachIfIdle` and
+      // `reconnect`. Only the log path accrues an owed range: it is
+      // `lastProcessedBlock` that survives the drop and has to be caught up.
+      // A state-only chain owes nothing. Arming the catch-up for one
+      // would run `sampleState` against the pre-drop `headBlock`, handing
+      // the threshold listener a reading from before the outage as the
+      // current value. `sampleState` is documented as a sample of the
+      // present, so that would break its invariant.
+      if (!this.isDestroyed && entry.provider && entry.subscribers.size > 0) {
         this.armCatchUp(entry, GETLOGS_MIN_INTERVAL_MS);
       }
     }
