@@ -53,7 +53,7 @@ name: Contracts Checked
 # pull request code. It checks out the BASE BRANCH TIP only; the head is
 # fetched as git objects and never checked out, so no file from the pull
 # request is ever placed in the working tree, and the scanner it runs is
-# the base branch's copy, not the contributor's. Do not add a checkout
+# a trusted branch's copy, not the contributor's. Do not add a checkout
 # of the head ref to this file, and do not add an install or build step.
 
 on:
@@ -88,6 +88,39 @@ jobs:
           # current when the contributor branched.
           ref: ${{ github.event.pull_request.base.ref }}
           fetch-depth: 0
+
+      - name: Take the scanner from the default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          # The checkout above is the base branch tip. For a pull request
+          # into staging that is also the newest copy of the scanner. For
+          # one into prod it is not: prod receives code only through a
+          # staging -> prod release, so its copy always lags staging's by a
+          # release, and before the release that first carries this gate
+          # there is no copy at all -
+          #
+          #   Error: Cannot find module '.../scan-contract-addresses.mjs'
+          #
+          # which is a deadlock rather than a stale checkout, because the
+          # only thing that could put a scanner on prod is a release pull
+          # request this job gates. #2501 fixed the same error arising from
+          # base.sha; this is the case it could not reach.
+          #
+          # The default branch is by construction the newest trusted copy,
+          # and it is not pull request code, so the SAFETY note above still
+          # holds. Only the scanner is taken. The diff base is unchanged: it
+          # stays the base branch tip, so the scan still reports what this
+          # pull request would add to the branch it targets.
+          if [ "$BASE_REF" = "$DEFAULT_BRANCH" ]; then
+            echo "Base is the default branch; its own scanner is the newest."
+            exit 0
+          fi
+          git fetch --no-tags --quiet origin "$DEFAULT_BRANCH"
+          git checkout FETCH_HEAD -- scripts/scan-contract-addresses.mjs
+          echo "Scanner taken from origin/$DEFAULT_BRANCH; base $BASE_REF may lag it."
 
       - name: Fetch pull request head as objects
         env:
