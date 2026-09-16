@@ -102,7 +102,9 @@ describe("execution retention purge (real database)", () => {
   let runRetentionPurge: Purge["runRetentionPurge"];
   let planWindowExecutionIdsQuery: Purge["planWindowExecutionIdsQuery"];
   let planWindowLogIdsQuery: Purge["planWindowLogIdsQuery"];
+  let planWindowLogCountQuery: Purge["planWindowLogCountQuery"];
   let workflowChunk: Purge["PLAN_WINDOW_WORKFLOW_CHUNK"];
+  let runsPerRead: Purge["PLAN_WINDOW_RUNS_PER_READ"];
   let getOrgLogRetentionCutoff: Progress["getOrgLogRetentionCutoff"];
 
   async function cleanup(): Promise<void> {
@@ -286,7 +288,9 @@ describe("execution retention purge (real database)", () => {
       runRetentionPurge,
       planWindowExecutionIdsQuery,
       planWindowLogIdsQuery,
+      planWindowLogCountQuery,
       PLAN_WINDOW_WORKFLOW_CHUNK: workflowChunk,
+      PLAN_WINDOW_RUNS_PER_READ: runsPerRead,
     } = await import("@/lib/retention/purge-executions"));
     ({ getOrgLogRetentionCutoff } = await import("@/lib/retention/progress"));
   });
@@ -579,17 +583,90 @@ describe("execution retention purge (real database)", () => {
       planWindowExecutionIdsQuery(
         [`${ORG_NONE}_wf`],
         daysAgo(400),
-        daysAgo(7)
+        daysAgo(7),
+        runsPerRead + 1
       ).toSQL()
     );
     const logsPlan = await explain(
       planWindowLogIdsQuery([runId(ORG_NONE, "old")], 1000).toSQL()
+    );
+    const countPlan = await explain(
+      planWindowLogCountQuery([runId(ORG_NONE, "old")]).toSQL()
     );
 
     expect(runsPlan).not.toContain('"Node Type":"Seq Scan"');
     expect(runsPlan).toContain('"Index Name"');
     expect(logsPlan).not.toContain('"Node Type":"Seq Scan"');
     expect(logsPlan).toContain("idx_exec_logs_execution_id");
+    expect(countPlan).not.toContain('"Node Type":"Seq Scan"');
+    expect(countPlan).toContain("idx_exec_logs_execution_id");
+  });
+
+  it("drains a workflow with more runs than one read holds, a slice at a time", async () => {
+    // One busy workflow is one chunk. Its runs no longer fit one read, so the
+    // pass has to shrink the slice until they do and still reach every run.
+    const orgDense = `${PREFIX}org_dense`;
+    const workflowId = `${orgDense}_wf`;
+    const total = runsPerRead + 1;
+    await db.insert(organization).values({
+      id: orgDense,
+      name: orgDense,
+      slug: orgDense,
+      createdAt: daysAgo(600),
+    });
+    await db.insert(workflows).values({
+      id: workflowId,
+      name: "dense workflow",
+      userId: USER,
+      organizationId: orgDense,
+      nodes: [],
+      edges: [],
+      createdAt: daysAgo(600),
+      updatedAt: daysAgo(600),
+    });
+    // One run a second, so a slice can split them.
+    const startedAt = (index: number) =>
+      new Date(daysAgo(40).getTime() + index * 1000);
+    await db.insert(workflowExecutions).values(
+      Array.from({ length: total }, (_, index) => ({
+        id: `${orgDense}_run_${index}`,
+        workflowId,
+        organizationId: orgDense,
+        userId: USER,
+        status: "success" as const,
+        startedAt: startedAt(index),
+      }))
+    );
+    await db.insert(workflowExecutionLogs).values(
+      Array.from({ length: total }, (_, index) => ({
+        id: `${orgDense}_log_${index}`,
+        executionId: `${orgDense}_run_${index}`,
+        nodeId: "action-1",
+        nodeName: "HTTP Request",
+        nodeType: "action",
+        status: "success" as const,
+        startedAt: startedAt(index),
+        timestamp: startedAt(index),
+      }))
+    );
+
+    await runRetentionPurge(config(), NOW);
+
+    const rows =
+      await queryClient`SELECT count(*)::int AS n FROM workflow_execution_logs WHERE id LIKE ${`${orgDense}_log_%`}`;
+    expect(rows[0].n).toBe(0);
+    expect(await watermarkOf(orgDense)).toEqual(daysAgo(7));
+  });
+
+  it("counts in a dry run exactly the step logs a real run then deletes", async () => {
+    const planRows = (result: Awaited<ReturnType<typeof runRetentionPurge>>) =>
+      result.passes.find((pass) => pass.pass === "logs_plan_window")?.rows;
+
+    const dry = await runRetentionPurge(config({ dryRun: true }), NOW);
+    const real = await runRetentionPurge(config(), NOW);
+
+    expect(planRows(dry)).toBeGreaterThan(0);
+    expect(planRows(dry)).toBe(planRows(real));
   });
 
   describe("run rows", () => {
