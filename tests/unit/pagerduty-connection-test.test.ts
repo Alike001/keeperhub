@@ -81,6 +81,14 @@ describe("PagerDuty connection test", () => {
     expect(result.error).toContain("services.read");
   });
 
+  it("blames the network, not the token, when PagerDuty cannot be reached", async () => {
+    fetchMock.mockRejectedValue(new TypeError("fetch failed"));
+    const result = await testPagerDuty({ PAGERDUTY_API_TOKEN: "t" });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Could not reach PagerDuty");
+    expect(result.error).toContain("were not checked");
+  });
+
   it("asks for credentials when the form is empty", async () => {
     const result = await testPagerDuty({});
     expect(result.success).toBe(false);

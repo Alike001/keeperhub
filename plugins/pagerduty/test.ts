@@ -146,9 +146,12 @@ export async function testPagerDuty(
 
     return { success: true };
   } catch (error) {
+    // A dropped connection between KeeperHub and PagerDuty is not a bad
+    // token, and saying so stops someone rotating a perfectly good key
+    // because the network blinked while they were setting it up.
     return {
       success: false,
-      error: error instanceof Error ? error.message : String(error),
+      error: `Could not reach PagerDuty (${error instanceof Error ? error.message : String(error)}). The credentials were not checked - try again once the connection is back.`,
     };
   }
 }

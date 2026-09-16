@@ -93,13 +93,18 @@ function usePagerDutyResources<T>(
         if (cancelled) {
           return;
         }
+        // A fetch that rejects never reached KeeperHub, so this says nothing
+        // about PagerDuty or the credentials. Saying "could not load services"
+        // here would send someone looking at the wrong thing, and the stored
+        // service id is deliberately left alone: see `missing` below, which
+        // only warns when the list actually loaded.
         setState({
           items: [],
           loading: false,
           error:
-            error instanceof Error
-              ? error.message
-              : "Could not load from PagerDuty.",
+            typeof navigator !== "undefined" && navigator.onLine === false
+              ? "You are offline, so the service list could not be loaded. What is already configured on this node is untouched."
+              : `Could not reach KeeperHub to load the service list${error instanceof Error ? ` (${error.message})` : ""}. Nothing configured on this node has changed.`,
         });
       });
 

@@ -351,6 +351,10 @@ async function restGet<T>(
 
     return { ok: true, value: (await response.json()) as T };
   } catch (error) {
+    // Deliberately stricter than the events path: an incident key that repeats
+    // is rejected rather than merged, so a retry after a lost response could
+    // create a second incident. Only a request that provably never left is
+    // safe to repeat.
     return {
       ok: false,
       failure: {
@@ -554,11 +558,16 @@ export async function postEvent(
       value: { dedupKey: parsed.dedup_key, message: parsed.message },
     };
   } catch (error) {
+    // Any network fault is worth another attempt here, not only the ones that
+    // prove the request never left the process. A chat integration has to be
+    // stricter, because a reply whose response was lost would post twice; an
+    // event carries a dedup key, so a duplicate merges into the same alert.
+    // A dropped connection mid-flight is exactly when a page must still land.
     return {
       ok: false,
       failure: {
-        message: `Could not reach PagerDuty: ${getErrorMessage(error)}`,
-        retryable: isConnectionFailure(error),
+        message: `Could not reach PagerDuty: ${getErrorMessage(error)}. The event was not confirmed.`,
+        retryable: true,
       },
     };
   }

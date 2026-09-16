@@ -342,6 +342,40 @@ describe("postEventWithRetries", () => {
     expect(wait).not.toHaveBeenCalled();
   });
 
+  it("retries a dropped connection, because a duplicate event merges", async () => {
+    safeFetch
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValueOnce(response(202, { dedup_key: "k1" }));
+    const wait = vi.fn().mockResolvedValue(undefined);
+
+    const result = await postEventWithRetries({
+      credentials: TOKEN_CREDS,
+      body: {} as never,
+      maxRetries: 2,
+      baseDelayMs: 500,
+      wait,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(safeFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("says the event was not confirmed when the network fails outright", async () => {
+    safeFetch.mockRejectedValue(new TypeError("fetch failed"));
+    const result = await postEventWithRetries({
+      credentials: TOKEN_CREDS,
+      body: {} as never,
+      maxRetries: 1,
+      baseDelayMs: 0,
+      wait: vi.fn().mockResolvedValue(undefined),
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failure.message).toContain("not confirmed");
+    }
+  });
+
   it("honours the wait PagerDuty asks for on a rate limit", async () => {
     safeFetch
       .mockResolvedValueOnce(response(429, {}, { "retry-after": "5" }))
