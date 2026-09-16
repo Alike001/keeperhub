@@ -74,8 +74,38 @@ export function checkSolidityValue(
           expected: `exactly ${width} bytes of hex (${(value.length - 2) / 2} given)`,
         };
   }
-  if (solidityType === "bytes" || solidityType === "string") {
+  if (solidityType === "bytes") {
+    // Indexed `bytes` is hashed, but it is hashed as bytes: keccak256 needs a
+    // BytesLike, so free text reaches ethers and fails at execution rather
+    // than in validation.
+    return HEX_BYTES_PATTERN.test(value)
+      ? { valid: true }
+      : { valid: false, expected: "0x-prefixed hex" };
+  }
+  if (solidityType === "string") {
+    // Hashed as UTF-8 text, so any string is encodable and there is no shape
+    // to check.
     return { valid: true };
   }
   return { valid: false, expected: "a value this step can encode" };
+}
+
+/**
+ * Whether an indexed parameter of this type can be matched at the RPC.
+ *
+ * An indexed array or tuple is stored as a hash of its encoded contents, so
+ * there is no value to compare a filter against; ethers refuses one outright
+ * with "filtering with tuples or arrays not supported".
+ */
+export function isUnfilterableIndexedType(solidityType: string): boolean {
+  return solidityType.endsWith("]") || solidityType.startsWith("tuple");
+}
+
+/**
+ * Whether an indexed parameter of this type is stored as a keccak hash of
+ * its contents rather than the contents. Filtering one is exact-equality on
+ * the whole value, and the value cannot be read back out of the log.
+ */
+export function isHashedIndexedType(solidityType: string): boolean {
+  return solidityType === "string" || solidityType === "bytes";
 }

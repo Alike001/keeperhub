@@ -63,7 +63,7 @@ export type QueryEventsCoreInput = ReadFailOnErrorInput & {
   contractAddress: string;
   abi: string;
   eventName: string;
-  eventArgs?: string;
+  eventArgs?: string | Record<string, unknown>;
   fromBlock?: string;
   toBlock?: string;
   blockCount?: number | string;

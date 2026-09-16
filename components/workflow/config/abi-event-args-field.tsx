@@ -3,6 +3,10 @@
 import React from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  isHashedIndexedType,
+  isUnfilterableIndexedType,
+} from "@/lib/web3/solidity-values";
 import type { ActionConfigFieldBase } from "@/plugins/registry";
 
 type AbiEventInput = {
@@ -29,35 +33,64 @@ type AbiEventArgsFieldProps = {
   disabled?: boolean;
 };
 
-function parseIndexedParams(abiValue: string, eventName: string): EventParam[] {
-  if (!(abiValue && eventName)) {
-    return [];
+/**
+ * Why the panel has nothing to render.
+ *
+ * Kept apart from "the event genuinely has no indexed parameters", which is
+ * a factual claim about the contract. Stating that while the ABI failed to
+ * load would be confidently wrong.
+ */
+type ParamsState =
+  | { kind: "ready"; params: EventParam[]; unnamed: number }
+  | { kind: "no-event" }
+  | { kind: "no-abi" }
+  | { kind: "bad-abi" }
+  | { kind: "event-missing" };
+
+function parseIndexedParams(abiValue: string, eventName: string): ParamsState {
+  if (!eventName) {
+    return { kind: "no-event" };
+  }
+  if (!abiValue.trim()) {
+    return { kind: "no-abi" };
   }
   let abi: unknown;
   try {
     abi = JSON.parse(abiValue);
   } catch {
-    return [];
+    return { kind: "bad-abi" };
   }
   if (!Array.isArray(abi)) {
-    return [];
+    return { kind: "bad-abi" };
   }
   const event = abi.find(
     (item: { type?: string; name?: string }) =>
       item?.type === "event" && item?.name === eventName
   ) as { inputs?: AbiEventInput[] } | undefined;
+  if (!event) {
+    return { kind: "event-missing" };
+  }
 
-  return (event?.inputs ?? [])
-    .filter((input) => input.indexed)
-    .map((input, index) => {
-      const type = input.type ?? "";
-      return {
-        name: input.name || `arg${index}`,
-        type,
-        filterable: !(type.endsWith("]") || type.startsWith("tuple")),
-        hashed: type === "string" || type === "bytes",
-      };
-    });
+  const indexed = (event.inputs ?? []).filter((input) => input.indexed);
+  // An unnamed indexed parameter is dropped rather than given a positional
+  // key: the filter is addressed by name, and the step would reject a
+  // synthesised one. Counted so the panel can say so instead of pretending
+  // the parameter is not there.
+  return {
+    kind: "ready",
+    unnamed: indexed.filter((input) => !input.name).length,
+    params: indexed
+      .filter((input) => input.name)
+      .map((input) => {
+        const type = input.type ?? "";
+        return {
+          name: input.name ?? "",
+          type,
+          filterable: !isUnfilterableIndexedType(type),
+          hashed: isHashedIndexedType(type),
+        };
+      }),
+  };
 }
 
 function parseValue(raw: string): Record<string, string> {
@@ -83,8 +116,12 @@ function placeholderFor(param: EventParam): string {
   if (param.type === "bool") {
     return "true or false";
   }
+  if (param.type === "bytes") {
+    // Hashed as bytes, so the value still has to be hex.
+    return "0x... (matched in full)";
+  }
   if (param.hashed) {
-    return "exact value";
+    return "exact value, matched in full";
   }
   if (param.type.startsWith("uint") || param.type.startsWith("int")) {
     return "whole number";
@@ -100,11 +137,46 @@ export function AbiEventArgsField({
   onChange,
   disabled,
 }: AbiEventArgsFieldProps) {
-  const params = React.useMemo(
+  const state = React.useMemo(
     () => parseIndexedParams(abiValue, eventValue),
     [abiValue, eventValue]
   );
-  const current = React.useMemo(() => parseValue(value), [value]);
+  const stored = React.useMemo(() => parseValue(value), [value]);
+
+  // Only values belonging to the event now selected are shown or kept.
+  // Switching Transfer to Approval otherwise leaves the old parameter in the
+  // stored JSON, invisible in the panel, and the step fails on it at runtime.
+  const allowed = React.useMemo(
+    () =>
+      new Set(
+        state.kind === "ready"
+          ? state.params.filter((p) => p.filterable).map((p) => p.name)
+          : []
+      ),
+    [state]
+  );
+  const current = React.useMemo(() => {
+    const kept: Record<string, string> = {};
+    for (const [key, entry] of Object.entries(stored)) {
+      if (allowed.has(key)) {
+        kept[key] = entry;
+      }
+    }
+    return kept;
+  }, [stored, allowed]);
+
+  const staleKeys = Object.keys(stored).filter((key) => !allowed.has(key));
+
+  React.useEffect(() => {
+    // Prune only once the ABI and event have actually resolved, so a
+    // half-loaded panel never clears a saved filter.
+    if (state.kind !== "ready" || staleKeys.length === 0) {
+      return;
+    }
+    onChange(
+      Object.keys(current).length === 0 ? "" : JSON.stringify(current)
+    );
+  }, [state.kind, staleKeys.length, current, onChange]);
 
   const update = (name: string, next: string) => {
     const merged = { ...current };
@@ -116,21 +188,31 @@ export function AbiEventArgsField({
     onChange(Object.keys(merged).length === 0 ? "" : JSON.stringify(merged));
   };
 
-  if (!eventValue) {
+  if (state.kind !== "ready") {
+    const message = {
+      "no-event": "Select an event to filter its indexed arguments",
+      "no-abi": "Enter the contract ABI above to filter indexed arguments",
+      "bad-abi": "The ABI above could not be read, so its parameters cannot be listed",
+      "event-missing": `${eventValue} was not found in the ABI above`,
+    }[state.kind];
     return (
       <div className="rounded-md border border-dashed p-3 text-center text-muted-foreground text-sm">
-        Select an event to filter its indexed arguments
+        {message}
       </div>
     );
   }
 
-  if (params.length === 0) {
+  if (state.params.length === 0) {
     return (
       <div className="rounded-md border border-dashed p-3 text-center text-muted-foreground text-sm">
-        {eventValue} has no indexed parameters, so every occurrence is returned
+        {state.unnamed > 0
+          ? `${eventValue} indexes ${state.unnamed} parameter(s) the ABI does not name, so they cannot be filtered by name`
+          : `${eventValue} has no indexed parameters, so every occurrence is returned`}
       </div>
     );
   }
+
+  const params = state.params;
 
   return (
     <div className="space-y-3" key={field.key}>

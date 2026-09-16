@@ -89,14 +89,18 @@ async function fetchFixedBatch(
 // resolves "latest" against its own head, so it can never reject its own
 // answer as beyond its own head.
 //
-// A separate getBlockNumber() call is deliberately NOT used to report
-// `actualEnd`: even issued against the same `provider` object, a concurrent
-// request isn't guaranteed to land on the same backend replica as the
-// queryFilter call, so it could report a head more advanced than what this
-// call's replica actually resolved "latest" to -- overstating what was
-// scanned and, if a caller checkpoints off `toBlock`, risking a skipped
-// range on the next run. The highest event block actually returned is the
-// only value this exact call can vouch for.
+// When the call returns events, `actualEnd` comes from the highest block
+// among them and from nothing else. A separate getBlockNumber() is not used
+// for that: even issued against the same `provider` object, it is not
+// guaranteed to land on the same backend replica, so it could report a head
+// more advanced than what this call's replica resolved "latest" to --
+// overstating what was scanned and, if a caller checkpoints off `toBlock`,
+// skipping a range on the next run.
+//
+// The one exception is an empty result, where there is no event block to
+// derive anything from; see resolveEmptyTipEnd, which takes the head read
+// but reports it behind TIP_SAFETY_MARGIN_BLOCKS precisely because the
+// replica it came from may be ahead of this one.
 // When the tip batch comes back empty there is no event block to derive
 // `actualEnd` from, and `start - 1` (scanned nothing) is the only value the
 // query itself can vouch for. That was a rare case while every query carried

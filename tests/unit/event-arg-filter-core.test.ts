@@ -39,9 +39,77 @@ function err(raw: string, fragment: ethers.EventFragment): string {
 
 describe("buildEventArgTopics", () => {
   it("returns no topic filter when nothing is being filtered", () => {
-    for (const raw of [undefined, "", "   ", "{}", '{"from":""}']) {
+    for (const raw of [undefined, "", "   ", "{}"]) {
       expect(ok(raw, TRANSFER).topics, String(raw)).toBeNull();
     }
+  });
+
+  it("rejects a present-but-empty value instead of scanning unfiltered", () => {
+    // The failure this guards against is a template: {"to": "{{X.address}}"}
+    // where the upstream node returns "". Dropping the key would leave the
+    // step scanning the whole range and returning every event as though the
+    // filter had matched everything -- the silent-unfiltered-scan shape.
+    for (const raw of ['{"from":""}', '{"from":"   "}', '{"from":null}']) {
+      expect(err(raw, TRANSFER), raw).toContain("is empty");
+    }
+  });
+
+  it("accepts the filter as an object, as an API caller would store it", () => {
+    const { topics } = ok({ from: ALICE } as unknown as string, TRANSFER);
+    expect(topics).toEqual([
+      TRANSFER.topicHash,
+      ethers.AbiCoder.defaultAbiCoder().encode(["address"], [ALICE]),
+    ]);
+  });
+
+  it("trims a pasted value rather than failing it as malformed", () => {
+    const { topics } = ok(`{"from":"  ${ALICE}  "}`, TRANSFER);
+    expect(topics?.[1]).toBe(
+      ethers.AbiCoder.defaultAbiCoder().encode(["address"], [ALICE])
+    );
+  });
+
+  it("accepts an address that is not EIP-55 checksummed", () => {
+    // The shape check is ethers-free so it cannot verify a checksum; the
+    // encoder would reject a mixed-case one, and the topic is the lowercase
+    // value either way.
+    const { topics } = ok(
+      `{"from":"${ALICE.toUpperCase().replace("0X", "0x")}"}`,
+      TRANSFER
+    );
+    expect(topics?.[1]).toBe(
+      ethers.AbiCoder.defaultAbiCoder().encode(["address"], [ALICE])
+    );
+  });
+
+  it("keeps the topic slot of an unnamed indexed parameter", () => {
+    // An unnamed parameter cannot be filtered by name, but it still holds a
+    // topic position: ignoring it would shift a later filter onto the wrong
+    // topic and match nothing.
+    const fragment = ethers.EventFragment.from(
+      "event Mixed(address indexed, address indexed to)"
+    );
+    const { topics } = ok(`{"to":"${ALICE}"}`, fragment);
+    expect(topics).toEqual([
+      fragment.topicHash,
+      null,
+      ethers.AbiCoder.defaultAbiCoder().encode(["address"], [ALICE]),
+    ]);
+    expect(indexedParams(fragment).map((p) => p.name)).toEqual(["to"]);
+  });
+
+  it("explains that an unnamed indexed parameter cannot be addressed", () => {
+    const fragment = ethers.EventFragment.from(
+      "event Mixed(address indexed, address indexed to)"
+    );
+    expect(err('{"arg0":"1"}', fragment)).toContain("unnamed in the ABI");
+  });
+
+  it("requires hex for an indexed bytes, which is hashed as bytes", () => {
+    const fragment = ethers.EventFragment.from("event Blob(bytes indexed b)");
+    expect(err('{"b":"hello"}', fragment)).toContain("0x-prefixed hex");
+    const { topics } = ok('{"b":"0xabcd"}', fragment);
+    expect(topics?.[1]).toBe(ethers.keccak256("0xabcd"));
   });
 
   it("builds the event signature plus one topic per filtered argument", () => {
@@ -111,8 +179,8 @@ describe("buildEventArgTopics", () => {
     // validation, naming the parameter.
     expect(err(`{"ids":"1"}`, WITH_ARRAY)).toContain("indexed uint256[]");
     expect(indexedParams(WITH_ARRAY)).toEqual([
-      { name: "ids", type: "uint256[]", filterable: false },
-      { name: "who", type: "address", filterable: true },
+      { name: "ids", type: "uint256[]", filterable: false, hashed: false },
+      { name: "who", type: "address", filterable: true, hashed: false },
     ]);
   });
 
@@ -132,5 +200,76 @@ describe("buildEventArgTopics", () => {
     expect(err("not json", TRANSFER)).toContain("not valid JSON");
     expect(err('["0x00"]', TRANSFER)).toContain("JSON object");
     expect(err('{"from":{"a":1}}', TRANSFER)).toContain("single value");
+  });
+});
+
+describe("a compiled topic array through real ethers", () => {
+  // The step keeps only `EventLog` instances, and ethers reaches that class
+  // by a different route for a topic array than for a named event: it sets
+  // `fragment = null` in getSubInfo and decodes from `topics[0]` afterwards.
+  // Every other test here mocks `queryFilter`, so this is the one that would
+  // notice if that chain stopped producing decoded events.
+  class StubProvider extends ethers.JsonRpcProvider {
+    logs: unknown[] = [];
+    constructor() {
+      super("http://stub.invalid", 1, { staticNetwork: true });
+    }
+    async send(method: string, params: unknown[]): Promise<unknown> {
+      if (method === "eth_chainId") {
+        return "0x1";
+      }
+      if (method === "eth_blockNumber") {
+        return "0x10";
+      }
+      if (method === "eth_getLogs") {
+        this.lastFilter = params[0];
+        return this.logs;
+      }
+      throw new Error(`unexpected ${method}`);
+    }
+    lastFilter: unknown = null;
+  }
+
+  it("sends the topics and still returns decoded EventLogs", async () => {
+    const provider = new StubProvider();
+    const address = "0x2222222222222222222222222222222222222222";
+    const iface = new ethers.Interface([
+      "event Transfer(address indexed from, address indexed to, uint256 value)",
+    ]);
+    const topicsOf = (from: string, to: string) => [
+      TRANSFER.topicHash,
+      ethers.zeroPadValue(from, 32),
+      ethers.zeroPadValue(to, 32),
+    ];
+    provider.logs = [
+      {
+        address,
+        topics: topicsOf(ALICE, "0x3333333333333333333333333333333333333333"),
+        data: ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [7]),
+        blockNumber: "0x5",
+        blockHash: `0x${"11".repeat(32)}`,
+        transactionHash: `0x${"22".repeat(32)}`,
+        transactionIndex: "0x0",
+        logIndex: "0x0",
+        removed: false,
+      },
+    ];
+
+    const built = buildEventArgTopics(`{"from":"${ALICE}"}`, TRANSFER);
+    if (!(built.success && built.topics)) {
+      throw new Error("expected a topic filter");
+    }
+
+    const contract = new ethers.Contract(address, iface, provider);
+    const found = await contract.queryFilter(built.topics, 0, 16);
+
+    expect(found).toHaveLength(1);
+    expect(found[0]).toBeInstanceOf(ethers.EventLog);
+    const decoded = found[0] as ethers.EventLog;
+    expect(decoded.args.from).toBe(ALICE);
+    expect(decoded.args.value).toBe(BigInt(7));
+    expect((provider.lastFilter as { topics: unknown[] }).topics).toEqual(
+      built.topics
+    );
   });
 });

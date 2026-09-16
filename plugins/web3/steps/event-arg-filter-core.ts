@@ -1,5 +1,9 @@
 import { ethers } from "ethers";
-import { checkSolidityValue } from "@/lib/web3/solidity-values";
+import {
+  checkSolidityValue,
+  isHashedIndexedType,
+  isUnfilterableIndexedType,
+} from "@/lib/web3/solidity-values";
 
 /**
  * Turns the user's indexed-argument filter into the topic array
@@ -24,22 +28,36 @@ export type EventArgFilterResult =
   | { success: true; topics: (string | null)[] | null; applied: string[] }
   | { success: false; error: string };
 
-/** Indexed parameters ethers and eth_getLogs cannot filter on at all. */
-function isUnfilterableType(type: string): boolean {
-  return type.endsWith("]") || type.startsWith("tuple");
-}
+export type IndexedParam = {
+  name: string;
+  type: string;
+  filterable: boolean;
+  hashed: boolean;
+};
 
-/** The parameters of `fragment` a filter may name, in topic order. */
-export function indexedParams(
-  fragment: ethers.EventFragment
-): { name: string; type: string; filterable: boolean }[] {
+/**
+ * The parameters of `fragment` a filter may name, in topic order.
+ *
+ * An unnamed indexed parameter is dropped rather than given a positional
+ * key. The filter is addressed by name on both sides, and a synthesised key
+ * would have to agree between this module and the renderer for a parameter
+ * the ABI itself does not name -- an agreement with nothing to anchor it.
+ * Such a parameter is simply not filterable, and the panel says so.
+ */
+export function indexedParams(fragment: ethers.EventFragment): IndexedParam[] {
   return fragment.inputs
-    .filter((input) => input.indexed)
+    .filter((input) => input.indexed && input.name)
     .map((input) => ({
       name: input.name,
       type: input.type,
-      filterable: !isUnfilterableType(input.type),
+      filterable: !isUnfilterableIndexedType(input.type),
+      hashed: isHashedIndexedType(input.type),
     }));
+}
+
+/** Indexed parameters the ABI leaves unnamed, which cannot be addressed. */
+export function unnamedIndexedCount(fragment: ethers.EventFragment): number {
+  return fragment.inputs.filter((input) => input.indexed && !input.name).length;
 }
 
 /**
@@ -68,6 +86,13 @@ function coerce(type: string, value: string): unknown {
   if (type.startsWith("uint") || type.startsWith("int")) {
     return BigInt(value);
   }
+  if (type === "address") {
+    // The shape check upstream is ethers-free, so it admits a mixed-case
+    // address that is not EIP-55 valid; ethers would then reject it inside
+    // the encoder. Lowercasing is what the topic encodes anyway, and a
+    // checksum is a transcription aid rather than part of the value.
+    return value.toLowerCase();
+  }
   return value;
 }
 
@@ -91,10 +116,29 @@ function parseFilterObject(
         "Event argument filter must be a JSON object keyed by indexed parameter name.",
     };
   }
+  return collectFilters(parsed as Record<string, unknown>);
+}
+
+/**
+ * Narrow the raw object to named, non-empty values.
+ *
+ * A key that is present but empty is an error rather than a wildcard. The
+ * difference matters because of templates: `{"to": "{{Lookup.address}}"}`
+ * where the upstream node returns an empty string would otherwise drop the
+ * only filter and scan the whole range unfiltered, returning every event as
+ * though the filter had matched everything. Omitting the key is the one way
+ * to mean "any value", and it is the shape the panel writes.
+ */
+function collectFilters(
+  raw: Record<string, unknown>
+): { success: true; filters: EventArgFilters } | { success: false; error: string } {
   const filters: EventArgFilters = {};
-  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-    if (value === null || value === undefined || value === "") {
-      continue;
+  for (const [key, value] of Object.entries(raw)) {
+    if (value === null || value === undefined) {
+      return {
+        success: false,
+        error: `Filter for '${key}' is empty. Remove the parameter to match any value for it.`,
+      };
     }
     if (typeof value === "object") {
       return {
@@ -102,7 +146,16 @@ function parseFilterObject(
         error: `Filter for '${key}' must be a single value, not an object or array.`,
       };
     }
-    filters[key] = String(value);
+    // Trimmed so a pasted value with surrounding whitespace is not reported
+    // later as a malformed address.
+    const text = String(value).trim();
+    if (text === "") {
+      return {
+        success: false,
+        error: `Filter for '${key}' is empty. Remove the parameter to match any value for it.`,
+      };
+    }
+    filters[key] = text;
   }
   return { success: true, filters };
 }
@@ -115,14 +168,37 @@ function parseFilterObject(
  * only carries the event signature.
  */
 export function buildEventArgTopics(
-  raw: string | undefined,
+  raw: string | Record<string, unknown> | undefined,
   fragment: ethers.EventFragment
 ): EventArgFilterResult {
-  if (raw === undefined || raw.trim() === "") {
+  if (raw === undefined || raw === null) {
+    return { success: true, topics: null, applied: [] };
+  }
+  // The config field accepts a record as well as a JSON string: the editor
+  // stores the string, while an agent or API caller can store the object.
+  if (typeof raw !== "string") {
+    if (Array.isArray(raw)) {
+      return {
+        success: false,
+        error:
+          "Event argument filter must be a JSON object keyed by indexed parameter name.",
+      };
+    }
+    return finishTopics(collectFilters(raw), fragment);
+  }
+  if (raw.trim() === "") {
     return { success: true, topics: null, applied: [] };
   }
 
-  const parsed = parseFilterObject(raw);
+  return finishTopics(parseFilterObject(raw), fragment);
+}
+
+function finishTopics(
+  parsed:
+    | { success: true; filters: EventArgFilters }
+    | { success: false; error: string },
+  fragment: ethers.EventFragment
+): EventArgFilterResult {
   if (!parsed.success) {
     return parsed;
   }
@@ -142,11 +218,16 @@ export function buildEventArgTopics(
     const param = byName.get(key);
     if (!param) {
       const known = fragment.inputs.find((input) => input.name === key);
+      const unnamed = unnamedIndexedCount(fragment);
+      const unnamedNote =
+        unnamed > 0
+          ? ` ${unnamed} indexed parameter(s) of ${fragment.name} are unnamed in the ABI and cannot be filtered by name.`
+          : "";
       return {
         success: false,
         error: known
-          ? `'${key}' is not an indexed parameter of ${fragment.name}, and only indexed parameters can be filtered at the RPC. Filterable here: ${nameList}.`
-          : `'${key}' is not a parameter of ${fragment.name}. Filterable here: ${nameList}.`,
+          ? `'${key}' is not an indexed parameter of ${fragment.name}, and only indexed parameters can be filtered at the RPC. Filterable here: ${nameList}.${unnamedNote}`
+          : `'${key}' is not a parameter of ${fragment.name}. Filterable here: ${nameList}.${unnamedNote}`,
       };
     }
     if (!param.filterable) {
@@ -164,19 +245,23 @@ export function buildEventArgTopics(
     }
   }
 
+  // Every indexed input holds a topic slot, named or not, so the positions
+  // are taken from the fragment rather than from the filterable subset: an
+  // unnamed parameter ahead of a filtered one would otherwise shift the
+  // value onto the wrong topic.
   const topics: (string | null)[] = [fragment.topicHash];
-  for (const param of indexed) {
-    const value = parsed.filters[param.name];
+  for (const input of fragment.inputs.filter((i) => i.indexed)) {
+    const value = input.name ? parsed.filters[input.name] : undefined;
     if (value === undefined) {
       topics.push(null);
       continue;
     }
     try {
-      topics.push(encodeTopic(param.type, value));
+      topics.push(encodeTopic(input.type, value));
     } catch (error) {
       return {
         success: false,
-        error: `Filter for '${param.name}' (${param.type}) could not be encoded: ${
+        error: `Filter for '${input.name}' (${input.type}) could not be encoded: ${
           error instanceof Error ? error.message : String(error)
         }`,
       };
