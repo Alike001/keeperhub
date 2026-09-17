@@ -11,6 +11,7 @@ const PYTH_ADDRESSES: Record<string, string> = {
   "56": "0x4D7E825f80bDf85e913E0DD2A2D54927e9dE1594",
   "43114": "0x4305FB66699C3B2702D4d05CF36551390A4c69C6",
   "11155111": "0xDd24F84d36BF92C65F92307595335bdFab5Bbd21",
+  "999": "0xe9d69CdD6Fe41e7B621B4A688C5D1a68cB5c8ADc",
 };
 
 // Canonical Pyth price feed IDs verified from Pyth catalogue
