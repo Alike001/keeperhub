@@ -415,11 +415,18 @@ export function PagerDutyEscalationPolicyField({
         value={value || undefined}
       >
         <SelectTrigger className="w-full">
-          <SelectValue
-            placeholder={
-              loading ? "Loading policies" : "Service default (recommended)"
-            }
-          />
+          {/* A stored id the account cannot account for: show the id itself
+              rather than the placeholder, which would read as "no override
+              set" on a node that has one. */}
+          {!loading && value && !selected ? (
+            <span className="font-mono text-muted-foreground">{value}</span>
+          ) : (
+            <SelectValue
+              placeholder={
+                loading ? "Loading policies" : "Service default (recommended)"
+              }
+            />
+          )}
         </SelectTrigger>
         <SelectContent>
           <SelectItem value={SERVICE_DEFAULT_POLICY}>
@@ -429,7 +436,8 @@ export function PagerDutyEscalationPolicyField({
             <SelectItem key={policy.id} value={policy.id}>
               <span className="flex flex-col items-start">
                 <span>{policy.name}</span>
-                <span className="font-mono text-muted-foreground text-xs">
+                {/* Policies get renamed too, and the node stores the id. */}
+                <span className="font-mono text-foreground/70 text-xs">
                   {policy.id}
                 </span>
               </span>
@@ -501,6 +509,7 @@ export function PagerDutyPriorityField({
     "priorities",
     pickPriorities
   );
+  const selected = items.find((priority) => priority.id === value);
 
   if (!integrationId) {
     return <Notice tone="info">Select a PagerDuty connection first.</Notice>;
@@ -508,10 +517,19 @@ export function PagerDutyPriorityField({
 
   if (!(loading || error) && items.length === 0) {
     return (
-      <Notice tone="info">
+      <Notice tone={value ? "warning" : "info"}>
         This PagerDuty account has no incident priorities. They come with the
         plans that include them; without one, PagerDuty decides the priority
         itself.
+        {value ? (
+          <>
+            {" "}
+            This node still asks for{" "}
+            <code className="font-mono">{value}</code>, which PagerDuty will
+            reject - a plan that used to include priorities and no longer does
+            looks exactly like this.
+          </>
+        ) : null}
       </Notice>
     );
   }
@@ -524,7 +542,11 @@ export function PagerDutyPriorityField({
         value={value || undefined}
       >
         <SelectTrigger className="w-full">
-          <SelectValue placeholder="Leave it to PagerDuty" />
+          {!loading && value && !selected ? (
+            <span className="font-mono text-muted-foreground">{value}</span>
+          ) : (
+            <SelectValue placeholder="Leave it to PagerDuty" />
+          )}
         </SelectTrigger>
         <SelectContent>
           <SelectItem value={NO_PRIORITY}>Leave it to PagerDuty</SelectItem>
@@ -532,11 +554,14 @@ export function PagerDutyPriorityField({
             <SelectItem key={priority.id} value={priority.id}>
               <span className="flex flex-col items-start">
                 <span>{priority.name}</span>
-                {priority.description && (
-                  <span className="text-muted-foreground text-xs">
-                    {priority.description}
+                <span className="text-muted-foreground text-xs">
+                  {/* P1 and P2 are the names, not the ids, and an account can
+                      rename them. The id is what the node stores. */}
+                  <span className="font-mono text-foreground/70">
+                    {priority.id}
                   </span>
-                )}
+                  {priority.description ? ` - ${priority.description}` : ""}
+                </span>
               </span>
             </SelectItem>
           ))}
