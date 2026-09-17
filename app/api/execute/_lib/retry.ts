@@ -55,11 +55,17 @@ function resolveConfig(config?: RetryConfig): Required<RetryConfig> {
  * must never be retried was retried whenever the caller asked for retries and the
  * failure text looked retryable.
  *
- * That is the shape of the x402 paid-resource case: the step delivers its
- * `X-PAYMENT` header, the server settles the payment, the connection resets
- * before the response returns, and `ECONNRESET` matches RETRYABLE_PATTERNS
- * below. The step is then re-run, the resource is re-requested and re-metered,
- * and any off-chain-metered rail pays twice.
+ * This was first read out of the x402 paid-resource case: the step delivers its
+ * `X-PAYMENT` header, the server settles the payment, the connection resets, and
+ * `ECONNRESET` matches RETRYABLE_PATTERNS below. The text half of that reading
+ * does not hold for this step, and the test below pins the correction: a paid
+ * HTTP step carries no `network`, so it takes the generic branch, whose
+ * `getError` returns undefined and which treats any returned value as success -
+ * so its error text is never matched and no re-run is triggered by it. What does
+ * re-fire the step is the timeout half, where `withTimeout` abandons an
+ * in-flight request without cancelling it and the retry is issued while the first
+ * one is still running. The declaration closes that path. The text half is real
+ * for the web3 steps, which do carry a network.
  *
  * The declaration is a ceiling, not a default. A caller may ask for fewer
  * retries than a step allows and can never ask for more; a step that declares
@@ -91,13 +97,16 @@ export function capRetriesByDeclaration(
   if (typeof declared !== "number" || Number.isNaN(declared) || declared < 0) {
     return { ...config, maxRetries: 0 };
   }
-  // An unbounded declaration is not a cap: min(caller, Infinity) is the caller's
-  // own number, so the config can be returned untouched rather than copied.
-  if (declared === Number.POSITIVE_INFINITY) {
-    return config;
-  }
-  // A fractional declaration is floored rather than discarded: 2.5 is an author
-  // asking for roughly two, and the loop counts attempts in whole numbers.
+  // A fractional declaration is floored rather than discarded, and the reason is
+  // the classification rather than the count: `attempt` is an integer, so a
+  // ceiling of 2.5 admits the same three attempts as 2. What flooring changes is
+  // which branch ends the loop - at 2.5 the `attempt >= resolved.maxRetries`
+  // guard below never coincides, so the loop falls through to `exhausted` and the
+  // caller is told "Max retries exceeded" in place of the step's own error.
+  //
+  // An unbounded declaration needs no branch of its own: Math.floor(Infinity) is
+  // Infinity and Math.min(x, Infinity) is x, so this already returns the caller's
+  // own number.
   return {
     ...config,
     maxRetries: Math.min(

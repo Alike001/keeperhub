@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks -- available to vi.mock factories which run before any imports
@@ -159,6 +159,15 @@ beforeEach(() => {
     },
     isPluginAction: true,
   }));
+});
+
+afterEach(() => {
+  // A step's declared ceiling is written onto the shared step mock as an own
+  // property, and vi.clearAllMocks() clears call history rather than removing
+  // properties. Without this, the first case that declares one leaves it on the
+  // mock for every test after it in this file - which is why the cases below
+  // only passed in the order they are written in.
+  delete (mocks.stepFn as { maxRetries?: number | string }).maxRetries;
 });
 
 // ---------------------------------------------------------------------------
@@ -367,7 +376,6 @@ describe("POST /api/execute/node step-declared retry ceiling", () => {
   });
 
   it("still retries a step that declares nothing, four calls for three retries", async () => {
-    delete (mocks.stepFn as { maxRetries?: number }).maxRetries;
     mocks.stepFn.mockResolvedValue({
       success: false,
       error: "read ECONNRESET",

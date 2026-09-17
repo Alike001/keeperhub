@@ -61,18 +61,24 @@ describe("capRetriesByDeclaration", () => {
     expect(capRetriesByDeclaration(config, {})?.maxRetries).toBe(0);
   });
 
-  it("floors a fractional declaration instead of discarding it", () => {
-    // Math.min(3, 2.5) is 2.5, and the loop's `attempt >= maxRetries` comparison
-    // then runs three attempts for an author who asked for two.
+  it("floors a fractional declaration so the step's own error survives", () => {
+    // `attempt` is an integer, so a ceiling of 2.5 admits the same three attempts
+    // as 2 does and the count is not what flooring fixes. What it fixes is which
+    // branch ends the loop: at 2.5 the `attempt >= maxRetries` guard never
+    // coincides, so the loop falls through to `exhausted` and the caller is told
+    // "Max retries exceeded" instead of the error the step returned.
     expect(capRetriesByDeclaration({ maxRetries: 3 }, 2.5)?.maxRetries).toBe(2);
     expect(capRetriesByDeclaration({ maxRetries: 3 }, 0.5)?.maxRetries).toBe(0);
   });
 
-  it("treats an unbounded declaration as no cap, by identity", () => {
-    const config = { maxRetries: 2 };
-    expect(capRetriesByDeclaration(config, Number.POSITIVE_INFINITY)).toBe(
-      config
-    );
+  it("treats an unbounded declaration as no cap", () => {
+    // No special case is needed for this: Math.floor(Infinity) is Infinity and
+    // Math.min(x, Infinity) is x, so the floor-and-min above already returns the
+    // caller's own number.
+    expect(
+      capRetriesByDeclaration({ maxRetries: 2 }, Number.POSITIVE_INFINITY)
+        ?.maxRetries
+    ).toBe(2);
   });
 
   it("does not re-fire a fetch that hangs when the step declares none", async () => {
