@@ -20,7 +20,6 @@
  * config value reaches the host, so the plugin stays `egress: "fixed-host"`
  * and a workflow can never redirect it.
  */
-import { createHash } from "node:crypto";
 import { safeFetch } from "@/lib/safe-fetch";
 import { getErrorMessage } from "@/lib/utils";
 import {
@@ -30,7 +29,6 @@ import {
 } from "@/lib/workflow/retry-policy";
 import type { PagerDutyCredentials } from "../credentials";
 import {
-  buildTriggerEvent,
   MAX_DEDUP_KEY_CHARS,
   MAX_SUMMARY_CHARS,
   type PagerDutyEventBody,
@@ -208,24 +206,28 @@ type OAuthTokenResponse = { access_token?: string; expires_in?: number };
 /**
  * Cache key for an exchanged bearer token.
  *
- * The client secret is part of the key, via a hash so the map holds no
- * credential. Leaving it out would mean two things, both bad: rotating a
- * leaked secret would not invalidate the token issued to the old one, and two
- * connections sharing a client id and subdomain - values that are not secret,
- * the subdomain appears in every PagerDuty URL - would share a cached token
- * without either secret ever being checked.
+ * The client secret is part of the key. Leaving it out would mean two things,
+ * both bad: rotating a leaked secret would not invalidate the token issued to
+ * the old one, and two connections sharing a client id and subdomain - values
+ * that are not secret, the subdomain appears in every PagerDuty URL - would
+ * share a cached token without either secret ever being checked.
+ *
+ * It goes in as itself rather than as a digest. Hashing it protected nothing:
+ * every value in this map is a live `Bearer` header, so the map is
+ * credential-bearing whatever the keys look like, and the credentials object
+ * is in memory for the whole call regardless. A digest here only read to a
+ * scanner as a password stored under a fast hash, which is not what this is.
+ *
+ * JSON encodes the parts so no separator can appear inside one and make two
+ * different credentials collide on one key.
  */
 function oauthCacheKey(credentials: PagerDutyCredentials): string {
-  const secretFingerprint = createHash("sha256")
-    .update(credentials.PAGERDUTY_OAUTH_CLIENT_SECRET ?? "")
-    .digest("hex")
-    .slice(0, 32);
-  return [
+  return JSON.stringify([
     credentials.PAGERDUTY_OAUTH_CLIENT_ID ?? "",
     credentials.PAGERDUTY_SUBDOMAIN ?? "",
     isEuRegion(credentials) ? "eu" : "us",
-    secretFingerprint,
-  ].join("|");
+    credentials.PAGERDUTY_OAUTH_CLIENT_SECRET ?? "",
+  ]);
 }
 
 export function oauthScopeString(
@@ -583,8 +585,8 @@ export async function listEscalationPolicies(
  * Events API is the one built to stay up. Reading the key over REST on every
  * single page would hand REST's availability to the alerting path; a short
  * cache keeps a REST blip from stopping a page that could otherwise be sent.
- * Keyed by region, service and a fingerprint of the credential, so a rotated
- * credential or a different account never reuses another's key.
+ * Keyed by region, service and the credential itself, so a rotated credential
+ * or a different account never reuses another's key.
  */
 const routingKeys = new Map<
   string,
@@ -598,25 +600,24 @@ export function clearRoutingKeyCache(): void {
   routingKeys.clear();
 }
 
+/**
+ * Cache key for a resolved routing key. The credential is part of it for the
+ * same reason as above - a rotated token must not read another's entry - and
+ * goes in as itself for the same reason too: the values in this map are
+ * routing keys, which page a service on their own, so nothing was being kept
+ * out of it by hashing the key.
+ */
 function routingKeyCacheKey(
   credentials: PagerDutyCredentials,
   serviceId: string
 ): string {
-  const credentialFingerprint = createHash("sha256")
-    .update(
-      [
-        credentials.PAGERDUTY_API_TOKEN ?? "",
-        credentials.PAGERDUTY_OAUTH_CLIENT_ID ?? "",
-        credentials.PAGERDUTY_OAUTH_CLIENT_SECRET ?? "",
-      ].join("|")
-    )
-    .digest("hex")
-    .slice(0, 32);
-  return [
+  return JSON.stringify([
     isEuRegion(credentials) ? "eu" : "us",
     serviceId,
-    credentialFingerprint,
-  ].join("|");
+    credentials.PAGERDUTY_API_TOKEN ?? "",
+    credentials.PAGERDUTY_OAUTH_CLIENT_ID ?? "",
+    credentials.PAGERDUTY_OAUTH_CLIENT_SECRET ?? "",
+  ]);
 }
 
 export async function listPriorities(
