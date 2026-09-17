@@ -426,6 +426,12 @@ describe("simulateCallSequence on a node without eth_simulateV1", () => {
       success: false,
       failureKind: "unavailable",
     });
+    // The node's own refusal is carried into the message (previously dropped
+    // by the bare catch), so an operator can tell a capability problem from
+    // a transport failure.
+    expect(String((result.results[1] as { error?: string }).error)).toContain(
+      "prestateTracer is not supported"
+    );
   });
 
   it("keeps a node error that is not a missing method as unavailable", async () => {

@@ -283,22 +283,33 @@ async function runWithStateOverrides(
         "preflight"
       );
       mergeDiffIntoOverrides(overrides, diff?.post ?? {});
-    } catch {
+    } catch (err) {
       // Without the diff the next call sees state as if this one never ran,
       // which is the behaviour this whole path exists to avoid. Stop rather
-      // than return answers that silently mean something else.
-      results.push(...unavailableRest(calls, results.length));
+      // than return answers that silently mean something else. Carry the node's
+      // own error through so an operator can tell a capability refusal
+      // (prestateTracer or stateOverrides missing) from a transport failure.
+      results.push(
+        ...unavailableRest(calls, results.length, getErrorMessage(err))
+      );
       return results;
     }
   }
   return results;
 }
 
-function unavailableRest(calls: EncodedCall[], from: number): RawCallResult[] {
+function unavailableRest(
+  calls: EncodedCall[],
+  from: number,
+  reason?: string
+): RawCallResult[] {
+  const detail =
+    reason && reason.length > 0
+      ? reason
+      : "the node did not answer debug_traceCall with the prestateTracer trace and the accumulated state overrides";
   return calls.slice(from).map(() => ({
     error: {
-      message:
-        "Could not carry state to this call: the node did not answer debug_traceCall with the prestateTracer trace and the accumulated state overrides",
+      message: `Could not carry state to this call: ${detail}`,
     },
   }));
 }
