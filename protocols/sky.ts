@@ -413,6 +413,9 @@ export default defineAbiProtocol({
       actions: {
         "get-susds-balance-l2": { account: wallet() },
         "get-susds-total-supply-l2": {},
+        // USDS itself is deployed on Base, so its balance read belongs in
+        // the run set rather than the skip list.
+        "get-usds-balance": { account: wallet() },
       },
       skipped: {
         "vault-asset": "Mainnet only - sUsds contract not on Base",
@@ -462,8 +465,8 @@ export default defineAbiProtocol({
         "st-usds-vault-mint": "Mainnet only - stUsds contract not on Base",
         "st-usds-vault-withdraw": "Mainnet only - stUsds contract not on Base",
         "st-usds-vault-redeem": "Mainnet only - stUsds contract not on Base",
-        "get-usds-balance": "Mainnet only - usds contract not on Base",
-        "approve-usds": "Mainnet only - usds contract not on Base",
+        "approve-usds":
+          "USDS is on Base, but this block provisions no approvals - the approve-token write path is covered on chain 1",
         "get-dai-balance": "Mainnet only - dai contract not on Base",
         "approve-dai": "Mainnet only - dai contract not on Base",
         "get-sky-balance": "Mainnet only - sky contract not on Base",
@@ -484,6 +487,9 @@ export default defineAbiProtocol({
       actions: {
         "get-susds-balance-l2": { account: wallet() },
         "get-susds-total-supply-l2": {},
+        // USDS itself is deployed on Arbitrum, so its balance read belongs
+        // in the run set rather than the skip list.
+        "get-usds-balance": { account: wallet() },
       },
       skipped: {
         "vault-asset": "Mainnet only - sUsds contract not on Arbitrum",
@@ -542,8 +548,8 @@ export default defineAbiProtocol({
           "Mainnet only - stUsds contract not on Arbitrum",
         "st-usds-vault-redeem":
           "Mainnet only - stUsds contract not on Arbitrum",
-        "get-usds-balance": "Mainnet only - usds contract not on Arbitrum",
-        "approve-usds": "Mainnet only - usds contract not on Arbitrum",
+        "approve-usds":
+          "USDS is on Arbitrum, but this block provisions no approvals - the approve-token write path is covered on chain 1",
         "get-dai-balance": "Mainnet only - dai contract not on Arbitrum",
         "approve-dai": "Mainnet only - dai contract not on Arbitrum",
         "get-sky-balance": "Mainnet only - sky contract not on Arbitrum",

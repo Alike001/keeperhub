@@ -127,6 +127,43 @@ describe("protocol calldata: registry address consistency", () => {
   }
 });
 
+describe("protocol calldata: skips that claim a contract is absent", () => {
+  // A skip reason saying "<contract> contract not on <chain>" is a factual
+  // claim about the registry. The fixture planner takes it on trust: a slug
+  // listed in `skipped` never runs on that chain. When the contract does have
+  // an address there the claim is false and the action is suppressed for no
+  // reason, which is the mirror of advertising a function the chain does not
+  // implement. Skips for a missing prerequisite (a balance the fork does not
+  // provision) use different wording and are not checked here.
+  for (const protocol of getRegisteredProtocols()) {
+    for (const [chainId, chainData] of Object.entries(
+      protocol.testData ?? {}
+    )) {
+      const claims = Object.entries(chainData.skipped ?? {}).filter((entry) =>
+        entry[1].includes("not on ")
+      );
+      if (claims.length === 0) {
+        continue;
+      }
+      it(`${protocol.slug} on ${chainId}: every absence claim matches the registry`, () => {
+        for (const [slug, reason] of claims) {
+          const action = protocol.actions.find((a) => a.slug === slug);
+          expect(
+            action,
+            `skip "${slug}" names no registered action`
+          ).toBeDefined();
+          const contractKey = action?.contract ?? "";
+          const address = protocol.contracts[contractKey]?.addresses?.[chainId];
+          expect(
+            address,
+            `${protocol.slug}/${slug} is skipped as "${reason}" but ${contractKey} resolves ${address} on chain ${chainId}`
+          ).toBeUndefined();
+        }
+      });
+    }
+  }
+});
+
 describe("protocol calldata: bound-encode goldens (testData chains)", () => {
   for (const protocol of getRegisteredProtocols()) {
     const chains = Object.keys(protocol.testData ?? {});
