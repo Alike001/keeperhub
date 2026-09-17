@@ -21,6 +21,8 @@ RUN npm install -g pnpm@9
 # Copy package files
 COPY package.json pnpm-lock.yaml* ./
 COPY .npmrc* ./
+# pnpm resolves pnpm.patchedDependencies paths from the workspace root
+COPY patches/ ./patches/
 
 # Install dependencies with cache mount for faster rebuilds
 RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
@@ -37,6 +39,7 @@ WORKDIR /app
 RUN npm install -g pnpm@9
 COPY --link --from=deps /app/node_modules ./node_modules
 COPY package.json pnpm-lock.yaml* .npmrc* ./
+COPY patches/ ./patches/
 ENV HOSTNAME=0.0.0.0
 EXPOSE 3000
 CMD ["pnpm", "dev", "--hostname", "0.0.0.0"]
@@ -137,6 +140,7 @@ RUN --mount=type=cache,id=nextjs-build-cache,target=/app/.next/cache,sharing=loc
 FROM builder AS sentry-upload
 ARG SENTRY_ORG
 ARG SENTRY_PROJECT
+# hadolint ignore=DL3064
 ARG SENTRY_AUTH_TOKEN
 ARG SENTRY_RELEASE
 RUN if [ -n "$SENTRY_AUTH_TOKEN" ]; then \
@@ -337,7 +341,7 @@ EXPOSE 3000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:3000/ || exit 1
+  CMD ["sh", "-c", "curl -f http://localhost:3000/ || exit 1"]
 
 # Start the application
 CMD ["node", "server.js"]
