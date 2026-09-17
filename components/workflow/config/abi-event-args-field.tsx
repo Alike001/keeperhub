@@ -227,6 +227,25 @@ export function AbiEventArgsField({
     onChange(Object.keys(merged).length === 0 ? "" : JSON.stringify(merged));
   };
 
+  // Checked first: the step fails on an unreadable value whatever the ABI
+  // and event say, so no other message may stand in for this one.
+  if (parsedStored.kind === "unreadable") {
+    return (
+      <div className="space-y-2 rounded-md border border-dashed p-3 text-center text-muted-foreground text-sm">
+        <p>
+          The saved filter is not a JSON object of parameter names to values,
+          so it cannot be shown here. The step will fail on it until it is
+          fixed or cleared.
+        </p>
+        {!disabled && (
+          <Button onClick={() => onChange("")} size="sm" variant="outline">
+            Clear filter
+          </Button>
+        )}
+      </div>
+    );
+  }
+
   if (state.kind !== "ready") {
     const message = {
       "no-event": "Select an event to filter its indexed arguments",
@@ -247,23 +266,6 @@ export function AbiEventArgsField({
         {state.unnamed > 0
           ? `${eventValue} indexes ${state.unnamed} parameter(s) the ABI does not name, so they cannot be filtered by name`
           : `${eventValue} has no indexed parameters, so every occurrence is returned`}
-      </div>
-    );
-  }
-
-  if (parsedStored.kind === "unreadable") {
-    return (
-      <div className="space-y-2 rounded-md border border-dashed p-3 text-center text-muted-foreground text-sm">
-        <p>
-          The saved filter is not a JSON object of parameter names to values,
-          so it cannot be shown here. The step will fail on it until it is
-          fixed or cleared.
-        </p>
-        {!disabled && (
-          <Button onClick={() => onChange("")} size="sm" variant="outline">
-            Clear filter
-          </Button>
-        )}
       </div>
     );
   }
@@ -308,6 +310,13 @@ export function AbiEventArgsField({
           )}
         </div>
       ))}
+      {state.unnamed > 0 && (
+        <p className="ml-1 text-muted-foreground text-xs">
+          {eventValue} also indexes {state.unnamed} parameter(s) the ABI does
+          not name. Those cannot be filtered by name and always match any
+          value.
+        </p>
+      )}
     </div>
   );
 }

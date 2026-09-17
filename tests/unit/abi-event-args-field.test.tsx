@@ -97,6 +97,49 @@ describe("AbiEventArgsField", () => {
     expect(onChange).toHaveBeenCalledWith(JSON.stringify({ from: ALICE }));
   });
 
+  it("notes an unnamed indexed parameter beside the named ones", () => {
+    const mixed = JSON.stringify([
+      {
+        type: "event",
+        name: "Mixed",
+        inputs: [
+          { name: "", type: "address", indexed: true },
+          { name: "to", type: "address", indexed: true },
+        ],
+      },
+    ]);
+    act(() => {
+      root.render(
+        <AbiEventArgsField
+          abiValue={mixed}
+          eventValue="Mixed"
+          field={field}
+          onChange={vi.fn()}
+          value=""
+        />
+      );
+    });
+    expect(input("to")).not.toBeNull();
+    expect(container.textContent).toContain(
+      "also indexes 1 parameter(s) the ABI does not name"
+    );
+  });
+
+  it("flags an unreadable filter even when the ABI has not loaded", () => {
+    act(() => {
+      root.render(
+        <AbiEventArgsField
+          abiValue=""
+          eventValue="Transfer"
+          field={field}
+          onChange={vi.fn()}
+          value="{not json"
+        />
+      );
+    });
+    expect(container.textContent).toContain("cannot be shown here");
+  });
+
   it("leaves the stored value alone when the panel is read-only", () => {
     const onChange = render(
       JSON.stringify({ from: ALICE, owner: ALICE }),
