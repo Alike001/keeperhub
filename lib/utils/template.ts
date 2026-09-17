@@ -51,6 +51,53 @@ export function remapTemplateRefsInString(
   });
 }
 
+/**
+ * Rewrite every node reference in a node's config after duplication.
+ *
+ * Two shapes travel in a config. Most references are `{{@nodeId:...}}`
+ * templates embedded in a string. Some fields store the id on its own instead,
+ * because they point at a node whose output they deliberately do not read -
+ * the PagerDuty resolve action names the trigger node whose alert it closes,
+ * precisely so it still works on the branch where that trigger never ran.
+ *
+ * A bare id used to survive duplication unchanged and go on naming a node in
+ * the workflow it was copied from. For that action it meant the copy resolving
+ * an alert that does not exist, which PagerDuty accepts with a 202 and drops:
+ * the incident stays open and every run reports success.
+ *
+ * Only ids of nodes being duplicated right now are rewritten, and node ids are
+ * nanoids, so a config value that is not a node reference cannot collide.
+ */
+export function remapNodeReferencesInConfig(
+  config: Record<string, unknown> | undefined,
+  idMap: Map<string, string>
+): Record<string, unknown> | undefined {
+  if (!config || typeof config !== "object") {
+    return config;
+  }
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(config)) {
+    result[key] = remapNodeReferencesInValue(value, idMap);
+  }
+  return result;
+}
+
+function remapNodeReferencesInValue(
+  value: unknown,
+  idMap: Map<string, string>
+): unknown {
+  if (typeof value === "string") {
+    return remapTemplateRefsInString(idMap.get(value) ?? value, idMap);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => remapNodeReferencesInValue(item, idMap));
+  }
+  if (typeof value === "object" && value !== null) {
+    return remapNodeReferencesInConfig(value as Record<string, unknown>, idMap);
+  }
+  return value;
+}
+
 export type NodeOutputs = {
   [nodeId: string]: {
     label: string;

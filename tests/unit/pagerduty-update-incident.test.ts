@@ -245,7 +245,7 @@ describe("resolve incident", () => {
     }
   });
 
-  it("does not call the incidents API when the check is off", async () => {
+  it("does not call the incidents API when the check is turned off", async () => {
     mockRoutingKey();
     safeFetch.mockResolvedValueOnce(response(202, {}));
 
@@ -253,10 +253,36 @@ describe("resolve incident", () => {
       integrationId: "int-1",
       pagerdutyServiceId: "PSKY1",
       dedupKey: "k1",
+      verifyWithPagerDuty: false,
       _context: CONTEXT,
     } as never);
 
     expect(safeFetch).toHaveBeenCalledTimes(3);
+  });
+
+  /**
+   * The editor seeds the action's declared default into the config when
+   * somebody picks the action, so a node built there always carries this
+   * field. A node built through the API or by an MCP caller does not, and
+   * reading an absent value as "no" turned the check off for all of them -
+   * silently, and against what the action, its help text and the docs say.
+   */
+  it("reads the incident back when the field was never set at all", async () => {
+    mockRoutingKey();
+    safeFetch
+      .mockResolvedValueOnce(response(202, {}))
+      .mockResolvedValueOnce(
+        response(200, { incidents: [{ id: "PINC1", status: "resolved" }] })
+      );
+
+    const result = await resolveIncidentStep({
+      integrationId: "int-1",
+      pagerdutyServiceId: "PSKY1",
+      dedupKey: "k1",
+      _context: CONTEXT,
+    } as never);
+
+    expect(result).toMatchObject({ incidentStatus: "resolved" });
   });
 });
 

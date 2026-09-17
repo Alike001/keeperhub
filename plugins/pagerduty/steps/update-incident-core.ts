@@ -145,9 +145,16 @@ async function verifyIfAsked(params: {
   dedupKey: string;
   action: "acknowledge" | "resolve";
 }): Promise<Verification> {
+  // Absent means on, not off. Both actions declare the field's default as
+  // "true", but that default is seeded into the config by the editor when
+  // somebody picks the action - a node created through the API or an MCP
+  // caller never goes through that, so the field simply is not there. Reading
+  // an absent value as "no" turned the check off for every one of those
+  // nodes, silently and against what the action, its help text and the docs
+  // all say. Only an explicit no means no.
   const asked =
-    params.input.verifyWithPagerDuty === true ||
-    params.input.verifyWithPagerDuty === "true";
+    params.input.verifyWithPagerDuty !== false &&
+    params.input.verifyWithPagerDuty !== "false";
   if (!asked) {
     return {};
   }
