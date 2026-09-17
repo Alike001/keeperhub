@@ -558,7 +558,12 @@ function resolveMissingOperands(
  */
 const NUMERIC_OPERAND_RE = /^[+-]?\d+(\.\d+)?$/;
 
-/** A decimal operand split into sign, integer digits and fraction digits. */
+/**
+ * A decimal operand split into sign, integer digits and fraction digits. The
+ * integer digits arrive with leading zeros already dropped: both readers of
+ * this field want them gone, and an operand can be arbitrarily long, so the
+ * scan happens once here rather than on each comparison.
+ */
 type DecimalOperand = {
   negative: boolean;
   integer: string;
@@ -572,7 +577,9 @@ function splitDecimal(literal: string): DecimalOperand {
   const point = unsigned.indexOf(".");
   return {
     negative,
-    integer: point === -1 ? unsigned : unsigned.slice(0, point),
+    integer: significantDigits(
+      point === -1 ? unsigned : unsigned.slice(0, point)
+    ),
     fraction: point === -1 ? "" : unsigned.slice(point + 1),
   };
 }
@@ -650,12 +657,13 @@ function significantDigits(digits: string): string {
   return digits.slice(first);
 }
 
-/** True when no digit on either side of the point is non-zero. */
+/**
+ * True when no digit on either side of the point is non-zero. The integer
+ * digits were stripped when the operand was split, so only the fraction is
+ * scanned here, and only for a value below one.
+ */
 function isZeroOperand(operand: DecimalOperand): boolean {
-  return (
-    significantDigits(operand.integer) === "" &&
-    significantDigits(operand.fraction) === ""
-  );
+  return operand.integer === "" && significantDigits(operand.fraction) === "";
 }
 
 /**
@@ -667,8 +675,8 @@ function isZeroOperand(operand: DecimalOperand): boolean {
  * the length of the shorter operand rather than the square of the longer.
  */
 function compareMagnitude(left: DecimalOperand, right: DecimalOperand): number {
-  const a = significantDigits(left.integer);
-  const b = significantDigits(right.integer);
+  const a = left.integer;
+  const b = right.integer;
   if (a.length !== b.length) {
     return a.length < b.length ? -1 : 1;
   }
