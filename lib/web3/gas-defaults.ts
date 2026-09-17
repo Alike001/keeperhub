@@ -67,7 +67,9 @@ export function parseGasLimitConfig(
   return { mode: "multiplier", value: raw };
 }
 
-const CHAIN_GAS_DEFAULTS: Record<number, ChainGasDefaults> = {
+// Exported so the parity test can iterate every chain listed here rather than
+// a hand-kept copy of the ids, which would reintroduce the hand-sync it guards.
+export const CHAIN_GAS_DEFAULTS: Readonly<Record<number, ChainGasDefaults>> = {
   // Ethereum mainnet
   1: { multiplier: 2.0 },
   // Sepolia testnet

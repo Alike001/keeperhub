@@ -44,7 +44,10 @@ vi.mock("ethers", () => ({
 }));
 
 // Import after mocks
-import { getChainGasDefaults } from "@/lib/web3/gas-defaults";
+import {
+  CHAIN_GAS_DEFAULTS,
+  getChainGasDefaults,
+} from "@/lib/web3/gas-defaults";
 import {
   AdaptiveGasStrategy,
   getGasStrategy,
@@ -500,9 +503,12 @@ describe("AdaptiveGasStrategy", () => {
       // gas-defaults.ts states by comment that every entry must match
       // getHardcodedOverrides here, and the two are kept in sync by hand
       // because that module must stay ethers-free. Nothing enforced it.
-      for (const chainId of [
-        1, 11_155_111, 42_161, 8453, 137, 999, 4217, 4663,
-      ]) {
+      //
+      // Iterates the display table itself, so a chain added there is checked
+      // automatically instead of depending on someone also adding it here.
+      const chainIds = Object.keys(CHAIN_GAS_DEFAULTS).map(Number);
+      expect(chainIds.length).toBeGreaterThan(0);
+      for (const chainId of chainIds) {
         const strategy = new AdaptiveGasStrategy();
         const overrides = (
           strategy as unknown as {
