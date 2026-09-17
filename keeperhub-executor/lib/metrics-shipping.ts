@@ -17,6 +17,9 @@
 
 import type { Counter } from "prom-client";
 
+import { isTriggerType } from "../../lib/metrics/types";
+import type { DispatchTarget } from "../types";
+
 export type MetricDelta = {
   name: string;
   labels: Record<string, string>;
@@ -235,29 +238,34 @@ export function isIngestPayload(value: unknown): value is IngestPayload {
  * `dispatchTarget` straight into `trigger_type` and `dispatch_target`. An
  * unexpected value would not corrupt a number - it would mint a new time series
  * for every distinct string a pod sends, which is the metrics-cost failure
- * #2289 rules out by name. Without the allowlist the values are bounded only by
- * what the one current caller happens to send.
+ * #2289 rules out by name.
  *
- * Mirrors the `triggerType` literals in `executorMessageSchema`
- * (message-schema.ts) and the `DispatchTarget` union (types.ts). Duplicated as
- * runtime arrays deliberately: both sources are type-only or zod schemas, and
- * importing either would pull the message schema into a path that only needs to
- * compare strings.
+ * Both sets are taken from their owners rather than restated here, because a
+ * copy inside a validator fails in the direction that loses data:
+ *
+ *  - Trigger types come from `isTriggerType`/`TRIGGER_TYPES` (lib/metrics/types),
+ *    which includes `scheduled` - the legacy label kept so historical series stay
+ *    valid. A hand-written list that omitted it would not corrupt a metric, it
+ *    would silently discard observations the platform still emits.
+ *  - Dispatch targets are a total map, `Record<DispatchTarget, true>`, so adding
+ *    a target to the union without allowing it here is a compile error. A
+ *    `readonly DispatchTarget[]` would compile and then drop that target's samples
+ *    at runtime, which is the failure this whole change exists to prevent.
+ *
+ * `isTriggerType` is imported rather than re-implemented: lib/metrics/types has no
+ * imports of its own, and observation-applier already imports LabelKeys from it, so
+ * this adds nothing to a pod's load.
  */
-const ALLOWED_TRIGGER_TYPES = [
-  "schedule",
-  "block",
-  "event",
-  "manual",
-  "webhook",
-] as const;
-const ALLOWED_DISPATCH_TARGETS = ["k8s-job", "in-process", "api"] as const;
+const DISPATCH_TARGETS: Record<DispatchTarget, true> = {
+  "k8s-job": true,
+  "in-process": true,
+  api: true,
+};
 
-function isAllowedLabelValue(
-  allowed: readonly string[],
-  value: string
-): boolean {
-  return allowed.includes(value);
+function isDispatchTarget(value: string): value is DispatchTarget {
+  // hasOwn, not `value in`: the key arrives over the network, so inherited
+  // members like `toString` must not read as a valid target.
+  return Object.hasOwn(DISPATCH_TARGETS, value);
 }
 
 export function isLatencyObservation(value: unknown): value is LatencyObservation {
@@ -270,9 +278,9 @@ export function isLatencyObservation(value: unknown): value is LatencyObservatio
     typeof o.executionId === "string" &&
     typeof o.workflowId === "string" &&
     typeof o.triggerType === "string" &&
-    isAllowedLabelValue(ALLOWED_TRIGGER_TYPES, o.triggerType) &&
+    isTriggerType(o.triggerType) &&
     typeof o.dispatchTarget === "string" &&
-    isAllowedLabelValue(ALLOWED_DISPATCH_TARGETS, o.dispatchTarget) &&
+    isDispatchTarget(o.dispatchTarget) &&
     (o.stage === "observed-broadcast" || o.stage === "received-completed") &&
     typeof o.durationMs === "number" &&
     Number.isFinite(o.durationMs) &&
