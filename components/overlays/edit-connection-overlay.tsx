@@ -557,8 +557,8 @@ export function EditConnectionForm({
               <div className="mt-1 ml-1">
                 {cleared ? (
                   <span className="text-muted-foreground text-xs">
-                    Will be removed when you save. Type a new value to keep
-                    this credential instead.
+                    Will be removed when you save. Type a new value to keep this
+                    credential instead.
                   </span>
                 ) : (
                   <button

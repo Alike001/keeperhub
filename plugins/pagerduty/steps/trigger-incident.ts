@@ -94,14 +94,14 @@ type TriggerIncidentResult =
       consecutiveRuns: number;
       requiredRuns: number;
       detailsTruncated?: boolean;
-    /** Lines of the links field that were not an https url, so were not sent. */
-    linksDropped?: number;
-    /**
-     * Fields PagerDuty's ceilings forced shorter, named and measured. Present
-     * only when something was actually shortened, so a Condition can branch on
-     * it and a person reading the run can see what the responder did not.
-     */
-    fieldsTrimmed?: string;
+      /** Lines of the links field that were not an https url, so were not sent. */
+      linksDropped?: number;
+      /**
+       * Fields PagerDuty's ceilings forced shorter, named and measured. Present
+       * only when something was actually shortened, so a Condition can branch on
+       * it and a person reading the run can see what the responder did not.
+       */
+      fieldsTrimmed?: string;
       /** True when the summary template rendered empty and a fallback title was sent. */
       summaryFellBack?: boolean;
       /** PagerDuty's service status at send time. */
@@ -141,7 +141,11 @@ function buildCustomDetails(
   } else if (typeof raw === "string" && raw.trim()) {
     try {
       const parsed: unknown = JSON.parse(raw);
-      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      if (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        !Array.isArray(parsed)
+      ) {
         Object.assign(base, parsed as Record<string, unknown>);
       } else {
         base.details = parsed;
@@ -549,7 +553,11 @@ async function stepHandler(
     summaryFellBack,
     serviceStatus: routingKey.value.serviceStatus,
     suppressedByService: suppressed,
-    message: unrecognisedStatusNote(routingKey.value.serviceStatus, suppressed, result.value.message),
+    message: unrecognisedStatusNote(
+      routingKey.value.serviceStatus,
+      suppressed,
+      result.value.message
+    ),
   };
 }
 

@@ -104,7 +104,11 @@ async function resolveEscalationPolicy(
     // the create call; returning it as a bare error meant a 429 from PagerDuty
     // failed the run whatever the switch said, and was recorded as the
     // author's mistake.
-    return { ok: false, error: policy.failure.message, failure: policy.failure };
+    return {
+      ok: false,
+      error: policy.failure.message,
+      failure: policy.failure,
+    };
   }
   if (policy.value) {
     return { ok: true, policyId: wanted, fellBack: false };

@@ -318,7 +318,9 @@ export function buildTriggerEvent(params: {
       // drop custom details and links - so a component that rendered to
       // something enormous produced a 400 nothing could mitigate, and the
       // page was lost to a field nobody thinks of as risky.
-      component: omitEmpty(trimToLimit(input.component ?? "", "Component", trims)),
+      component: omitEmpty(
+        trimToLimit(input.component ?? "", "Component", trims)
+      ),
       group: omitEmpty(trimToLimit(input.group ?? "", "Group", trims)),
       class: omitEmpty(trimToLimit(input.class ?? "", "Class", trims)),
       custom_details: input.customDetails,

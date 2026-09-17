@@ -185,7 +185,8 @@ export function isPagerDutyId(value: string): boolean {
  * control characters are rejected outright, because a header value carrying
  * CR or LF is a header-injection attempt, never a typo.
  */
-const HEADER_SAFE_EMAIL = /^[^\s@\u0000-\u001f\u007f]+@[^\s@\u0000-\u001f\u007f]+\.[^\s@\u0000-\u001f\u007f]+$/;
+const HEADER_SAFE_EMAIL =
+  /^[^\s@\u0000-\u001f\u007f]+@[^\s@\u0000-\u001f\u007f]+\.[^\s@\u0000-\u001f\u007f]+$/;
 
 export function isHeaderSafeEmail(value: string): boolean {
   return value.length <= 320 && HEADER_SAFE_EMAIL.test(value);
@@ -455,7 +456,7 @@ export async function resolveAuthHeader(
           message:
             "The PagerDuty API token contains characters that cannot go in a request header - it was probably pasted with a line break or a space. Re-copy it in Settings, Connections.",
           retryable: false,
-    fault: "user",
+          fault: "user",
         },
       };
     }
@@ -646,7 +647,9 @@ const MAX_PAGES = 5;
  */
 export async function listServices(
   credentials: PagerDutyCredentials
-): Promise<PagerDutyResult<{ services: PagerDutyService[]; truncated: boolean }>> {
+): Promise<
+  PagerDutyResult<{ services: PagerDutyService[]; truncated: boolean }>
+> {
   const services: PagerDutyService[] = [];
   let offset = 0;
 
@@ -943,7 +946,11 @@ export async function resolveRoutingKeyWithRetries(params: {
   maxRetries: number;
   baseDelayMs: number;
   wait: (ms: number) => Promise<void>;
-  onRetry?: (failure: PagerDutyFailure, attempt: number, delayMs: number) => void;
+  onRetry?: (
+    failure: PagerDutyFailure,
+    attempt: number,
+    delayMs: number
+  ) => void;
 }): Promise<PagerDutyResult<ResolvedService>> {
   let result = await resolveRoutingKey(params.credentials, params.serviceId);
 
@@ -1054,7 +1061,11 @@ export async function postEventWithRetries(params: {
   path?: string;
   maxRetries: number;
   baseDelayMs: number;
-  onRetry?: (failure: PagerDutyFailure, attempt: number, delayMs: number) => void;
+  onRetry?: (
+    failure: PagerDutyFailure,
+    attempt: number,
+    delayMs: number
+  ) => void;
   wait: (ms: number) => Promise<void>;
 }): Promise<PagerDutyResult<{ dedupKey?: string; message?: string }>> {
   let result = await postEvent(params.credentials, params.body, params.path);
@@ -1221,7 +1232,12 @@ export async function createIncident(
     });
 
     const parsed = (await response.json().catch(() => ({}))) as {
-      incident?: { id?: string; incident_number?: number; html_url?: string; status?: string };
+      incident?: {
+        id?: string;
+        incident_number?: number;
+        html_url?: string;
+        status?: string;
+      };
       error?: { message?: string; errors?: string[] };
     };
 

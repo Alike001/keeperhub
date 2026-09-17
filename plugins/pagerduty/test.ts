@@ -164,10 +164,7 @@ function describeStatus(status: number): string {
   return `PagerDuty returned HTTP ${status}.`;
 }
 
-async function listServices(
-  host: string,
-  header: string
-): Promise<Response> {
+async function listServices(host: string, header: string): Promise<Response> {
   return await fetch(`${host}/services?limit=1`, {
     method: "GET",
     headers: { Authorization: header, Accept: PAGERDUTY_ACCEPT_V2 },
@@ -191,7 +188,8 @@ async function describeAuthFailure(
   }
 
   const otherRegion = region === "eu" ? "us" : "eu";
-  const otherHost = otherRegion === "eu" ? PAGERDUTY_API_HOST_EU : PAGERDUTY_API_HOST;
+  const otherHost =
+    otherRegion === "eu" ? PAGERDUTY_API_HOST_EU : PAGERDUTY_API_HOST;
   // A connection with no API token cannot have a mistyped one, and telling
   // somebody to check a token they never entered sends them looking at a
   // field they cannot fix.

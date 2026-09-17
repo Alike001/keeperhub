@@ -282,27 +282,54 @@ const pagerDutyPlugin: IntegrationPlugin = {
       stepImportPath: "trigger-incident",
       docUrl: "https://docs.keeperhub.com/plugins/pagerduty",
       outputFields: [
-        { field: "delivered", description: "Whether PagerDuty accepted the event" },
+        {
+          field: "delivered",
+          description: "Whether PagerDuty accepted the event",
+        },
         { field: "dedupKey", description: "Key that identifies the alert" },
         {
           field: "status",
           description:
             "triggered, suppressed when the service took the event and raised no incident, held by the consecutive-runs guard, or failed when the event could not be delivered",
         },
-        { field: "consecutiveRuns", description: "Runs in a row that reached this node" },
-        { field: "requiredRuns", description: "Runs in a row configured before paging" },
-        { field: "error", description: "Why the event was not delivered, when it was not" },
-        { field: "backupAttempted", description: "Whether a backup notification was sent" },
-        { field: "backupDelivered", description: "Whether the backup notification landed" },
+        {
+          field: "consecutiveRuns",
+          description: "Runs in a row that reached this node",
+        },
+        {
+          field: "requiredRuns",
+          description: "Runs in a row configured before paging",
+        },
+        {
+          field: "error",
+          description: "Why the event was not delivered, when it was not",
+        },
+        {
+          field: "backupAttempted",
+          description: "Whether a backup notification was sent",
+        },
+        {
+          field: "backupDelivered",
+          description: "Whether the backup notification landed",
+        },
         { field: "backupChannel", description: "discord, slack or telegram" },
-        { field: "backupError", description: "Why the backup notification failed, when it did" },
-        { field: "serviceStatus", description: "PagerDuty's service status when the event was sent" },
+        {
+          field: "backupError",
+          description: "Why the backup notification failed, when it did",
+        },
+        {
+          field: "serviceStatus",
+          description: "PagerDuty's service status when the event was sent",
+        },
         {
           field: "suppressedByService",
           description:
             "True when the service was in maintenance, so PagerDuty took the event and raised no incident",
         },
-        { field: "detailsTruncated", description: "True when custom details were dropped for size" },
+        {
+          field: "detailsTruncated",
+          description: "True when custom details were dropped for size",
+        },
         {
           field: "linksDropped",
           description:
@@ -493,8 +520,14 @@ const pagerDutyPlugin: IntegrationPlugin = {
       stepImportPath: "acknowledge-incident",
       docUrl: "https://docs.keeperhub.com/plugins/pagerduty",
       outputFields: [
-        { field: "delivered", description: "Whether PagerDuty accepted the event" },
-        { field: "dedupKey", description: "Key of the alert that was acknowledged" },
+        {
+          field: "delivered",
+          description: "Whether PagerDuty accepted the event",
+        },
+        {
+          field: "dedupKey",
+          description: "Key of the alert that was acknowledged",
+        },
         {
           field: "incidentStatus",
           description:
@@ -502,9 +535,13 @@ const pagerDutyPlugin: IntegrationPlugin = {
         },
         {
           field: "incidentPriority",
-          description: "The incident's priority when the check is on and it has one",
+          description:
+            "The incident's priority when the check is on and it has one",
         },
-        { field: "incidentUrl", description: "Link to the incident, when the check found it" },
+        {
+          field: "incidentUrl",
+          description: "Link to the incident, when the check found it",
+        },
         {
           field: "error",
           description:
@@ -512,7 +549,8 @@ const pagerDutyPlugin: IntegrationPlugin = {
         },
         {
           field: "verificationError",
-          description: "Why the check could not read the incident back, when it could not",
+          description:
+            "Why the check could not read the incident back, when it could not",
         },
         {
           field: "delayedSeconds",
@@ -549,7 +587,10 @@ const pagerDutyPlugin: IntegrationPlugin = {
       stepImportPath: "send-change-event",
       docUrl: "https://docs.keeperhub.com/plugins/pagerduty",
       outputFields: [
-        { field: "delivered", description: "Whether PagerDuty accepted the change event" },
+        {
+          field: "delivered",
+          description: "Whether PagerDuty accepted the change event",
+        },
         {
           field: "fieldsTrimmed",
           description:
@@ -599,8 +640,14 @@ const pagerDutyPlugin: IntegrationPlugin = {
       stepImportPath: "resolve-incident",
       docUrl: "https://docs.keeperhub.com/plugins/pagerduty",
       outputFields: [
-        { field: "delivered", description: "Whether PagerDuty accepted the event" },
-        { field: "dedupKey", description: "Key of the alert that was resolved" },
+        {
+          field: "delivered",
+          description: "Whether PagerDuty accepted the event",
+        },
+        {
+          field: "dedupKey",
+          description: "Key of the alert that was resolved",
+        },
         {
           field: "incidentStatus",
           description:
@@ -608,9 +655,13 @@ const pagerDutyPlugin: IntegrationPlugin = {
         },
         {
           field: "incidentPriority",
-          description: "The incident's priority when the check is on and it has one",
+          description:
+            "The incident's priority when the check is on and it has one",
         },
-        { field: "incidentUrl", description: "Link to the incident, when the check found it" },
+        {
+          field: "incidentUrl",
+          description: "Link to the incident, when the check found it",
+        },
         {
           field: "error",
           description:
@@ -618,7 +669,8 @@ const pagerDutyPlugin: IntegrationPlugin = {
         },
         {
           field: "verificationError",
-          description: "Why the check could not read the incident back, when it could not",
+          description:
+            "Why the check could not read the incident back, when it could not",
         },
         {
           field: "delayedSeconds",
@@ -657,12 +709,19 @@ const pagerDutyPlugin: IntegrationPlugin = {
         { field: "incidentId", description: "PagerDuty incident id" },
         { field: "incidentNumber", description: "Incident number" },
         { field: "incidentUrl", description: "Link to the incident" },
-        { field: "status", description: "Incident status as PagerDuty created it" },
+        {
+          field: "status",
+          description: "Incident status as PagerDuty created it",
+        },
         {
           field: "escalationPolicyFellBack",
-          description: "True when the chosen policy was gone and the service's own was used",
+          description:
+            "True when the chosen policy was gone and the service's own was used",
         },
-        { field: "delivered", description: "Whether PagerDuty created the incident" },
+        {
+          field: "delivered",
+          description: "Whether PagerDuty created the incident",
+        },
         {
           field: "fieldsTrimmed",
           description:
@@ -670,7 +729,8 @@ const pagerDutyPlugin: IntegrationPlugin = {
         },
         {
           field: "priorityId",
-          description: "The priority the incident was created with, when one was chosen",
+          description:
+            "The priority the incident was created with, when one was chosen",
         },
         {
           field: "error",

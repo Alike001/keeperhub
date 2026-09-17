@@ -253,8 +253,15 @@ export function PagerDutyServiceField({
   integrationId?: string;
   onChange: (value: string) => void;
 }) {
-  const { items, loading, error, reload, accountSubdomain, euRegion, truncated } =
-    usePagerDutyResources(integrationId, "services", pickServices);
+  const {
+    items,
+    loading,
+    error,
+    reload,
+    accountSubdomain,
+    euRegion,
+    truncated,
+  } = usePagerDutyResources(integrationId, "services", pickServices);
 
   const selected = items.find((service) => service.id === value);
   // A stored id that the account no longer lists: deleted, moved, or outside
@@ -367,9 +374,9 @@ export function PagerDutyServiceField({
           Service <code className="font-mono">{value}</code> is not in this
           account any more - deleted, or outside what this connection can see.
           The node still points at it, so nothing has been quietly repointed at
-          another team. Open it in PagerDuty to tell those two apart: gone
-          means deleted, and a service that loads means this connection cannot
-          see it. Pick a service to fix it.
+          another team. Open it in PagerDuty to tell those two apart: gone means
+          deleted, and a service that loads means this connection cannot see it.
+          Pick a service to fix it.
           <div className="mt-1 flex flex-wrap items-center gap-2">
             <ReloadButton onClick={reload} />
             {accountSubdomain ? (
@@ -384,24 +391,23 @@ export function PagerDutyServiceField({
       {selected && !selected.acceptsEvents && (
         <Notice tone="warning">
           {selected.name} has no Events API v2 integration, so it cannot accept
-          events. Add one in PagerDuty under Service, Integrations, then
-          reload.
+          events. Add one in PagerDuty under Service, Integrations, then reload.
         </Notice>
       )}
 
       {selected && selected.status === "disabled" && (
         <Notice tone="warning">
-          {selected.name} is disabled in PagerDuty. It accepts events and
-          raises no incident, so a page sent to it goes nowhere. This node
-          fails rather than reporting a page that never happened.
+          {selected.name} is disabled in PagerDuty. It accepts events and raises
+          no incident, so a page sent to it goes nowhere. This node fails rather
+          than reporting a page that never happened.
         </Notice>
       )}
 
       {selected && selected.status === "maintenance" && (
         <Notice tone="warning">
-          {selected.name} is in a maintenance window, so PagerDuty will take
-          the event and raise no incident until the window ends. The node
-          reports that rather than claiming someone was paged.
+          {selected.name} is in a maintenance window, so PagerDuty will take the
+          event and raise no incident until the window ends. The node reports
+          that rather than claiming someone was paged.
         </Notice>
       )}
 
@@ -454,11 +460,7 @@ export function PagerDutyEscalationPolicyField({
     accountSubdomain,
     euRegion,
     truncated,
-  } = usePagerDutyResources(
-    integrationId,
-    "escalation-policies",
-    pickPolicies
-  );
+  } = usePagerDutyResources(integrationId, "escalation-policies", pickPolicies);
 
   const selected = items.find((policy) => policy.id === value);
   // Not claimed on a truncated list, for the same reason as the service field
@@ -469,11 +471,7 @@ export function PagerDutyEscalationPolicyField({
     Boolean(value) && !(loading || error || truncated) && !selected;
 
   if (!integrationId) {
-    return (
-      <Notice tone="info">
-        Select a PagerDuty connection first.
-      </Notice>
-    );
+    return <Notice tone="info">Select a PagerDuty connection first.</Notice>;
   }
 
   return (
@@ -596,10 +594,9 @@ export function PagerDutyPriorityField({
         {value ? (
           <>
             {" "}
-            This node still asks for{" "}
-            <code className="font-mono">{value}</code>, which PagerDuty will
-            reject - a plan that used to include priorities and no longer does
-            looks exactly like this.
+            This node still asks for <code className="font-mono">{value}</code>,
+            which PagerDuty will reject - a plan that used to include priorities
+            and no longer does looks exactly like this.
           </>
         ) : null}
       </Notice>
@@ -712,8 +709,8 @@ export function PagerDutyTriggerNodeField({
   if (nodes.length === 0) {
     return (
       <Notice tone="info">
-        No Trigger Incident node in this workflow yet. Add one, or set the
-        dedup key below by hand on both nodes.
+        No Trigger Incident node in this workflow yet. Add one, or set the dedup
+        key below by hand on both nodes.
       </Notice>
     );
   }
@@ -740,15 +737,14 @@ export function PagerDutyTriggerNodeField({
       {Boolean(value) && !selected && (
         <Notice tone="warning">
           The trigger node this pointed at is gone from the workflow. Pick
-          another, or set the dedup key by hand - otherwise this closes
-          nothing.
+          another, or set the dedup key by hand - otherwise this closes nothing.
         </Notice>
       )}
 
       {!(value || currentDedupKey?.trim()) && (
         <Notice tone="warning">
-          Nothing is selected and no dedup key is set below, so this node has
-          no alert to close and the run will fail when it reaches it. Pick the
+          Nothing is selected and no dedup key is set below, so this node has no
+          alert to close and the run will fail when it reaches it. Pick the
           trigger node, or set the same dedup key on both nodes.
         </Notice>
       )}
@@ -767,8 +763,8 @@ export function PagerDutyTriggerNodeField({
       {dedupKeyMissing && (
         <Notice tone="warning">
           {selected?.label} sets its own dedup key (
-          <code className="font-mono">{selected?.dedupKey}</code>). Put the
-          same value in the dedup key field below, or this closes nothing.
+          <code className="font-mono">{selected?.dedupKey}</code>). Put the same
+          value in the dedup key field below, or this closes nothing.
         </Notice>
       )}
     </div>
@@ -953,8 +949,8 @@ export function PagerDutyTestNodeButton({
         Opens a real alert on this service at the lowest severity, acknowledges
         it and resolves it, in about a second. It uses a dedup key of its own,
         so it cannot touch an alert a workflow opened, and it reads the alert
-        back afterwards to say whether it really closed. If the service notifies on info-severity events, on-call may see
-        it briefly.
+        back afterwards to say whether it really closed. If the service notifies
+        on info-severity events, on-call may see it briefly.
       </p>
 
       {outcome?.error && (
@@ -994,9 +990,7 @@ export function PagerDutyTestNodeButton({
         </Notice>
       )}
 
-      {outcome?.warning && (
-        <Notice tone="warning">{outcome.warning}</Notice>
-      )}
+      {outcome?.warning && <Notice tone="warning">{outcome.warning}</Notice>}
     </div>
   );
 }
@@ -1045,8 +1039,8 @@ export function PagerDutyBackupConnectionField({
     return (
       <Notice tone="info">
         No Discord, Slack or Telegram connection in this organisation yet. Add
-        one under Settings, Connections to use it as a backup when a page
-        cannot be delivered.
+        one under Settings, Connections to use it as a backup when a page cannot
+        be delivered.
       </Notice>
     );
   }
@@ -1062,7 +1056,9 @@ export function PagerDutyBackupConnectionField({
           <SelectValue placeholder="No backup - just fail the run" />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value={NO_BACKUP}>No backup - just fail the run</SelectItem>
+          <SelectItem value={NO_BACKUP}>
+            No backup - just fail the run
+          </SelectItem>
           {usable.map((connection) => (
             <SelectItem key={connection.id} value={connection.id}>
               {connection.name}
@@ -1083,8 +1079,8 @@ export function PagerDutyBackupConnectionField({
 
       {selected && selected.type !== "discord" && (
         <Notice tone="info">
-          {BACKUP_TYPE_LABEL[selected.type]} also needs a destination below:
-          a channel like #alerts for Slack, a chat id for Telegram.
+          {BACKUP_TYPE_LABEL[selected.type]} also needs a destination below: a
+          channel like #alerts for Slack, a chat id for Telegram.
         </Notice>
       )}
     </div>
