@@ -222,7 +222,19 @@ export function PagerDutyServiceField({
               <Loader2 className="size-3.5 animate-spin" />
               Loading services
             </span>
-          ) : (
+          ) : null}
+          {/*
+            A stored id with no matching entry in the list - the account could
+            not be read, or the list is truncated, or the service is gone.
+            Radix draws the placeholder in that case, so a node that is
+            configured reads as though nothing is selected, and somebody
+            "fixes" it by picking another service. The stored id is shown
+            instead, which is the one thing that survives a rename.
+          */}
+          {!loading && value && !selected ? (
+            <span className="font-mono text-muted-foreground">{value}</span>
+          ) : null}
+          {loading || (value && !selected) ? null : (
             <SelectValue placeholder="Select a service" />
           )}
         </SelectTrigger>
@@ -232,7 +244,15 @@ export function PagerDutyServiceField({
               <span className="flex flex-col items-start">
                 <span>{service.name}</span>
                 <span className="text-muted-foreground text-xs">
-                  <span className="font-mono">{service.id}</span>
+                  {/*
+                    The id, and the id first. A service renamed in PagerDuty
+                    comes back under its new name on the next load while the
+                    node still points at the same id, so the id is the only
+                    thing somebody can recognise it by.
+                  */}
+                  <span className="font-mono text-foreground/70">
+                    {service.id}
+                  </span>
                   {" - "}
                   {service.escalationPolicyName
                     ? `pages ${service.escalationPolicyName}`
