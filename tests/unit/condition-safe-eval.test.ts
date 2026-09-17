@@ -423,7 +423,7 @@ describe("safeEvaluateCondition - semantics", () => {
       // ordered character by character, so a branch does run, on an answer
       // that is not about magnitude. "0x10" < "16" because "0" sorts before
       // "6"; "1e18" > "1000000000000000000" because "e" sorts after "0".
-      const rows: Array<[unknown, unknown, boolean, boolean, boolean]> = [
+      const rows: [unknown, unknown, boolean, boolean, boolean][] = [
         ["0x10", "16", true, false, false],
         ["1e18", "1000000000000000000", false, false, true],
         ["0x10", 16, false, false, false],
