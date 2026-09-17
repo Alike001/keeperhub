@@ -54,4 +54,55 @@ describe("ArrayInputField legacy migration", () => {
     ).toEqual(["0xpool1", "0xpool2"]);
     expect(onChange).toHaveBeenCalledWith(["0xpool1", "0xpool2"]);
   });
+
+  it("does not rewrite a legacy value while disabled", async () => {
+    const onChange = vi.fn();
+
+    await act(async () =>
+      root.render(
+        <ArrayInputField
+          disabled
+          fieldKey="pools"
+          itemType="address"
+          onChange={onChange}
+          value="0xpool1"
+        />
+      )
+    );
+
+    expect(
+      Array.from(container.querySelectorAll("input"), (input) => input.value)
+    ).toEqual(["0xpool1"]);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps displayed rows aligned when the legacy value changes", async () => {
+    const onChange = vi.fn();
+
+    await act(async () =>
+      root.render(
+        <ArrayInputField
+          fieldKey="pools"
+          itemType="address"
+          onChange={onChange}
+          value="0xpool1"
+        />
+      )
+    );
+    await act(async () =>
+      root.render(
+        <ArrayInputField
+          fieldKey="pools"
+          itemType="address"
+          onChange={onChange}
+          value="0xpool2, 0xpool3"
+        />
+      )
+    );
+
+    expect(
+      Array.from(container.querySelectorAll("input"), (input) => input.value)
+    ).toEqual(["0xpool2", "0xpool3"]);
+    expect(onChange).toHaveBeenLastCalledWith(["0xpool2", "0xpool3"]);
+  });
 });

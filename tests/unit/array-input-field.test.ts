@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  isLegacyCommaArrayValue,
   parseArrayValue,
+  shouldMigrateLegacyArrayValue,
 } from "@/components/workflow/config/array-input-field";
 
 describe("parseArrayValue", () => {
@@ -18,9 +18,11 @@ describe("parseArrayValue", () => {
     ]);
   });
 
-  it("identifies only non-JSON comma-separated values for migration", () => {
-    expect(isLegacyCommaArrayValue("0xpool1, 0xpool2")).toBe(true);
-    expect(isLegacyCommaArrayValue('["0xpool1","0xpool2"]')).toBe(false);
-    expect(isLegacyCommaArrayValue("0xpool1")).toBe(false);
+  it("identifies every non-JSON legacy scalar-array value for migration", () => {
+    expect(shouldMigrateLegacyArrayValue("0xpool1, 0xpool2")).toBe(true);
+    expect(shouldMigrateLegacyArrayValue("0xpool1")).toBe(true);
+    expect(shouldMigrateLegacyArrayValue('["0xpool1","0xpool2"]')).toBe(false);
+    expect(shouldMigrateLegacyArrayValue('{"a":1,"b":2}')).toBe(false);
+    expect(shouldMigrateLegacyArrayValue("{{previous.items}}")).toBe(false);
   });
 });
