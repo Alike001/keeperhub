@@ -121,31 +121,44 @@ const targetDedupKeyField: ActionConfigFieldBase = {
 };
 
 /**
- * Hold the resolve back for a moment before sending it.
+ * Hold the event back for a moment before sending it.
  *
- * For one ordering that genuinely loses an incident. When two runs of a
- * workflow overlap and the healthy one finishes first, the resolve can reach
- * PagerDuty before the trigger it was meant to close. PagerDuty drops an
+ * For one ordering that loses the thing the action was for. When two runs of a
+ * workflow overlap and the healthy one finishes first, the update can reach
+ * PagerDuty before the trigger it was meant to act on. PagerDuty drops an
  * update whose key matches no open alert - answering 202, so nothing complains
- * - and the trigger then opens an alert nobody ever closes.
+ * - and the trigger then opens an alert the update never touched.
  *
  * No node can reorder two runs, and the read-back reports it afterwards, but
- * reporting an incident that stayed open is worse than not leaving one. A
- * second or two of delay is enough to lose the race deliberately, and it costs
- * nothing on the common path where there is no race: the alert is already open
- * and a slightly later resolve closes it just the same.
+ * reporting it is worse than avoiding it. A second or two of delay is enough
+ * to lose the race deliberately, and it costs nothing on the common path where
+ * there is no race: the alert is already open and a slightly later event
+ * applies to it just the same.
+ *
+ * What it costs when it goes wrong differs by action, so the wording does too.
+ * A dropped resolve leaves an incident open. A dropped acknowledge leaves
+ * PagerDuty escalating an incident the workflow believes it has taken
+ * responsibility for, which is the safer direction but still not what was
+ * asked for.
  */
-const sendDelayField: ActionConfigFieldBase = {
-  key: "sendDelaySeconds",
-  label: "Wait before sending (seconds)",
-  type: "number",
-  min: 0,
-  max: 5,
-  placeholder: "0",
-  example: "2",
-  helpText:
-    "Holds the resolve back before sending it. For the case where two runs of this workflow overlap and the healthy one finishes first: the resolve can then reach PagerDuty before the trigger it is closing, and PagerDuty drops an update matching no open alert - with a 202, so it looks like success - leaving an incident nobody closes. A second or two loses that race on purpose. It costs exactly that much time on every run, so leave it at 0 unless runs of this workflow can overlap. Default 0, max 5.",
-};
+function sendDelayField(
+  action: "acknowledge" | "resolve"
+): ActionConfigFieldBase {
+  const cost =
+    action === "resolve"
+      ? "leaving an incident nobody closes"
+      : "leaving PagerDuty escalating an incident this workflow believes it has taken responsibility for";
+  return {
+    key: "sendDelaySeconds",
+    label: "Wait before sending (seconds)",
+    type: "number",
+    min: 0,
+    max: 5,
+    placeholder: "0",
+    example: "2",
+    helpText: `Holds the ${action} back before sending it. For the case where two runs of this workflow overlap and the healthy one finishes first: the ${action} can then reach PagerDuty before the trigger it is acting on, and PagerDuty drops an update matching no open alert - with a 202, so it looks like success - ${cost}. A second or two loses that race on purpose. It costs exactly that much time on every run, so leave it at 0 unless runs of this workflow can overlap. Default 0, max 5.`,
+  };
+}
 
 function verifyField(defaultValue: "true" | "false"): ActionConfigFieldBase {
   return {
@@ -488,7 +501,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
         {
           type: "group",
           label: "Delivery",
-          fields: [sendDelayField, ...retryFields],
+          fields: [sendDelayField("resolve"), ...retryFields],
         },
         testNodeField,
       ],
@@ -524,6 +537,11 @@ const pagerDutyPlugin: IntegrationPlugin = {
           field: "verificationError",
           description: "Why the check could not read the incident back, when it could not",
         },
+        {
+          field: "delayedSeconds",
+          description:
+            "Seconds this node waited before sending, when it was asked to wait",
+        },
       ],
       configFields: [
         serviceField,
@@ -534,7 +552,11 @@ const pagerDutyPlugin: IntegrationPlugin = {
         // incident the workflow believes it has taken responsibility for, and
         // the 202 says nothing either way.
         verifyField("true"),
-        { type: "group", label: "Delivery", fields: retryFields },
+        {
+          type: "group",
+          label: "Delivery",
+          fields: [sendDelayField("acknowledge"), ...retryFields],
+        },
         testNodeField,
       ],
     },

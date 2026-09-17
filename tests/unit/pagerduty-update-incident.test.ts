@@ -471,6 +471,47 @@ describe("acknowledge incident", () => {
       expect(result).toMatchObject({ delivered: false });
     });
 
+    /**
+     * Acknowledge hits the same ordering. What it costs is different - a
+     * dropped acknowledge leaves PagerDuty escalating rather than leaving an
+     * incident open - but it is still not what the workflow asked for.
+     */
+    it("waits for an acknowledge too, and reports it", async () => {
+      mockRoutingKey();
+      safeFetch.mockResolvedValue(response(202, {}));
+
+      const result = await acknowledgeIncidentStep({
+        integrationId: "int-1",
+        pagerdutyServiceId: "PSKY1",
+        dedupKey: "k1",
+        sendDelaySeconds: 3,
+        verifyWithPagerDuty: false,
+        _context: CONTEXT,
+      } as never);
+
+      expect(mockSleep).toHaveBeenCalledWith(3000);
+      expect(result).toMatchObject({
+        delivered: true,
+        action: "acknowledge",
+        delayedSeconds: 3,
+      });
+    });
+
+    it("does not wait for an acknowledge that was not asked to", async () => {
+      mockRoutingKey();
+      safeFetch.mockResolvedValue(response(202, {}));
+
+      await acknowledgeIncidentStep({
+        integrationId: "int-1",
+        pagerdutyServiceId: "PSKY1",
+        dedupKey: "k1",
+        verifyWithPagerDuty: false,
+        _context: CONTEXT,
+      } as never);
+
+      expect(mockSleep).not.toHaveBeenCalled();
+    });
+
     it("never waits longer than the documented maximum", async () => {
       mockRoutingKey();
       safeFetch.mockResolvedValue(response(202, {}));
