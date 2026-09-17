@@ -4,6 +4,7 @@ vi.mock("server-only", () => ({}));
 
 import {
   capRetriesByDeclaration,
+  effectiveMaxRetries,
   executeWithRetry,
   genericRetryOptions,
   type TransactionResult,
@@ -155,6 +156,38 @@ describe("capRetriesByDeclaration", () => {
     expect(attempts).toBe(3);
     expect(result.retryCount).toBe(2);
     expect(result.outcome).toBe("failed");
+  });
+});
+
+describe("effectiveMaxRetries", () => {
+  // The number the route reports back as `maxRetriesApplied`. A config that
+  // survived the declaration by identity carries no number at all, and reporting
+  // that as undefined would read as "no budget was in force" rather than "the
+  // default the executor applies".
+  it("resolves an absent maxRetries to the default the executor applies", () => {
+    expect(effectiveMaxRetries({ timeoutMs: 120_000 })).toBe(3);
+  });
+
+  it("keeps a maxRetries the caller or the declaration set, including zero", () => {
+    expect(effectiveMaxRetries({ maxRetries: 5, timeoutMs: 1 })).toBe(5);
+    expect(effectiveMaxRetries({ maxRetries: 0, timeoutMs: 1 })).toBe(0);
+  });
+
+  it("agrees with what capRetriesByDeclaration leaves in force", () => {
+    // The pair the route uses: the declaration caps the caller's ask, and the
+    // reported budget is what the cap left, never the caller's original number.
+    const capped = capRetriesByDeclaration(
+      { maxRetries: 3, timeoutMs: 120_000 },
+      0
+    );
+    expect(capped).toBeDefined();
+    expect(effectiveMaxRetries(capped as { timeoutMs: number })).toBe(0);
+
+    const unbounded = capRetriesByDeclaration(
+      { maxRetries: 3, timeoutMs: 120_000 },
+      10
+    );
+    expect(effectiveMaxRetries(unbounded as { timeoutMs: number })).toBe(3);
   });
 });
 

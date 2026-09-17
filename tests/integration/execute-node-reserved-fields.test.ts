@@ -392,6 +392,68 @@ describe("POST /api/execute/node step-declared retry ceiling", () => {
     expect(mocks.stepFn).toHaveBeenCalledTimes(4);
   });
 
+  it("reports the budget the declaration left in force", async () => {
+    // The round-7 finding: a caller asking for three retries against a step that
+    // declares none got a 200, one attempt and no retryCount, which is the same
+    // shape as never having asked. 61 of the 120 step files under plugins/*/steps
+    // declare 0, so this is the common case rather than the corner.
+    Object.assign(mocks.stepFn, { maxRetries: 0 });
+    mocks.stepFn.mockResolvedValue({
+      success: false,
+      error: "read ECONNRESET",
+    });
+
+    const response = await nodePOST(
+      postRequest({
+        actionType: "web3/write-contract",
+        config: { network: "1", contractAddress: "0xabc" },
+        retry: { maxRetries: 3, timeoutMs: 120_000 },
+      })
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(mocks.stepFn).toHaveBeenCalledTimes(1);
+    expect(body.maxRetriesApplied).toBe(0);
+    // Nothing was retried, so the count is still omitted rather than reported.
+    expect(body.retryCount).toBeUndefined();
+  });
+
+  it("reports the caller's own budget when the declaration is absent", async () => {
+    mocks.stepFn.mockResolvedValue({
+      success: false,
+      error: "read ECONNRESET",
+    });
+
+    const response = await nodePOST(
+      postRequest({
+        actionType: "web3/write-contract",
+        config: { network: "1", contractAddress: "0xabc" },
+        retry: { maxRetries: 3, timeoutMs: 120_000 },
+      })
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(mocks.stepFn).toHaveBeenCalledTimes(4);
+    expect(body.maxRetriesApplied).toBe(3);
+  });
+
+  it("reports no budget when the caller never asked to retry", async () => {
+    // Absent rather than 0, so the field distinguishes "never asked" from
+    // "asked and was overridden" instead of collapsing the two.
+    mocks.stepFn.mockResolvedValue({ success: true });
+
+    const response = await nodePOST(
+      postRequest({
+        actionType: "web3/write-contract",
+        config: { network: "1", contractAddress: "0xabc" },
+      })
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body.maxRetriesApplied).toBeUndefined();
+  });
+
   it("honours a declaration that is a string zero, which the import cannot type-check", async () => {
     Object.assign(mocks.stepFn, { maxRetries: "0" });
     mocks.stepFn.mockResolvedValue({

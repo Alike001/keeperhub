@@ -116,6 +116,21 @@ export function capRetriesByDeclaration(
   };
 }
 
+/**
+ * The budget a resolved config actually applies.
+ *
+ * `RetryConfig.maxRetries` is optional and `resolveConfig` fills it with
+ * `DEFAULT_MAX_RETRIES`, so a config that survived `capRetriesByDeclaration` by
+ * identity still has no number on it. Reported back to the caller, that difference
+ * matters: the direct-execution route replies with the budget it held a step to, and
+ * `undefined` there would read as "no budget was in force" rather than "the
+ * default". Kept here rather than exporting the constant so the resolution has one
+ * definition, next to the config resolution itself.
+ */
+export function effectiveMaxRetries(config: RetryConfig): number {
+  return config.maxRetries ?? DEFAULT_MAX_RETRIES;
+}
+
 function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number

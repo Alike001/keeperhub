@@ -38,6 +38,7 @@ import { parseNodeNativeValueWei } from "../_lib/reserved-value";
 import {
   capRetriesByDeclaration,
   DEFAULT_TIMEOUT_MS as DEFAULT_RETRY_TIMEOUT_MS,
+  effectiveMaxRetries,
   executeWithRetry,
   genericRetryOptions,
   type TransactionResult,
@@ -197,11 +198,22 @@ function isTransactionResult(output: unknown): output is {
 type StepFn = ((input: any) => Promise<unknown>) & { maxRetries?: number };
 
 type InvokeResult =
-  | { ok: true; result: unknown; retryCount: number }
-  | { ok: false; error: string; retryCount: number };
+  | {
+      ok: true;
+      result: unknown;
+      retryCount: number;
+      maxRetriesApplied?: number;
+    }
+  | {
+      ok: false;
+      error: string;
+      retryCount: number;
+      maxRetriesApplied?: number;
+    };
 
 function unwrapRetryResult<T>(
-  retryResult: Awaited<ReturnType<typeof executeWithRetry<T>>>
+  retryResult: Awaited<ReturnType<typeof executeWithRetry<T>>>,
+  maxRetriesApplied: number
 ): InvokeResult {
   if (
     retryResult.outcome === "timeout" ||
@@ -211,12 +223,14 @@ function unwrapRetryResult<T>(
       ok: false,
       error: retryResult.error,
       retryCount: retryResult.retryCount,
+      maxRetriesApplied,
     };
   }
   return {
     ok: true,
     result: retryResult.result,
     retryCount: retryResult.retryCount,
+    maxRetriesApplied,
   };
 }
 
@@ -233,20 +247,26 @@ async function invokeStep(
   // the server settled the payment) are otherwise retried and charged twice.
   const effectiveRetry = capRetriesByDeclaration(retry, stepFn.maxRetries);
   if (effectiveRetry) {
+    // The budget the caller is actually held to, reported back so a request whose
+    // retries the step's declaration nullified is not indistinguishable from one
+    // that never asked to retry. `effectiveRetry.maxRetries` is 0 for the 61 step
+    // files that declare `maxRetries = 0`, and it is the caller's own number when
+    // the declaration is absent or higher.
+    const maxRetriesApplied = effectiveMaxRetries(effectiveRetry);
     if (isWeb3) {
       const retryResult = await executeWithRetry<TransactionResult>(
         async () => (await stepFn(stepInput)) as TransactionResult,
         effectiveRetry,
         transactionRetryOptions
       );
-      return unwrapRetryResult(retryResult);
+      return unwrapRetryResult(retryResult, maxRetriesApplied);
     }
     const retryResult = await executeWithRetry<unknown>(
       async () => stepFn(stepInput),
       effectiveRetry,
       genericRetryOptions
     );
-    return unwrapRetryResult(retryResult);
+    return unwrapRetryResult(retryResult, maxRetriesApplied);
   }
   const result = await stepFn(stepInput);
   return { ok: true, result, retryCount: 0 };
@@ -256,6 +276,7 @@ async function handleResult(
   executionId: string,
   result: unknown,
   retryCount: number,
+  maxRetriesApplied: number | undefined,
   idem: IdempotencyOutcome | null
 ): Promise<NextResponse> {
   const output = result as Record<string, unknown> | undefined;
@@ -296,6 +317,7 @@ async function handleResult(
           error: errorMsg,
           ...(transactionHash ? { transactionHash } : {}),
           ...(retryCount > 0 ? { retryCount } : {}),
+          ...(maxRetriesApplied === undefined ? {} : { maxRetriesApplied }),
         },
         { status: HttpStatus.UNPROCESSABLE_ENTITY }
       ),
@@ -335,6 +357,7 @@ async function handleResult(
           status: outcome.status,
           error: outcome.error ?? "On-chain verification failed",
           ...(retryCount > 0 ? { retryCount } : {}),
+          ...(maxRetriesApplied === undefined ? {} : { maxRetriesApplied }),
         },
         { status: HttpStatus.UNPROCESSABLE_ENTITY }
       ),
@@ -350,6 +373,7 @@ async function handleResult(
         status: "completed",
         result: output,
         ...(retryCount > 0 ? { retryCount } : {}),
+        ...(maxRetriesApplied === undefined ? {} : { maxRetriesApplied }),
       },
       {
         status: isTransactionResult(output)
@@ -480,6 +504,9 @@ async function executeNode(
             ...(invokeResult.retryCount > 0
               ? { retryCount: invokeResult.retryCount }
               : {}),
+            ...(invokeResult.maxRetriesApplied === undefined
+              ? {}
+              : { maxRetriesApplied: invokeResult.maxRetriesApplied }),
           },
           { status: HttpStatus.UNPROCESSABLE_ENTITY }
         ),
@@ -491,6 +518,7 @@ async function executeNode(
       executionId,
       invokeResult.result,
       invokeResult.retryCount,
+      invokeResult.maxRetriesApplied,
       idem
     );
   } catch (err: unknown) {
