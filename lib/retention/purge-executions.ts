@@ -117,9 +117,10 @@ export type RetentionWindowReport = {
 export type RetentionPassResult = {
   pass: RetentionPassName;
   /**
-   * Rows deleted, or nulled for the output_raw pass. In a dry run, the rows the
-   * same reads would touch -- only as far as the walk got when
-   * `budgetExhausted` is set, so a lower bound rather than a total.
+   * Rows deleted, or nulled for the output_raw pass. In a dry run, the rows a
+   * real run would touch. The output_raw pass walks its pages to get that
+   * figure, so when the budget stops it (`budgetExhausted`) the figure covers
+   * only the pages it reached and is a lower bound rather than a total.
    */
   rows: number;
   /** True when the runtime budget stopped this pass before it drained. */
@@ -260,12 +261,15 @@ export async function runRetentionPurge(
       deferred
     )
   );
-  // Soft-deleted logs before output_raw. That pass carries by far the largest
-  // backlog and can spend the whole budget for many runs in a row; this one is
-  // small, and behind it would get no time at all until that backlog drained.
   passes.push(await purgeSoftDeletedLogs(config, now, budget));
-  passes.push(await stripExpiredOutputRaw(config, now, budget));
   passes.push(await purgeExecutionsPastFlatWindow(config, now, budget));
+  // output_raw last. It carries by far the largest backlog and can spend the
+  // whole budget for many runs in a row, and it is the one pass whose dry run
+  // walks pages rather than counting in one statement, so a dry run can spend
+  // the whole budget on it too. Any pass behind it would get no time at all.
+  // Last is also the cheaper order for a real run: a run row the pass above
+  // retires takes its step logs with it, so they are never nulled first.
+  passes.push(await stripExpiredOutputRaw(config, now, budget));
 
   const result: RetentionRunResult = {
     enabled: true,
@@ -304,6 +308,7 @@ function purgeLogsPastFloor(
     config,
     budget,
     selectPage: (limit, cursor) => floorPageQuery(cutoff, cursor, limit),
+    countEligible: async () => (await floorCountQuery(cutoff))[0].n,
     apply: (ids) =>
       db
         .delete(workflowExecutionLogs)
@@ -318,10 +323,9 @@ function purgeLogsPastFloor(
 export function floorPageQuery(
   cutoff: Date,
   cursor: PageCursor | null,
-  limit: number,
-  querier: Querier = db
+  limit: number
 ) {
-  return querier
+  return db
     .select({
       id: workflowExecutionLogs.id,
       at: sortKey(workflowExecutionLogs.startedAt),
@@ -339,6 +343,18 @@ export function floorPageQuery(
     )
     .orderBy(workflowExecutionLogs.startedAt, workflowExecutionLogs.id)
     .limit(limit);
+}
+
+/**
+ * How many step logs the floor pass would delete: a dry run's figure. A plain
+ * range on `started_at`, which the planner answers from the index alone.
+ * Exported so a test can EXPLAIN the SQL the pass really sends.
+ */
+export function floorCountQuery(cutoff: Date) {
+  return db
+    .select({ n: count() })
+    .from(workflowExecutionLogs)
+    .where(lt(workflowExecutionLogs.startedAt, cutoff));
 }
 
 /**
@@ -751,6 +767,7 @@ function purgeSoftDeletedLogs(
     config,
     budget,
     selectPage: (limit, cursor) => softDeletedPageQuery(cutoff, cursor, limit),
+    countEligible: async () => (await softDeletedCountQuery(cutoff))[0].n,
     apply: (ids) =>
       db
         .delete(workflowExecutionLogs)
@@ -765,10 +782,9 @@ function purgeSoftDeletedLogs(
 export function softDeletedPageQuery(
   cutoff: Date,
   cursor: PageCursor | null,
-  limit: number,
-  querier: Querier = db
+  limit: number
 ) {
-  return querier
+  return db
     .select({
       id: workflowExecutionLogs.id,
       at: sortKey(workflowExecutionLogs.deletedAt),
@@ -789,83 +805,19 @@ export function softDeletedPageQuery(
 }
 
 /**
- * Pass 4. Null `output_raw` once a run can no longer resume. It is the
- * unredacted twin of `output` and costs about the same on disk, so dropping it
- * halves the payload of every aged row without deleting the row itself. The
- * redacted `output` the UI shows stays for the full plan window, and carries
- * every non-sensitive field verbatim -- only secret-keyed values are masked.
- *
- * No lower bound. idx_exec_logs_output_raw_pending is partial on
- * `output_raw IS NOT NULL`, so it shrinks as the backlog drains and holds only
- * rows inside the window once it has. The pass pages along that index by
- * `(started_at, id)`, so a page costs the same however many rows ahead of it
- * this run has already nulled.
- *
- * A row whose run can still resume is filtered out of its page, and the cursor
- * moves past it with the rest. It is not lost: every run starts again at the
- * front of the index, so the next run reads it again and nulls it once the run
- * has finished.
+ * How many purged step logs the soft-delete pass would delete: a dry run's
+ * figure. A range on the partial index that holds only purged rows. Exported so
+ * a test can EXPLAIN the SQL the pass really sends.
  */
-function stripExpiredOutputRaw(
-  config: RetentionConfig,
-  now: Date,
-  budget: RunBudget
-): Promise<RetentionPassResult> {
-  const cutoff = daysBefore(now, config.outputRawRetentionDays);
-  return runKeysetPass({
-    pass: "output_raw",
-    config,
-    budget,
-    selectPage: (limit, cursor) => outputRawPageQuery(cutoff, cursor, limit),
-    apply: (ids) =>
-      db
-        .update(workflowExecutionLogs)
-        .set({ outputRaw: null })
-        .where(inArray(workflowExecutionLogs.id, ids)),
-  });
-}
-
-/**
- * One page of the output_raw pass: step logs past `cutoff` that still carry
- * `output_raw` and whose run cannot resume, after `cursor`. Exported so a test
- * can EXPLAIN the SQL the pass really sends.
- */
-export function outputRawPageQuery(
-  cutoff: Date,
-  cursor: PageCursor | null,
-  limit: number,
-  querier: Querier = db
-) {
-  return querier
-    .select({
-      id: workflowExecutionLogs.id,
-      at: sortKey(workflowExecutionLogs.startedAt),
-    })
+export function softDeletedCountQuery(cutoff: Date) {
+  return db
+    .select({ n: count() })
     .from(workflowExecutionLogs)
-    .innerJoin(
-      workflowExecutions,
-      eq(workflowExecutions.id, workflowExecutionLogs.executionId)
-    )
-    .where(
-      and(
-        lt(workflowExecutionLogs.startedAt, cutoff),
-        isNotNull(workflowExecutionLogs.outputRaw),
-        notInArray(workflowExecutions.status, [
-          ...RESUMABLE_EXECUTION_STATUSES,
-        ]),
-        afterCursor(
-          workflowExecutionLogs.startedAt,
-          workflowExecutionLogs.id,
-          cursor
-        )
-      )
-    )
-    .orderBy(workflowExecutionLogs.startedAt, workflowExecutionLogs.id)
-    .limit(limit);
+    .where(lt(workflowExecutionLogs.deletedAt, cutoff));
 }
 
 /**
- * Pass 5. Run rows on ONE flat window, behind a switch of its own that ships
+ * Pass 4. Run rows on ONE flat window, behind a switch of its own that ships
  * off.
  *
  * Every billing count reads `workflow_executions` by `started_at` with no floor
@@ -970,6 +922,86 @@ async function purgeExecutionsPastFlatWindow(
 }
 
 /**
+ * Pass 5. Null `output_raw` once a run can no longer resume. It is the
+ * unredacted twin of `output` and costs about the same on disk, so dropping it
+ * halves the payload of every aged row without deleting the row itself. The
+ * redacted `output` the UI shows stays for the full plan window, and carries
+ * every non-sensitive field verbatim -- only secret-keyed values are masked.
+ *
+ * No lower bound. idx_exec_logs_output_raw_pending is partial on
+ * `output_raw IS NOT NULL`, so it shrinks as the backlog drains and holds only
+ * rows inside the window once it has. The pass pages along that index by
+ * `(started_at, id)`, so a page costs the same however many rows ahead of it
+ * this run has already nulled.
+ *
+ * A row whose run can still resume is filtered out of its page, and the cursor
+ * moves past it with the rest. It is not lost: every run starts again at the
+ * front of the index, so the next run reads it again and nulls it once the run
+ * has finished.
+ *
+ * Its dry run walks the same pages instead of counting. A count has to join
+ * every eligible step log to its run for the status check, which on a large
+ * table plans as a sequential scan of both and cannot finish inside the
+ * statement timeout.
+ */
+function stripExpiredOutputRaw(
+  config: RetentionConfig,
+  now: Date,
+  budget: RunBudget
+): Promise<RetentionPassResult> {
+  const cutoff = daysBefore(now, config.outputRawRetentionDays);
+  return runKeysetPass({
+    pass: "output_raw",
+    config,
+    budget,
+    selectPage: (limit, cursor) => outputRawPageQuery(cutoff, cursor, limit),
+    apply: (ids) =>
+      db
+        .update(workflowExecutionLogs)
+        .set({ outputRaw: null })
+        .where(inArray(workflowExecutionLogs.id, ids)),
+  });
+}
+
+/**
+ * One page of the output_raw pass: step logs past `cutoff` that still carry
+ * `output_raw` and whose run cannot resume, after `cursor`. Exported so a test
+ * can EXPLAIN the SQL the pass really sends.
+ */
+export function outputRawPageQuery(
+  cutoff: Date,
+  cursor: PageCursor | null,
+  limit: number
+) {
+  return db
+    .select({
+      id: workflowExecutionLogs.id,
+      at: sortKey(workflowExecutionLogs.startedAt),
+    })
+    .from(workflowExecutionLogs)
+    .innerJoin(
+      workflowExecutions,
+      eq(workflowExecutions.id, workflowExecutionLogs.executionId)
+    )
+    .where(
+      and(
+        lt(workflowExecutionLogs.startedAt, cutoff),
+        isNotNull(workflowExecutionLogs.outputRaw),
+        notInArray(workflowExecutions.status, [
+          ...RESUMABLE_EXECUTION_STATUSES,
+        ]),
+        afterCursor(
+          workflowExecutionLogs.startedAt,
+          workflowExecutionLogs.id,
+          cursor
+        )
+      )
+    )
+    .orderBy(workflowExecutionLogs.startedAt, workflowExecutionLogs.id)
+    .limit(limit);
+}
+
+/**
  * Where the next page starts: the sort key of the last row the previous page
  * returned. `at` is the timestamp as Postgres prints it, see sortKey.
  */
@@ -989,6 +1021,11 @@ type KeysetPass = {
   ) => PromiseLike<PageRow[]>;
   /** Act on exactly the ids of one page. Never called in a dry run. */
   apply: (ids: string[]) => PromiseLike<unknown>;
+  /**
+   * The dry run's figure in one statement, for a pass whose predicate an index
+   * answers on its own. Without it a dry run walks the pages instead.
+   */
+  countEligible?: () => PromiseLike<number>;
 };
 
 /**
@@ -1034,11 +1071,12 @@ function sortKey(column: PgColumn): SQL<string> {
  * each time had to walk past everything the run had already done, and got
  * slower the further the run went.
  *
- * A dry run reads the same pages and writes nothing; the cursor still moves, so
- * the walk ends. It replaced a single count over every eligible row, which on a
- * large table plans as a sequential scan and cannot finish inside the statement
- * timeout. The price is that a dry run the budget stops reports how far it got,
- * with `budgetExhausted` set, rather than an exact total.
+ * A dry run counts in one statement where the pass supplies `countEligible`.
+ * Otherwise it reads the same pages and writes nothing; the cursor still moves,
+ * so the walk ends. A walk makes no progress from one dry run to the next, so
+ * one that outlasts the budget reports how far it got, with `budgetExhausted`
+ * set, and every pass behind it reports nothing -- which is why a pass that can
+ * count does, and why the one that cannot runs last.
  */
 async function runKeysetPass({
   pass,
@@ -1046,7 +1084,15 @@ async function runKeysetPass({
   budget,
   selectPage,
   apply,
+  countEligible,
 }: KeysetPass): Promise<RetentionPassResult> {
+  if (config.dryRun && countEligible) {
+    if (budget.exhausted) {
+      return { pass, rows: 0, budgetExhausted: true };
+    }
+    return { pass, rows: await countEligible(), budgetExhausted: false };
+  }
+
   let rows = 0;
   let cursor: PageCursor | null = null;
 

@@ -106,6 +106,8 @@ describe("execution retention purge (real database)", () => {
   let floorPageQuery: Purge["floorPageQuery"];
   let softDeletedPageQuery: Purge["softDeletedPageQuery"];
   let outputRawPageQuery: Purge["outputRawPageQuery"];
+  let floorCountQuery: Purge["floorCountQuery"];
+  let softDeletedCountQuery: Purge["softDeletedCountQuery"];
   let workflowChunk: Purge["PLAN_WINDOW_WORKFLOW_CHUNK"];
   let runsPerRead: Purge["PLAN_WINDOW_RUNS_PER_READ"];
   let getOrgLogRetentionCutoff: Progress["getOrgLogRetentionCutoff"];
@@ -317,6 +319,8 @@ describe("execution retention purge (real database)", () => {
       floorPageQuery,
       softDeletedPageQuery,
       outputRawPageQuery,
+      floorCountQuery,
+      softDeletedCountQuery,
       PLAN_WINDOW_WORKFLOW_CHUNK: workflowChunk,
       PLAN_WINDOW_RUNS_PER_READ: runsPerRead,
     } = await import("@/lib/retention/purge-executions"));
@@ -816,9 +820,8 @@ describe("execution retention purge (real database)", () => {
   });
 
   it("reports every pass of a dry run the budget stops, and writes nothing", async () => {
-    // The dry run walks pages instead of counting a whole table, so on a large
-    // backlog it can run out of time. It still returns every pass, and says
-    // which ones it did not finish.
+    // A dry run that runs out of time still returns every pass, and says which
+    // ones it did not finish.
     const result = await runRetentionPurge(
       config({ dryRun: true, maxRuntimeMs: 0 }),
       NOW
@@ -830,12 +833,48 @@ describe("execution retention purge (real database)", () => {
       ["logs_floor", true],
       ["logs_plan_window", true],
       ["logs_soft_deleted", true],
-      ["output_raw", true],
       ["executions_flat_window", false],
+      ["output_raw", true],
     ]);
     expect(await logExists(logId(ORG_ENT, "past_floor"))).toBe(true);
     expect(await logExists(`${PREFIX}softdel_past_grace`)).toBe(true);
     expect(await outputRawOf(logId(ORG_ENT, "inside"))).not.toBeNull();
+  });
+
+  it("counts in a dry run exactly the floor and soft-deleted logs a real run deletes", async () => {
+    // Both passes answer a dry run with one count rather than a page walk, so
+    // the passes behind them keep their budget. The figure must still be the
+    // one a real run then acts on.
+    const rowsOf = (
+      result: Awaited<ReturnType<typeof runRetentionPurge>>,
+      name: string
+    ) => result.passes.find((pass) => pass.pass === name)?.rows;
+
+    const dry = await runRetentionPurge(
+      config({ dryRun: true, batchSize: 1 }),
+      NOW
+    );
+    expect(await logExists(logId(ORG_ENT, "past_floor"))).toBe(true);
+    expect(await logExists(`${PREFIX}softdel_past_grace`)).toBe(true);
+    const real = await runRetentionPurge(config({ batchSize: 1 }), NOW);
+
+    expect(rowsOf(dry, "logs_floor")).toBe(2);
+    expect(rowsOf(dry, "logs_floor")).toBe(rowsOf(real, "logs_floor"));
+    expect(rowsOf(dry, "logs_soft_deleted")).toBe(1);
+    expect(rowsOf(dry, "logs_soft_deleted")).toBe(
+      rowsOf(real, "logs_soft_deleted")
+    );
+  });
+
+  it("answers the dry-run counts from an index", async () => {
+    for (const query of [
+      floorCountQuery(daysAgo(365)),
+      softDeletedCountQuery(daysAgo(30)),
+    ]) {
+      const plan = await explainWithIndexPlans(query.toSQL());
+      expect(plan).not.toContain('"Node Type":"Seq Scan"');
+      expect(plan).toContain('"Index Name"');
+    }
   });
 
   it("answers every batch pass page from an index", async () => {

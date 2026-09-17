@@ -282,10 +282,10 @@ describe("runRetentionPurge", () => {
     expect(result.passes.map((pass) => pass.pass)).toEqual([
       "logs_floor",
       "logs_plan_window",
-      // Before output_raw, whose backlog can spend the whole budget.
       "logs_soft_deleted",
-      "output_raw",
       "executions_flat_window",
+      // Last: its backlog, and its dry-run walk, can spend the whole budget.
+      "output_raw",
     ]);
   });
 
@@ -455,13 +455,46 @@ describe("runRetentionPurge", () => {
     expect(state.watermarks).toEqual([new Date("2026-08-31T12:00:00.000Z")]);
   });
 
-  it("walks every page and writes nothing in a dry run", async () => {
+  it("counts every eligible row and writes nothing in a dry run", async () => {
     // Deliberately more rows than one batch: the reported figure used to be
     // the first page, so it was silently capped at batchSize per pass and per
     // organization. An operator reads this number before turning dry-run off.
-    // Nothing is removed, so only the cursor can carry the walk to its end.
+    // The floor and soft-delete passes answer it in one statement each.
+    state.selectPages = [ORG_ROWS];
+    state.counts = [4200, 12]; // floor, then soft-delete
+
+    const result = await runRetentionPurge(
+      enabledConfig({ dryRun: true, batchSize: 2 }),
+      NOW
+    );
+    const passOf = (name: string) =>
+      result.passes.find((pass) => pass.pass === name);
+
+    expect(result.dryRun).toBe(true);
+    expect(passOf("logs_floor")).toEqual({
+      pass: "logs_floor",
+      rows: 4200,
+      budgetExhausted: false,
+    });
+    expect(passOf("logs_soft_deleted")).toEqual({
+      pass: "logs_soft_deleted",
+      rows: 12,
+      budgetExhausted: false,
+    });
+    // Including the watermark: a dry run deleted nothing, so it must not claim
+    // an organization has drained.
+    expect(state.writes).toEqual([]);
+    expect(state.transactions).toBe(0);
+  });
+
+  it("walks the output_raw pages and writes nothing in a dry run", async () => {
+    // Its count cannot finish on a large table, so the dry run reads the same
+    // pages a real run would. Nothing is removed, so only the cursor can carry
+    // the walk to its end.
     state.selectPages = [
       ORG_ROWS,
+      [], // watermarks
+      [], // the free organization's workflows
       [
         { id: "log-1", at: "2025-08-01 10:00:00.000001" },
         { id: "log-2", at: "2025-08-01 10:00:00.000002" },
@@ -474,14 +507,11 @@ describe("runRetentionPurge", () => {
       NOW
     );
 
-    expect(result.dryRun).toBe(true);
-    expect(result.passes[0]).toEqual({
-      pass: "logs_floor",
+    expect(result.passes.at(-1)).toEqual({
+      pass: "output_raw",
       rows: 3,
       budgetExhausted: false,
     });
-    // Including the watermark: a dry run deleted nothing, so it must not claim
-    // an organization has drained.
     expect(state.writes).toEqual([]);
     expect(state.transactions).toBe(0);
   });
@@ -527,9 +557,9 @@ describe("runRetentionPurge", () => {
   });
 
   it("retires a run row and its children in one transaction", async () => {
-    // Nothing until the last pass: orgs, floor, watermarks, free group,
-    // soft-deleted, output_raw, then one execution.
-    state.selectPages = [ORG_ROWS, [], [], [], [], [], [{ id: "exec-1" }]];
+    // Nothing until the run-row pass: orgs, floor, watermarks, free group,
+    // soft-deleted, then one execution.
+    state.selectPages = [ORG_ROWS, [], [], [], [], [{ id: "exec-1" }]];
 
     const result = await runRetentionPurge(
       enabledConfig({ executionsEnabled: true }),
@@ -792,12 +822,12 @@ describe("runRetentionPurge", () => {
     // shape that cannot finish on a production-sized table.
     state.selectPages = [
       ORG_ROWS,
-      [], // floor pass: one empty page
-      [], // watermarks
+      [], // watermarks (a dry run's floor pass counts, it does not page)
       [{ id: "wf-1" }],
       [{ id: "exec-1" }, { id: "exec-2" }],
     ];
-    state.counts = [7]; // the step logs of those two runs
+    // The floor pass, the step logs of those two runs, then the soft-delete pass.
+    state.counts = [0, 7, 0];
 
     const result = await runRetentionPurge(
       enabledConfig({ dryRun: true }),
@@ -814,15 +844,18 @@ describe("runRetentionPurge", () => {
     expect(state.transactions).toBe(2);
   });
 
-  it("reports how far a dry run got when the budget stops it", async () => {
-    // A dry run no longer counts a whole table in one statement, so on a large
-    // backlog it can run out of time. It still returns, says so, and every
-    // pass is still in the report.
+  it("counts every other pass before an output_raw walk the budget stops", async () => {
+    // The output_raw dry run walks pages, and a walk makes no progress from one
+    // dry run to the next, so on a large backlog it runs out of time every
+    // time. Every pass that counts runs ahead of it and still reports.
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-09-07T03:48:00.000Z"));
     state.selectPages = [
       ORG_ROWS,
+      [], // watermarks
+      [], // the free organization's workflows
       () => {
+        // The first output_raw page comes back just as the budget runs out.
         vi.setSystemTime(new Date("2026-09-07T04:00:00.000Z"));
         return [
           { id: "log-1", at: "2025-08-01 10:00:00.000001" },
@@ -830,18 +863,27 @@ describe("runRetentionPurge", () => {
         ];
       },
     ];
+    state.counts = [5, 3, 1]; // floor, soft-delete, run rows
 
     const result = await runRetentionPurge(
-      enabledConfig({ dryRun: true, batchSize: 2, maxRuntimeMs: 60_000 }),
+      enabledConfig({
+        dryRun: true,
+        executionsEnabled: true,
+        batchSize: 2,
+        maxRuntimeMs: 60_000,
+      }),
       NOW
     );
 
-    expect(result.passes[0]).toEqual({
-      pass: "logs_floor",
-      rows: 2,
-      budgetExhausted: true,
-    });
-    expect(result.passes.map((pass) => pass.pass)).toHaveLength(5);
+    expect(
+      result.passes.map((pass) => [pass.pass, pass.rows, pass.budgetExhausted])
+    ).toEqual([
+      ["logs_floor", 5, false],
+      ["logs_plan_window", 0, false],
+      ["logs_soft_deleted", 3, false],
+      ["executions_flat_window", 1, false],
+      ["output_raw", 2, true],
+    ]);
     expect(state.writes).toEqual([]);
   });
 });
