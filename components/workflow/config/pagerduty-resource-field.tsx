@@ -326,9 +326,7 @@ export function PagerDutyServiceField({
                     node still points at the same id, so the id is the only
                     thing somebody can recognise it by.
                   */}
-                  <span className="font-mono text-foreground/70">
-                    {service.id}
-                  </span>
+                  <span className="font-mono">{service.id}</span>
                   {" - "}
                   {service.escalationPolicyName
                     ? `pages ${service.escalationPolicyName}`
@@ -521,7 +519,7 @@ export function PagerDutyEscalationPolicyField({
               <span className="flex flex-col items-start">
                 <span>{policy.name}</span>
                 {/* Policies get renamed too, and the node stores the id. */}
-                <span className="font-mono text-foreground/70 text-xs">
+                <span className="font-mono text-muted-foreground text-xs">
                   {policy.id}
                 </span>
               </span>
@@ -642,9 +640,7 @@ export function PagerDutyPriorityField({
                 <span className="text-muted-foreground text-xs">
                   {/* P1 and P2 are the names, not the ids, and an account can
                       rename them. The id is what the node stores. */}
-                  <span className="font-mono text-foreground/70">
-                    {priority.id}
-                  </span>
+                  <span className="font-mono">{priority.id}</span>
                   {priority.description ? ` - ${priority.description}` : ""}
                 </span>
               </span>
