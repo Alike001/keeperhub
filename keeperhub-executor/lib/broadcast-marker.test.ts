@@ -70,6 +70,28 @@ describe("broadcast marker (issue #2289 broadcast stage)", () => {
     enableBroadcastMarkers();
   });
 
+  it("records a broadcast when no marker exists yet", () => {
+    markBroadcast("exec-2");
+    expect(peekBroadcastMarker("exec-2")?.broadcastAt).toBeGreaterThan(0);
+  });
+
+  it("keeps the first broadcast when one run writes twice", () => {
+    // A workflow that approves and then swaps writes two markers for one
+    // execution id. ExecutionLatency.mark is first-wins, so the marker has to be
+    // too: with last-wins, stageMs("observed", "broadcast") would measure to the
+    // second broadcast and carry the approve's whole confirmation wait into the
+    // headline interval. Pre-seeded rather than two rapid markBroadcast calls,
+    // so the assertion cannot pass on Date.now() granularity alone.
+    const original = 1_700_000_000_000;
+    writeFileSync(
+      getBroadcastMarkerPath("exec-2"),
+      JSON.stringify({ executionId: "exec-2", broadcastAt: original }),
+      "utf-8"
+    );
+    markBroadcast("exec-2");
+    expect(peekBroadcastMarker("exec-2")?.broadcastAt).toBe(original);
+  });
+
   it("resolves the execution id from the async-local workflow context", () => {
     // No ALS registered in this test process -> undefined, never a throw.
     expect(currentExecutionId()).toBeUndefined();

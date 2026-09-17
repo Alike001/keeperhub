@@ -61,12 +61,17 @@ export function generateCorrelationId(): string {
 }
 
 /**
- * The largest epoch-ms stamp the platform can render as a Date. `new Date(ms)`
- * is valid for |ms| <= 8.64e15 and `toISOString()` throws RangeError outside
- * that window - a producer emitting microseconds (1e16) is a plain finite JSON
- * number that lands there. One definition shared by the message schema (the
- * producer contract) and the consumers (the guard that stops a bad stamp from
- * failing a run): observability must not be able to fail a transaction.
+ * The largest epoch-ms stamp the platform can render as a Date, and the lower
+ * bound an epoch can have at all. `new Date(ms)` is valid for |ms| <= 8.64e15
+ * and `toISOString()` throws RangeError outside that window - a producer
+ * emitting microseconds (1e16) is a plain finite JSON number that lands there.
+ * Negative stamps are rejected too: no epoch-ms timestamp predates 1970, so a
+ * negative value is a corrupt or hostile producer rather than a real time, and
+ * `Math.abs` alone would have admitted `-1e15` and derived a ~1e15 ms interval
+ * from it into the broadcast histogram, polluting that label set's `_sum` until
+ * the pod restarts. One definition shared by the message schema (the producer
+ * contract) and the consumers (the guard that stops a bad stamp from failing a
+ * run): observability must not be able to fail a transaction.
  */
 export const MAX_DATE_EPOCH_MS = 8_640_000_000_000_000;
 
@@ -74,7 +79,8 @@ export function isRepresentableEpochMs(value: number): boolean {
   return (
     Number.isFinite(value) &&
     Number.isInteger(value) &&
-    Math.abs(value) <= MAX_DATE_EPOCH_MS
+    value >= 0 &&
+    value <= MAX_DATE_EPOCH_MS
   );
 }
 
@@ -164,6 +170,24 @@ export class ExecutionLatency {
     const b = this.marks.get(to);
     if (a === undefined || b === undefined) return undefined;
     return Math.max(0, b - a);
+  }
+
+  /**
+   * Duration between two stages *without* clamping, or undefined unless both
+   * are marked. stageMs() exists for rendering, where a negative interval is
+   * meaningless and 0 is the friendlier output. Recording is the other case:
+   * `observed` is stamped by the event-tracker pod and `broadcast` by the
+   * executor pod, so a tracker clock running ahead produces a negative raw
+   * delta that has to be dropped rather than reported as a real-looking 0 ms.
+   * latency-observations.ts already discards a negative interval for the
+   * k8s-job series, and clamping here instead would make the two series in one
+   * histogram disagree on `_count` for the same skew.
+   */
+  rawStageMs(from: LatencyStage, to: LatencyStage): number | undefined {
+    const a = this.marks.get(from);
+    const b = this.marks.get(to);
+    if (a === undefined || b === undefined) return undefined;
+    return b - a;
   }
 
   /**

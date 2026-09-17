@@ -357,25 +357,39 @@ async function dispatchExecution(params: {
   // summary and histograms (it sees started/completed, which a handed-off Job
   // never does), so it is excluded here to avoid a second, out-of-order line.
   if (latency && target !== "in-process") {
-    latency.mark("dispatched");
-    const queueToDispatchMs = latency.stageMs("received", "dispatched");
-    if (queueToDispatchMs !== undefined) {
-      getMetricsCollector().recordLatency(
-        MetricNames.EXECUTOR_DISPATCH_LATENCY,
-        queueToDispatchMs,
-        {
-          [LabelKeys.TRIGGER_TYPE]: triggerType,
-          [LabelKeys.DISPATCH_TARGET]: target,
-          [LabelKeys.STAGE]: "dispatched",
-        }
+    // Wrapped so instrumentation cannot fail a dispatched execution. This block
+    // runs after createWorkflowJob returned, so a throw here reaches the
+    // processMessage catch and failExecutionAsSystemError flips the still-pending
+    // row to system_error -- while the transaction may already be on chain, and
+    // the runner's terminal write is then refused against that status. The Job
+    // exists by the time this block is entered, so a guarantee by audit of each
+    // call is not enough: nothing here may be allowed to throw.
+    try {
+      latency.mark("dispatched");
+      const queueToDispatchMs = latency.stageMs("received", "dispatched");
+      if (queueToDispatchMs !== undefined) {
+        getMetricsCollector().recordLatency(
+          MetricNames.EXECUTOR_DISPATCH_LATENCY,
+          queueToDispatchMs,
+          {
+            [LabelKeys.TRIGGER_TYPE]: triggerType,
+            [LabelKeys.DISPATCH_TARGET]: target,
+            [LabelKeys.STAGE]: "dispatched",
+          }
+        );
+      }
+      latency.emitLog({
+        workflowId,
+        executionId,
+        triggerType,
+        dispatchTarget: target,
+      });
+    } catch (latencyError) {
+      console.error(
+        "[Executor] Latency instrumentation failed (dispatch unaffected):",
+        latencyError
       );
     }
-    latency.emitLog({
-      workflowId,
-      executionId,
-      triggerType,
-      dispatchTarget: target,
-    });
   }
 }
 
@@ -1126,9 +1140,22 @@ async function listen(): Promise<void> {
           let obsApplied = 0;
           let obsSkipped = 0;
           if (body.observations && body.observations.length > 0) {
-            const obs = applyLatencyObservations(body.observations);
-            obsApplied = obs.applied;
-            obsSkipped = obs.skipped;
+            // Wrapped so observations cannot fail an ingest whose counter
+            // deltas have already been applied: a throw here would answer 500
+            // after the deltas landed, and the sender would retry an ingest
+            // that was already half-committed. Losing a sample is the stated
+            // contract; double-counting a counter is not.
+            try {
+              const obs = applyLatencyObservations(body.observations);
+              obsApplied = obs.applied;
+              obsSkipped = obs.skipped;
+            } catch (observationError) {
+              console.error(
+                "[Executor] Latency observation ingest failed (counters unaffected):",
+                observationError
+              );
+              obsSkipped = body.observations.length;
+            }
           }
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(

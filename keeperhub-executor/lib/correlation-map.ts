@@ -5,40 +5,83 @@
  * pod's observations arrive asynchronously over the metrics ingest, after the
  * message handler has moved on. This bounded map lets the ingest applier find
  * the originating timeline by correlation id. Entries are removed when their
- * received-completed observation is applied; the cap keeps a pathological
- * ingest stream from growing the map without bound (oldest entries evicted -
- * they would be unusably stale anyway).
+ * received-completed observation is applied; two bounds keep a pathological
+ * ingest stream from growing the map without bound - an age bound against the
+ * run's own `received` stamp, and a count cap as the backstop.
+ *
+ * The age bound is the one that matters. Plenty of tracked runs never produce
+ * an observation to free them: in-process runs and api-target runs ship
+ * nothing, a message can be dropped before dispatch, and a runner pod can die
+ * before its ingest lands. Under a count-only cap those entries turn the 1024
+ * slots over on message *volume*, so a run slower than that window has its
+ * entry evicted before its own observation arrives - it is counted `skipped`
+ * and the histogram loses exactly the slow runs it exists to surface. Bounding
+ * by age makes eviction depend on how long the entry has waited rather than on
+ * how busy the executor is.
  */
 
 import type { ExecutionLatency } from "../latency";
 
 const MAX_TRACKED = 1024;
 
-const map = new Map<string, ExecutionLatency>();
+/**
+ * How long a tracked entry may wait for observations before it is dropped.
+ * An hour is far beyond any legitimate ingest delay (observations are posted as
+ * their run finishes, and the slowest workflow here is minutes), so an entry
+ * this old is one whose producer is never going to ship.
+ */
+const MAX_TRACKED_AGE_MS = 60 * 60 * 1000;
+
+const map = new Map<string, TrackedEntry>();
+
+type TrackedEntry = {
+  latency: ExecutionLatency;
+  /** The run's own receive stamp, or the tracking time when it has none. */
+  trackedAt: number;
+};
+
+/**
+ * Drop entries that have waited longer than MAX_TRACKED_AGE_MS. The map is
+ * capped at 1024 entries, so this is a bounded scan of a tiny set on the track
+ * path, and it runs before the cap check so age - not arrival order - decides
+ * what to give up.
+ */
+function evictStale(now: number): void {
+  for (const [id, entry] of map) {
+    if (now - entry.trackedAt > MAX_TRACKED_AGE_MS) {
+      map.delete(id);
+    }
+  }
+}
 
 /** Track the timeline for a run from SQS receive until its observations land. */
 export function trackLatency(latency: ExecutionLatency): void {
+  const now = Date.now();
+  evictStale(now);
   if (map.size >= MAX_TRACKED) {
     const oldest = map.keys().next().value;
     if (oldest !== undefined) {
       map.delete(oldest);
     }
   }
-  map.set(latency.correlationId, latency);
+  map.set(latency.correlationId, {
+    latency,
+    trackedAt: latency.at("received") ?? now,
+  });
 }
 
 /** Peek without removing (observed-broadcast arrives before completed). */
 export function peekLatency(correlationId: string): ExecutionLatency | undefined {
-  return map.get(correlationId);
+  return map.get(correlationId)?.latency;
 }
 
 /** Take and remove (the run is fully observed; the entry has served its purpose). */
 export function takeLatency(correlationId: string): ExecutionLatency | undefined {
-  const latency = map.get(correlationId);
-  if (latency !== undefined) {
+  const entry = map.get(correlationId);
+  if (entry !== undefined) {
     map.delete(correlationId);
   }
-  return latency;
+  return entry?.latency;
 }
 
 /** Test hook: drop everything. */

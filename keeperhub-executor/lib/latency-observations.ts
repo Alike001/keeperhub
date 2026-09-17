@@ -15,12 +15,18 @@
  *                          broadcast timestamp the write path dropped in the
  *                          sidecar marker. Absent for legacy messages without
  *                          observedAt, and for runs that never broadcast.
- *  - received-completed    the pod's own lifetime, from KH_RECEIVED_AT to
- *                          engine completion. The executor records it into
+ *  - received-completed    the run's lifetime, from KH_RECEIVED_AT (stamped by
+ *                          the executor before dispatch) to this pod's own
+ *                          terminal timestamp. The executor records it into
  *                          executor.execution.latency_ms with
- *                          stage="completed" (its own received timestamp is
- *                          authoritative for the start point, so a skewed pod
- *                          clock cannot distort the queue leg).
+ *                          stage="completed". Taking the start point from the
+ *                          executor rather than from the pod is what makes this
+ *                          the metric METRICS_REFERENCE.md documents - receive
+ *                          to terminal, the same interval the in-process series
+ *                          measures - rather than the pod's own lifetime. It
+ *                          does not make the measurement skew-free: the two
+ *                          endpoints are read on two different clocks, so a pod
+ *                          clock offset is carried into this interval in full.
  *
  * Best-effort: absent env markers or an unreadable sidecar simply yield no
  * observation for that interval.

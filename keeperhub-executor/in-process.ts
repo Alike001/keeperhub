@@ -131,12 +131,26 @@ export async function executeInProcess(params: {
 
     latency.mark("completed");
     const duration = Date.now() - startTime;
-    recordInProcessLatency({
-      latency,
-      workflowId,
-      executionId,
-      triggerType,
-    });
+    // Wrapped so instrumentation cannot fail a run that succeeded. This call
+    // sits inside the try and before applyExecutionResult, so a throw here
+    // would reach the catch and write status "error" for a run that completed -
+    // and updateScheduleStatus has no terminal-state filter, so a scheduled run
+    // would be recorded as failed with runCount never incremented. Observability
+    // must not be able to fail a transaction, so it must not be able to fail a
+    // successful workflow either.
+    try {
+      recordInProcessLatency({
+        latency,
+        workflowId,
+        executionId,
+        triggerType,
+      });
+    } catch (latencyError) {
+      console.error(
+        "[Executor:InProcess] Latency instrumentation failed (run unaffected):",
+        latencyError
+      );
+    }
     console.log(
       `[Executor:InProcess] Completed in ${duration}ms correlationId=${latency.correlationId}`
     );
@@ -256,8 +270,14 @@ function recordInProcessLatency(params: {
       }
     );
   }
-  const obsToBroadcast = latency.stageMs("observed", "broadcast");
-  if (obsToBroadcast !== undefined) {
+  // Guard on the *raw* delta before recording. stageMs() clamps to 0, and
+  // `observed` is stamped in the tracker pod while `broadcast` is stamped in
+  // this one, so a tracker clock running ahead yields a negative delta that
+  // clamping would turn into a real-looking 0 ms sample. latency-observations
+  // drops a negative interval for the k8s-job series, so clamping here would
+  // make the two series in one histogram disagree on `_count` for the same skew.
+  const obsToBroadcast = latency.rawStageMs("observed", "broadcast");
+  if (obsToBroadcast !== undefined && obsToBroadcast >= 0) {
     getMetricsCollector().recordLatency(
       MetricNames.EXECUTOR_BROADCAST_LATENCY,
       obsToBroadcast,

@@ -17,7 +17,11 @@
  *    broadcast could overwrite an earlier one before its run reads it back,
  *    silently losing the sample. The counter ships to the executor with the
  *    other counter deltas, so the broadcast stage stays observable even where
- *    the per-run files cannot be read back (multi-write runs, read-only fs).
+ *    the per-run file cannot be read back at all (read-only fs). The write is
+ *    first-wins, deliberately matching `ExecutionLatency.mark`: a workflow
+ *    that approves and then swaps must report the interval to its *first*
+ *    broadcast, or the headline number includes the later step's confirmation
+ *    wait and the two ends of the interval measure different broadcasts.
  * 3. After executeWorkflow() returns, the runner takes its own execution's
  *    marker (read-and-discard for exactly its execution id) and includes the
  *    stage in its structured completion log; the observation collector ships
@@ -105,9 +109,11 @@ export function enableBroadcastMarkers(): void {
  * execution_id across every async leg of the run (including plugin steps).
  * Callers that know their execution id (the runner, the in-process path,
  * tests) pass it explicitly; outside a registered context (scripts, tests)
- * this returns undefined and markBroadcast only bumps the counters. Pure
- * module (no Node builtins), so importing it from lib/web3 write paths adds
- * nothing the engine has not already loaded.
+ * this returns undefined and markBroadcast only bumps the counters. This
+ * function itself uses no Node builtins, so importing it from lib/web3 write
+ * paths adds nothing the engine has not already loaded -- note that the
+ * module as a whole is not pure: it imports `node:fs` and `node:path` above
+ * to maintain the registry. Only this accessor is dependency-free.
  */
 export function currentExecutionId(): string | undefined {
   return getWorkflowErrorContext()?.execution_id;
@@ -138,13 +144,18 @@ export function markBroadcast(
   }
   try {
     mkdirSync(MARKER_DIR, { recursive: true });
+    // First write wins (`wx`), matching ExecutionLatency.mark's first-wins
+    // semantics. Without it a multi-write run keeps its *last* broadcast, and
+    // `observed -> last broadcast` would carry the later step's full
+    // confirmation wait into the headline interval. EEXIST is swallowed by the
+    // catch below, which is the intended outcome: the earlier mark stands.
     writeFileSync(
       getBroadcastMarkerPath(executionId),
       JSON.stringify({
         executionId,
         broadcastAt: Date.now(),
       } satisfies BroadcastMarker),
-      "utf-8"
+      { encoding: "utf-8", flag: "wx" }
     );
   } catch {
     // Sidecar unavailable (read-only fs, sandbox): the registered broadcast

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ExecutionLatency,
   generateCorrelationId,
+  isRepresentableEpochMs,
 } from "./latency";
 import { executorMessageSchema } from "./message-schema";
 import { logInfo } from "../lib/logging";
@@ -371,5 +372,53 @@ describe("event message schema with latency correlation", () => {
       observedAt: "not-a-number",
     });
     expect(parsed.success).toBe(false);
+  });
+});
+
+describe("latency stage arithmetic (issue #2289 review)", () => {
+  it("rejects a negative epoch stamp", () => {
+    // No epoch-ms timestamp predates 1970. `Math.abs` alone admitted -1e15,
+    // which passed the schema in `warn` mode and then derived a ~1e15 ms
+    // observed->broadcast interval, polluting that label set's `_sum` until the
+    // pod restarted.
+    expect(isRepresentableEpochMs(-1)).toBe(false);
+    expect(isRepresentableEpochMs(-1e15)).toBe(false);
+    expect(isRepresentableEpochMs(1.5)).toBe(false);
+    expect(isRepresentableEpochMs(8_640_000_000_000_001)).toBe(false);
+    expect(isRepresentableEpochMs(0)).toBe(true);
+  });
+
+  it("drops a negative stamp rather than storing it", () => {
+    const latency = new ExecutionLatency("corr-negative");
+    latency.mark("observed", -1e15);
+    expect(latency.at("observed")).toBeUndefined();
+    expect(latency.has("observed")).toBe(false);
+  });
+
+  it("keeps the raw delta negative where stageMs clamps it to zero", () => {
+    // observed is stamped by the tracker pod and broadcast by the executor, so a
+    // tracker clock running ahead yields a negative delta. Recording the clamped
+    // value would be a fabricated 0 ms sample, and the k8s-job series drops a
+    // negative interval for the same skew - so the two series in one histogram
+    // would disagree on `_count`.
+    const latency = new ExecutionLatency("corr-skew");
+    latency.mark("observed", 2_000);
+    latency.mark("broadcast", 1_500);
+    expect(latency.stageMs("observed", "broadcast")).toBe(0);
+    expect(latency.rawStageMs("observed", "broadcast")).toBe(-500);
+  });
+
+  it("rawStageMs agrees with stageMs when the stages are in order", () => {
+    const latency = new ExecutionLatency("corr-in-order");
+    latency.mark("observed", 2_000);
+    latency.mark("broadcast", 2_500);
+    expect(latency.rawStageMs("observed", "broadcast")).toBe(500);
+    expect(latency.stageMs("observed", "broadcast")).toBe(500);
+  });
+
+  it("rawStageMs is undefined unless both stages are marked", () => {
+    const latency = new ExecutionLatency("corr-partial");
+    latency.mark("observed", 2_000);
+    expect(latency.rawStageMs("observed", "broadcast")).toBeUndefined();
   });
 });
