@@ -20,6 +20,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { pagerDutyServiceUrl } from "@/plugins/pagerduty/event-payload";
+import {
+  type PagerDutyNodeTestReadiness,
+  pagerDutyNodeTestReadiness,
+} from "@/plugins/pagerduty/node-test-readiness";
 import type {
   PagerDutyEscalationPolicy,
   PagerDutyPriority,
@@ -786,6 +790,62 @@ const LEG_LABEL: Record<string, string> = {
  * because it genuinely reaches on-call's service, and the round trip ends
  * resolved so nothing is left for somebody to tidy up.
  */
+/**
+ * Why the test cannot be run yet, in the words of whatever is actually
+ * missing.
+ *
+ * "Pick a connection and a service above" was one message for every case, and
+ * it was wrong in the one that matters: a connection whose token is rejected
+ * loads no services, so there is nothing to pick, and the message read as
+ * though the connection itself had not been set.
+ */
+function PagerDutyTestNotReady({
+  reason,
+  servicesError,
+}: {
+  reason: PagerDutyNodeTestReadiness;
+  servicesError: string | null;
+}) {
+  if (reason === "no-connection") {
+    return (
+      <Notice tone="info">
+        Pick a connection above, then a service, and you can send one real test
+        alert through them from here.
+      </Notice>
+    );
+  }
+  if (reason === "loading-services") {
+    return (
+      <Notice tone="info">Reading the services on this connection.</Notice>
+    );
+  }
+  if (reason === "connection-unreadable") {
+    return (
+      <Notice tone="warning">
+        This connection could not be read, so there is no service to test
+        against: {servicesError} Fix the connection in Settings, then reload the
+        list above. Nothing has been sent to PagerDuty.
+      </Notice>
+    );
+  }
+  if (reason === "no-services") {
+    return (
+      <Notice tone="warning">
+        This connection reached PagerDuty and can see no services. A read-only
+        token sees every service in the account, so an empty list usually means
+        a scoped OAuth app without <code>services.read</code>, or an account
+        that has none yet.
+      </Notice>
+    );
+  }
+  return (
+    <Notice tone="info">
+      Pick a service above, then you can send one real test alert through it
+      from here.
+    </Notice>
+  );
+}
+
 export function PagerDutyTestNodeButton({
   integrationId,
   serviceId,
@@ -798,7 +858,25 @@ export function PagerDutyTestNodeButton({
   const [running, setRunning] = useState(false);
   const [outcome, setOutcome] = useState<TestOutcome | null>(null);
 
-  const ready = Boolean(integrationId && serviceId);
+  // The same list the picker above reads. The button needs it to tell three
+  // states apart that all look like "no service is selected": no connection
+  // chosen yet, a connection that cannot be read, and a connection that reads
+  // fine and simply has nothing picked. Telling somebody to pick a service
+  // when the list failed to load asks them to do something they cannot.
+  const {
+    items: services,
+    loading: servicesLoading,
+    error: servicesError,
+  } = usePagerDutyServices(integrationId);
+
+  const reason = pagerDutyNodeTestReadiness({
+    hasConnection: Boolean(integrationId),
+    hasService: Boolean(serviceId),
+    serviceCount: services.length,
+    servicesError,
+    servicesLoading,
+  });
+  const ready = reason === "ready";
 
   const runTest = async (): Promise<void> => {
     if (!(ready && integrationId) || running) {
@@ -841,10 +919,7 @@ export function PagerDutyTestNodeButton({
 
   if (!ready) {
     return (
-      <Notice tone="info">
-        Pick a connection and a service above, then you can send one real test
-        alert through them from here.
-      </Notice>
+      <PagerDutyTestNotReady reason={reason} servicesError={servicesError} />
     );
   }
 
