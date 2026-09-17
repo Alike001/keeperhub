@@ -12,11 +12,12 @@
  * group as an untouched one, and counting those would put a badge on every
  * group on every node and say nothing.
  */
+
+import { evaluateShowWhen } from "@/lib/workflow/editor/show-when";
 import {
   type ActionConfigFieldBase,
   isDisplayOnlyField,
 } from "@/plugins/registry";
-import { evaluateShowWhen } from "@/lib/workflow/editor/show-when";
 
 /** The stored value, as the form would have written it. */
 function storedValue(config: Record<string, unknown>, key: string): unknown {

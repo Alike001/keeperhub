@@ -147,7 +147,9 @@ describe("the PagerDuty node's own groups", () => {
   const groups = pagerDutyPlugin.actions.flatMap((action) =>
     (action.configFields ?? [])
       .filter((field) => isFieldGroup(field))
-      .map((field) => [`${action.slug} / ${field.label}`, field.fields] as const)
+      .map(
+        (field) => [`${action.slug} / ${field.label}`, field.fields] as const
+      )
   );
 
   it("has groups to summarise at all", () => {
@@ -191,8 +193,8 @@ describe("the PagerDuty node's own groups", () => {
     });
 
     // The switch at its declared default stays uncounted even here.
-    expect(
-      summariseGroup(advanced.fields, { failOnError: "true" }).count
-    ).toBe(0);
+    expect(summariseGroup(advanced.fields, { failOnError: "true" }).count).toBe(
+      0
+    );
   });
 });

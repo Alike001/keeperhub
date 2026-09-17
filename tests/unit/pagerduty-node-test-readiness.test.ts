@@ -61,7 +61,11 @@ describe("why a PagerDuty node cannot send a test alert yet", () => {
   /** Read fine, genuinely empty: a different problem from a bad credential. */
   it("separates an empty account from an unreadable one", () => {
     expect(
-      pagerDutyNodeTestReadiness({ ...base, hasService: false, serviceCount: 0 })
+      pagerDutyNodeTestReadiness({
+        ...base,
+        hasService: false,
+        serviceCount: 0,
+      })
     ).toBe("no-services");
   });
 
