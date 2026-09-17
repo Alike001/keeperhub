@@ -71,9 +71,8 @@ function renderFieldHelp(field: PluginFormField): React.ReactNode {
   );
 }
 
-type IntegrationWithOptionalConfig = Integration & {
-  config?: IntegrationConfig;
-};
+/** Stands in for a stored secret the browser is never sent. Never rendered. */
+const STORED_SECRET_PLACEHOLDER = "\u0000stored";
 
 type EditConnectionOverlayProps = {
   overlayId: string;
@@ -101,39 +100,19 @@ export function EditConnectionForm({
   inline?: boolean;
 }) {
   const { push, closeAll } = useOverlay();
-  const integrationWithConfig = integration as IntegrationWithOptionalConfig;
-  const hasConfigFromProps =
-    integrationWithConfig.config != null &&
-    typeof integrationWithConfig.config === "object" &&
-    !Array.isArray(integrationWithConfig.config);
-  const [loading, setLoading] = useState(!hasConfigFromProps);
+  // Config always comes from the fetch below. `GET /api/integrations` states
+  // that it excludes config deliberately, and both callers pass a row from
+  // it, so a props shortcut could only ever be a path where `storedSecrets`
+  // was never populated - which reads as "no secret stored" and is the one
+  // answer that must not be guessed.
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [name, setName] = useState(integration.name);
-  const [config, setConfig] = useState<Record<string, string>>(() => {
-    if (hasConfigFromProps && integrationWithConfig.config) {
-      return normalizeConfig(integrationWithConfig.config);
-    }
-    return {};
-  });
-  const [dbTab, setDbTab] = useState<DatabaseTab>(() => {
-    if (hasConfigFromProps && integrationWithConfig.config) {
-      return detectDefaultTab(normalizeConfig(integrationWithConfig.config));
-    }
-    return "url";
-  });
+  const [config, setConfig] = useState<Record<string, string>>({});
+  const [dbTab, setDbTab] = useState<DatabaseTab>("url");
 
   useEffect(() => {
-    if (hasConfigFromProps && integrationWithConfig.config) {
-      setName(integration.name);
-      const normalized = normalizeConfig(integrationWithConfig.config);
-      setConfig(normalized);
-      if (integration.type === "database") {
-        setDbTab(detectDefaultTab(normalized));
-      }
-      setLoading(false);
-      return;
-    }
     let cancelled = false;
     setLoading(true);
     api.integration
@@ -161,13 +140,7 @@ export function EditConnectionForm({
     return () => {
       cancelled = true;
     };
-  }, [
-    integration.id,
-    integration.name,
-    integration.type,
-    hasConfigFromProps,
-    integrationWithConfig.config,
-  ]);
+  }, [integration.id, integration.name, integration.type]);
 
   /**
    * Stored credentials the user has asked to remove.
@@ -505,27 +478,19 @@ export function EditConnectionForm({
     // form listing four fields does not read as though it wants all four.
     // Every secret key: this form never receives their stored values, so it
     // cannot tell a blank field from a credential that is already set.
-    // A stored secret counts as filled, so nothing is unknown any more and
-    // the form can say which credential is in use, hold the other shut, and
-    // warn when both are - the case the run time resolves silently.
+    // A stored secret stands in for its value, which the browser is never
+    // sent. The server says which keys hold one, so by the time these render
+    // - the form shows a spinner until the fetch resolves - an empty
+    // `storedSecrets` is an answer rather than an absence of one, and every
+    // state resolves from values: one stored secret names its group in use,
+    // two report ambiguous, none reports neither.
     const knownConfig: Record<string, unknown> = { ...config };
     for (const key of storedSecrets) {
       if (!(knownConfig[key] as string | undefined)?.length) {
-        knownConfig[key] = "stored";
+        knownConfig[key] = STORED_SECRET_PLACEHOLDER;
       }
     }
-    const pendingUnknown = new Set(
-      [...secretKeys].filter(
-        (key) => !(storedSecrets.includes(key) || config[key]?.length)
-      )
-    );
-    const exclusive = resolveExclusiveGroups(
-      formFields,
-      knownConfig,
-      // Only keys that are neither stored nor typed remain unknown, which for
-      // a loaded connection is none of them.
-      pendingUnknown.size === secretKeys.size ? secretKeys : new Set<string>()
-    );
+    const exclusive = resolveExclusiveGroups(formFields, knownConfig);
     // Groups that hold a credential, not groups that exist: a form declaring
     // one credential group beside a group of ordinary settings would
     // otherwise offer removal on its only credential, which is the case this

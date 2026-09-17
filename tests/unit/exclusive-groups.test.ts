@@ -116,45 +116,48 @@ describe("resolveExclusiveGroups", () => {
 });
 
 /**
- * The warning that survives not knowing the values.
- *
- * On a form that is never sent the credential it is editing, which group wins
- * cannot be worked out - but "more than one of these holds something" can,
- * and that is the state nobody can diagnose from the screen, because the run
- * time silently prefers one of them.
+ * A form editing a stored credential is never sent its value, so it
+ * substitutes a placeholder for the keys the server reports as set. Every
+ * answer then comes from values, which is what stops the screen contradicting
+ * the run time - it resolves the same question from the same evidence.
  */
-describe("with values the caller cannot see", () => {
+describe("a form standing in for stored secrets", () => {
+  const STORED = "\u0000stored";
   const fields = [
     { id: "token", configKey: "apiToken", exclusiveGroup: "token" },
     { id: "clientId", configKey: "oauthClientId", exclusiveGroup: "oauth" },
     { id: "secret", configKey: "oauthClientSecret", exclusiveGroup: "oauth" },
   ];
 
-  it("names nothing as in use and locks nothing", () => {
-    const state = resolveExclusiveGroups(
-      fields,
-      { apiToken: "stored" },
-      new Set(["apiToken", "oauthClientSecret"])
-    );
-    expect(state.activeGroupId).toBeUndefined();
+  it("names the stored credential's group as the one in use", () => {
+    const state = resolveExclusiveGroups(fields, { apiToken: STORED });
+    expect(state.activeGroupId).toBe("token");
+    expect(state.ambiguous).toBe(false);
+    expect(isFieldLocked(fields[1], state)).toBe(true);
+  });
+
+  it("reports both filled when a second is typed over a stored one", () => {
+    const state = resolveExclusiveGroups(fields, {
+      apiToken: STORED,
+      oauthClientId: "PDABC12",
+    });
+    expect(state.ambiguous).toBe(true);
     for (const field of fields) {
       expect(isFieldLocked(field, state)).toBe(false);
     }
   });
 
-  it("still reports both filled, which is the case worth saying", () => {
-    expect(
-      resolveExclusiveGroups(
-        fields,
-        { apiToken: "stored", oauthClientId: "PDABC12" },
-        new Set(["apiToken", "oauthClientSecret"])
-      ).ambiguous
-    ).toBe(true);
-  });
-
-  it("says nothing when only one group holds anything", () => {
-    expect(
-      resolveExclusiveGroups(fields, {}, new Set(["apiToken"])).ambiguous
-    ).toBe(false);
+  /**
+   * The case that motivated dropping the unknown-key guess: a connection can
+   * be saved with no secret at all, and the form then said both options were
+   * filled and told somebody to clear a credential that is not there.
+   */
+  it("reports neither filled when nothing is stored or typed", () => {
+    const state = resolveExclusiveGroups(fields, { subdomain: "acme" });
+    expect(state.activeGroupId).toBeUndefined();
+    expect(state.ambiguous).toBe(false);
+    for (const field of fields) {
+      expect(isFieldLocked(field, state)).toBe(false);
+    }
   });
 });

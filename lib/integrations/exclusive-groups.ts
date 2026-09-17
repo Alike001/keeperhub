@@ -50,17 +50,14 @@ function hasValue(value: unknown): boolean {
 /**
  * Resolve which alternative is in use.
  *
- * `unknownKeys` are keys whose value the caller cannot see - a form that is
- * never sent the credential it is editing. A group holding one is treated as
- * possibly filled: it locks nothing and names nothing as in use, while still
- * reporting the state as ambiguous when more than one group holds something.
- * Naming a group in use on a guess would contradict the run time, which
- * resolves the same question from the values.
+ * Every answer comes from values the caller can see. A form editing a stored
+ * credential is never sent its value, so it substitutes a placeholder for the
+ * keys the server says are set - see `storedSecretKeys` - rather than asking
+ * this to guess from an absence.
  */
 export function resolveExclusiveGroups(
   fields: readonly ExclusiveField[],
-  config: Record<string, unknown>,
-  unknownKeys: ReadonlySet<string> = new Set()
+  config: Record<string, unknown>
 ): ExclusiveGroupState {
   const groups: ExclusiveGroup[] = [];
 
@@ -82,23 +79,11 @@ export function resolveExclusiveGroups(
     });
   }
 
-  let anyUnknown = false;
   for (const group of groups) {
-    const unknown = group.configKeys.some((key) => unknownKeys.has(key));
-    anyUnknown = anyUnknown || unknown;
-    group.filled =
-      unknown || group.configKeys.some((key) => hasValue(config[key]));
+    group.filled = group.configKeys.some((key) => hasValue(config[key]));
   }
 
   const filled = groups.filter((group) => group.filled);
-  if (anyUnknown) {
-    // Nothing can be locked and nothing can be declared in use, because the
-    // values that would decide it are not here. `ambiguous` is still reported
-    // though: it says only that more than one group holds something, which is
-    // exactly what an unknown key establishes, and it drives the one warning
-    // that does not need to know which group wins.
-    return { groups, activeGroupId: undefined, ambiguous: filled.length > 1 };
-  }
   return {
     groups,
     // Field order is the precedence the run time applies, so the first filled

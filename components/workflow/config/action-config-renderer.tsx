@@ -949,19 +949,19 @@ function FieldGroup({
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-1">
-      <button
-        className="ml-1 flex items-center gap-1 text-left"
-        onClick={() => setIsExpanded(!isExpanded)}
-        type="button"
-      >
-        <span className="font-medium text-sm">{label}</span>
-        <ChevronDown
-          className={`h-3.5 w-3.5 text-muted-foreground transition-transform duration-200 ${
-            isExpanded ? "" : "-rotate-90"
-          }`}
-        />
-      </button>
-      {summary && summary.count > 0 && (
+        <button
+          className="ml-1 flex items-center gap-1 text-left"
+          onClick={() => setIsExpanded(!isExpanded)}
+          type="button"
+        >
+          <span className="font-medium text-sm">{label}</span>
+          <ChevronDown
+            className={`h-3.5 w-3.5 text-muted-foreground transition-transform duration-200 ${
+              isExpanded ? "" : "-rotate-90"
+            }`}
+          />
+        </button>
+        {summary && summary.count > 0 && (
           <Tooltip>
             <TooltipTrigger asChild>
               <span
@@ -971,7 +971,7 @@ function FieldGroup({
                 // the only place the group's contents appear while it is shut.
                 tabIndex={0}
               >
-              {summary.count} set
+                {summary.count} set
               </span>
             </TooltipTrigger>
             <TooltipContent className="max-w-xs" side="top">
