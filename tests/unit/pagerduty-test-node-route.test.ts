@@ -27,6 +27,14 @@ vi.mock("@/lib/middleware/require-scope", () => ({
   requireScope: (...args: unknown[]) => mockRequireScope(...args),
 }));
 
+const { mockCreatorDeactivated } = vi.hoisted(() => ({
+  mockCreatorDeactivated: vi.fn(),
+}));
+vi.mock("@/lib/integrations/authorization", () => ({
+  isIntegrationCreatorDeactivated: (...args: unknown[]) =>
+    mockCreatorDeactivated(...args),
+}));
+
 vi.mock("@/lib/logging", () => ({
   ErrorCategory: { EXTERNAL_SERVICE: "external_service" },
   logUserError: vi.fn(),
@@ -87,9 +95,12 @@ beforeEach(() => {
     authMethod: "session",
   });
   mockRequireScope.mockReturnValue(undefined);
+  mockCreatorDeactivated.mockReset();
+  mockCreatorDeactivated.mockResolvedValue(false);
   mockGetIntegrationFromDb.mockResolvedValue({
     id: "int-1",
     type: "pagerduty",
+    createdBy: "user-1",
     config: { apiToken: "tok" },
   });
 });
@@ -227,6 +238,20 @@ describe("POST /api/integrations/[integrationId]/pagerduty/test-node", () => {
     );
     const res = await POST(request({ serviceId: "PSKY1" }), { params });
     expect(res.status).toBe(403);
+    expect(safeFetch).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Deactivating someone freezes the connections they added, for everyone.
+   * The run-time credential fetch enforces that; this route reads the
+   * connection directly, so without its own check an offboarded person's
+   * credential would still page a service from the editor.
+   */
+  it("refuses a connection whose creator has been deactivated", async () => {
+    mockCreatorDeactivated.mockResolvedValue(true);
+    const res = await POST(request({ serviceId: "PSKY1" }), { params });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toContain("deactivated");
     expect(safeFetch).not.toHaveBeenCalled();
   });
 });

@@ -542,10 +542,11 @@ describe("simulation: the workflow is duplicated", () => {
       dedupKeyFromNodeId: TRIGGER_NODE,
     });
 
-    const copied = remapNodeReferencesInConfig(original, idMap) as Record<
-      string,
-      unknown
-    >;
+    const copied = remapNodeReferencesInConfig(
+      original,
+      idMap,
+      new Set(["dedupKeyFromNodeId"])
+    ) as Record<string, unknown>;
 
     // The alert the copy's own trigger node opens.
     const openedByCopy = deriveDedupKey(undefined, {

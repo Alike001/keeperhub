@@ -64,13 +64,44 @@ describe("remapNodeReferencesInConfig", () => {
     ["check-old", "check-new"],
   ]);
 
-  it("remaps a bare node id stored as a whole config value", () => {
+  const nodeRefKeys = new Set(["dedupKeyFromNodeId"]);
+
+  it("remaps a bare node id under a key that declares it holds one", () => {
     expect(
-      remapNodeReferencesInConfig({ dedupKeyFromNodeId: "trigger-old" }, idMap)
+      remapNodeReferencesInConfig(
+        { dedupKeyFromNodeId: "trigger-old" },
+        idMap,
+        nodeRefKeys
+      )
     ).toEqual({ dedupKeyFromNodeId: "trigger-new" });
   });
 
-  it("still remaps template references inside a string", () => {
+  /**
+   * An imported workflow keeps whatever node ids its JSON carried, and those
+   * can be as short as `n-1`. Rewriting any value that happens to match one
+   * would silently corrupt another plugin's config, so only a declared node
+   * picker's key is rewritten.
+   */
+  it("leaves a matching value alone under any other key", () => {
+    expect(
+      remapNodeReferencesInConfig(
+        { someOtherField: "trigger-old", dedupKeyFromNodeId: "trigger-old" },
+        idMap,
+        nodeRefKeys
+      )
+    ).toEqual({
+      someOtherField: "trigger-old",
+      dedupKeyFromNodeId: "trigger-new",
+    });
+  });
+
+  it("rewrites no bare value at all when no keys are declared", () => {
+    expect(
+      remapNodeReferencesInConfig({ dedupKeyFromNodeId: "trigger-old" }, idMap)
+    ).toEqual({ dedupKeyFromNodeId: "trigger-old" });
+  });
+
+  it("still remaps template references inside a string, under any key", () => {
     expect(
       remapNodeReferencesInConfig(
         { summary: "Vault {{@check-old:Check.id}} stalled" },
@@ -91,13 +122,13 @@ describe("remapNodeReferencesInConfig", () => {
     });
   });
 
-  it("reaches into nested objects and arrays", () => {
+  it("reaches into nested objects for template references", () => {
     expect(
       remapNodeReferencesInConfig(
-        { group: { nodes: ["trigger-old", "untouched"] } },
+        { group: { summary: "{{@check-old:Check.id}}" } },
         idMap
       )
-    ).toEqual({ group: { nodes: ["trigger-new", "untouched"] } });
+    ).toEqual({ group: { summary: "{{@check-new:Check.id}}" } });
   });
 
   it("passes a missing config straight through", () => {

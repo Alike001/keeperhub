@@ -12,6 +12,7 @@ import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
 import { syncPersistedWorkflowSchedule } from "@/lib/schedule-service";
 import { generateId } from "@/lib/utils/id";
 import { remapNodeReferencesInConfig } from "@/lib/utils/template";
+import { findActionById, flattenConfigFields } from "@/plugins/registry";
 import { getWorkflowAccess } from "@/lib/workflow/access";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
 import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
@@ -29,7 +30,30 @@ type WorkflowNodeLike = {
   [key: string]: unknown;
 };
 
-/** Duplicate nodes with new IDs, strip integration IDs, and remap template refs in config */
+/**
+ * Config keys on this action that hold a node id on its own rather than inside
+ * a `{{@nodeId:...}}` template, so duplication knows which bare values to
+ * rewrite. Derived from the field type, so a plugin adding a node picker is
+ * covered without touching this file.
+ */
+function nodeReferenceKeys(actionType: unknown): ReadonlySet<string> {
+  if (typeof actionType !== "string") {
+    return new Set();
+  }
+  const action = findActionById(actionType);
+  if (!action?.configFields) {
+    return new Set();
+  }
+  const keys = new Set<string>();
+  for (const field of flattenConfigFields(action.configFields)) {
+    if (field.type?.endsWith("-node-select")) {
+      keys.add(field.key);
+    }
+  }
+  return keys;
+}
+
+/** Duplicate nodes with new IDs, strip integration IDs, and remap node refs in config */
 function duplicateNodes(
   oldNodes: WorkflowNodeLike[],
   idMap: Map<string, string>
@@ -43,7 +67,8 @@ function duplicateNodes(
         const { integrationId: _, ...configWithoutIntegration } = data.config;
         data.config = remapNodeReferencesInConfig(
           configWithoutIntegration,
-          idMap
+          idMap,
+          nodeReferenceKeys(data.config.actionType)
         );
       }
       data.status = "idle";

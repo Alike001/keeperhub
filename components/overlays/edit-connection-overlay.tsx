@@ -385,9 +385,18 @@ export function EditConnectionForm({
         // element's value attribute, so the generic text branch below stored
         // an empty string however the box was ticked, and every plugin reading
         // the flag saw it as unset.
+        // An empty string counts as unset, not as false. Before this branch
+        // existed the generic text input stored "" for a checkbox however it
+        // was ticked, so that is exactly what every connection saved until
+        // now holds - and SendGrid's box defaults to true and is read at run
+        // time as "on unless it says false". Treating "" as false would show
+        // an existing connection unticked while it behaves as ticked, and one
+        // careless save would turn it genuinely off.
+        const stored = config[field.configKey];
         const checked =
-          (config[field.configKey] ?? String(field.defaultValue ?? false)) ===
-          "true";
+          stored === undefined || stored === ""
+            ? Boolean(field.defaultValue)
+            : stored === "true";
         return (
           <div className="space-y-2" key={field.id}>
             <div className="flex items-center gap-2">

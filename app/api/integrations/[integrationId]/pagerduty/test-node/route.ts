@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getIntegration as getIntegrationFromDb } from "@/lib/db/integrations";
+import { isIntegrationCreatorDeactivated } from "@/lib/integrations/authorization";
 import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { requireScope } from "@/lib/middleware/require-scope";
@@ -113,6 +114,20 @@ export async function POST(
     return NextResponse.json(
       { error: "This connection is not a PagerDuty connection" },
       { status: 400 }
+    );
+  }
+
+  // A deactivated creator freezes their connections for everyone, and that has
+  // to hold here too. The run-time credential fetch enforces it; this route
+  // reads the connection directly, so without this an offboarded person's
+  // PagerDuty credential would still work from the editor.
+  if (await isIntegrationCreatorDeactivated(integration.createdBy)) {
+    return NextResponse.json(
+      {
+        error:
+          "The person who created this connection has been deactivated, which freezes the connections they added. Recreate it under an active member.",
+      },
+      { status: 403 }
     );
   }
 
