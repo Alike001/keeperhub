@@ -189,6 +189,13 @@ async function describeAuthFailure(
 
   const otherRegion = region === "eu" ? "us" : "eu";
   const otherHost = otherRegion === "eu" ? PAGERDUTY_API_HOST_EU : PAGERDUTY_API_HOST;
+  // A connection with no API token cannot have a mistyped one, and telling
+  // somebody to check a token they never entered sends them looking at a
+  // field they cannot fix.
+  const hasToken = Boolean(credentials.PAGERDUTY_API_TOKEN?.trim());
+  const fallback = hasToken
+    ? describeStatus(status)
+    : "PagerDuty rejected these OAuth credentials for this account. Check the app has services.read and escalation_policies.read, and that the subdomain matches the account.";
   try {
     const auth = await resolveHeader(credentials, otherRegion, true);
     if ("header" in auth) {
@@ -203,7 +210,7 @@ async function describeAuthFailure(
     // The probe is a diagnostic: if it cannot run, fall through to the plain
     // message rather than turning a 401 into a network error.
   }
-  return describeStatus(status);
+  return fallback;
 }
 
 export async function testPagerDuty(

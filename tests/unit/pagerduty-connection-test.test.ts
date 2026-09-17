@@ -222,20 +222,30 @@ describe("region diagnosis on a scoped OAuth connection", () => {
  */
 describe("how many requests one Test Connection makes", () => {
   it("does not probe back from inside a probe", async () => {
-    // API token on /services 401s, so the 401 path probes the other region;
-    // the credentials are OAuth-shaped there, and that exchange is refused.
+    // OAuth only, and no API token: the token branch of resolveHeader returns
+    // before `probing` is ever read, so a credential set carrying a token
+    // exercises none of this.
+    //
+    // 1: token exchange succeeds. 2: /services answers 401, so the 401 path
+    // probes the other region. 3: that region's token exchange is refused -
+    // and must stop there rather than probing back to the first.
     fetchMock
+      .mockResolvedValueOnce(response(200, { access_token: "tok" }))
       .mockResolvedValueOnce(response(401, {}))
       .mockResolvedValue(response(400, {}));
 
     await testPagerDuty({
-      PAGERDUTY_API_TOKEN: "t",
       PAGERDUTY_OAUTH_CLIENT_ID: "PDABC12.oauth.pagerduty.com",
       PAGERDUTY_OAUTH_CLIENT_SECRET: "shh",
       PAGERDUTY_SUBDOMAIN: "acme",
     });
 
-    // /services, then the probe's token exchange. Not a third.
-    expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(2);
+    expect(fetchMock.mock.calls.length).toBe(3);
+    // And the identity endpoint really was reached, so this is the OAuth path.
+    expect(
+      fetchMock.mock.calls.filter((call) =>
+        String(call[0]).includes("identity.pagerduty.com")
+      ).length
+    ).toBeGreaterThan(0);
   });
 });

@@ -561,21 +561,27 @@ describe("applyErrorClassHint", () => {
 
   /**
    * Where a rule did match, it stands. A plugin that hints "user" on every
-   * non-5xx must not be able to relabel a recognised database or auth fault
-   * as somebody's configuration.
+   * non-5xx must not be able to relabel a recognised fault as somebody's
+   * configuration.
+   *
+   * "Matched" is the code rather than the category, and these cases are why:
+   * the first three carry WORKFLOW_ENGINE, which is also what an unmatched
+   * message falls through to, so a rule keyed on the category re-bucketed
+   * recognised executor faults as well.
    */
-  it("leaves a category a rule actually matched alone under a user hint", () => {
-    for (const message of [
-      "Execution timed out",
-      "HTTP request failed: fetch failed: read ECONNRESET",
-    ]) {
-      const base = classifyExecutionError(message);
-      const hinted = applyErrorClassHint(base, "user");
-      expect(hinted.errorType).toBe("user");
-      if (base.errorCategory !== ErrorCategory.WORKFLOW_ENGINE) {
-        expect(hinted.errorCategory).toBe(base.errorCategory);
-      }
-    }
+  it.each([
+    ["Execution timed out", ErrorCategory.WORKFLOW_ENGINE, "E-0001"],
+    ['Step "x" exceeded max retries', ErrorCategory.WORKFLOW_ENGINE, "E-0002"],
+    ["Unknown action type: nope", ErrorCategory.WORKFLOW_ENGINE, "E-0003"],
+    ["Workflow terminated by SIGTERM", ErrorCategory.INFRASTRUCTURE, "P-0003"],
+  ])("keeps the category a rule matched for %s", (message, category, code) => {
+    const base = classifyExecutionError(message);
+    expect(base.errorCategory).toBe(category);
+    expect(base.code).toBe(code);
+
+    const hinted = applyErrorClassHint(base, "user");
+    expect(hinted.errorType).toBe("user");
+    expect(hinted.errorCategory).toBe(category);
   });
 
   it("keeps a system hint coded (classifier code, or the default)", () => {

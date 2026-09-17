@@ -56,7 +56,11 @@ function describeWarning(state: {
     return `PagerDuty accepted every event, but this service is ${state.serviceStatus} and raises no incident from them - so this test proves the routing works and proves nothing about anybody being paged.`;
   }
   if (state.stillOpen) {
-    return `PagerDuty accepted every event, but the test alert is still ${state.incidentStatus} a moment later rather than resolved. The Events API applies events in its own time, so this usually settles on its own - open it below and close it by hand if it does not.`;
+    const described =
+      state.incidentStatus === "unknown"
+        ? "in a state this node does not recognise"
+        : `still ${state.incidentStatus}`;
+    return `PagerDuty accepted every event, but the test alert is ${described} a moment later rather than resolved. The Events API applies events in its own time, so this usually settles on its own - open it below and close it by hand if it does not.`;
   }
   return;
 }
@@ -238,6 +242,7 @@ export async function POST(
   // that it has not checked.
   let incidentUrl: string | undefined;
   let incidentStatus: string | undefined;
+  let incidentFound = false;
   if (triggered.ok) {
     const lookup = await findIncidentByKey(credentials, {
       serviceId,
@@ -246,19 +251,22 @@ export async function POST(
     if (lookup.ok) {
       incidentUrl = lookup.value.htmlUrl;
       incidentStatus = lookup.value.status;
+      // The status is reported as "unknown" both when the search found
+      // nothing and when it found an alert whose state is not one of the
+      // three this plugin models. Only the id separates them, and the
+      // difference matters: the first is PagerDuty not having indexed the
+      // alert yet, the second is a real alert sitting open on a real service.
+      incidentFound = Boolean(lookup.value.id);
     }
   }
 
   const suppressed = serviceSwallowsEvents(routingKey.value.serviceStatus);
-  // "unknown" is `findIncidentByKey`'s sentinel for "the search returned
-  // nothing", not a status PagerDuty reports. The read-back happens
+  // A search that found nothing says nothing: the read-back happens
   // milliseconds after the resolve and the Events API indexes in its own
-  // time, so an empty search is the ordinary case - warning on it told people
-  // an alert was open, and offered a link the response did not contain.
-  const stillOpen =
-    incidentStatus !== undefined &&
-    incidentStatus !== "unknown" &&
-    incidentStatus !== "resolved";
+  // time, so an empty result is the ordinary case. An alert that was found
+  // and is not resolved is the opposite - including one whose state this
+  // plugin does not model, which is still an alert nobody closed.
+  const stillOpen = incidentFound && incidentStatus !== "resolved";
   const response: PagerDutyTestNodeResponse = {
     ok: legs.every((leg) => leg.ok),
     legs,

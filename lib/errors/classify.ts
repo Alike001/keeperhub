@@ -582,21 +582,6 @@ export function isDefaultClassification(
 }
 
 /**
- * The two categories that mean "no rule matched", rather than a rule that
- * matched and said something.
- *
- * A USER hint re-buckets only these. DATABASE, AUTH and INFRASTRUCTURE are
- * also system-caused, but reaching one of them means a rule in `RULES`
- * recognised the message, and that is better evidence than a step's blanket
- * hint: a plugin that hints USER on every non-5xx would otherwise relabel a
- * genuine database fault as the user's configuration.
- */
-const UNMATCHED_CATEGORIES: ReadonlySet<string> = new Set([
-  ErrorCategory.WORKFLOW_ENGINE,
-  ErrorCategory.UNKNOWN,
-]);
-
-/**
  * Override a string-derived classification with an authoritative `errorType`
  * declared at the failure site (a step that knows it failed against a
  * third-party dependency, etc.). The message classifier reverse-engineers the
@@ -631,8 +616,14 @@ export function applyErrorClassHint(
       // the system side by definition, so a revoked credential or a bad field
       // was counted as an executor fault in the dashboards that sum by
       // category. Where a rule did match, its answer stands - it knows more
-      // than this fallback does.
-      errorCategory: UNMATCHED_CATEGORIES.has(classification.errorCategory)
+      // than a step's blanket hint does.
+      //
+      // "Matched" is the code, not the category. WORKFLOW_ENGINE is also what
+      // E-0001 (execution timed out), E-0002 (exceeded max retries) and
+      // E-0003 (unknown action type) carry, and those are recognised executor
+      // faults: keying off the category re-bucketed them too, which is the
+      // opposite of what this is for.
+      errorCategory: isDefaultClassification(classification)
         ? ErrorCategory.CONFIGURATION
         : classification.errorCategory,
       errorType: ExecutionErrorType.USER,

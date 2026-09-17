@@ -279,7 +279,12 @@ export function EditConnectionForm({
   }> => {
     // Always test server-side. The stored credential never leaves the server,
     // and any value the user typed is merged over it before the test runs.
-    const overrides = getNonEmptyConfig();
+    // What the save will store, not what was typed. These differ for a
+    // non-secret field somebody emptied - Account subdomain, From email -
+    // which the save keeps as blank and the old payload dropped, so the
+    // server filled it back in from storage and the test passed against a
+    // value that was about to be erased.
+    const overrides = getConfigForSave();
     const cleared = [...clearedKeys];
     // The pending removals go with it. The server fills anything not sent
     // from what is stored, so a test that did not know about them
@@ -497,6 +502,13 @@ export function EditConnectionForm({
     // Every secret key: this form never receives their stored values, so it
     // cannot tell a blank field from a credential that is already set.
     const exclusive = resolveExclusiveGroups(formFields, config, secretKeys);
+    // Groups that hold a credential, not groups that exist: a form declaring
+    // one credential group beside a group of ordinary settings would
+    // otherwise offer removal on its only credential, which is the case this
+    // deliberately excludes.
+    const credentialGroupCount = exclusive.groups.filter((group) =>
+      group.configKeys.some((key) => secretKeys.has(key))
+    ).length;
     const useThisInstead = (group: ExclusiveGroup) => {
       const inUse = exclusive.groups.find(
         (one) => one.id === exclusive.activeGroupId
@@ -525,7 +537,7 @@ export function EditConnectionForm({
       const removable =
         secretKeys.has(field.configKey) &&
         Boolean(field.exclusiveGroup) &&
-        exclusive.groups.length > 1;
+        credentialGroupCount > 1;
       const cleared = clearedKeys.has(field.configKey);
       if (!(heading || locked || removable)) {
         return rendered;

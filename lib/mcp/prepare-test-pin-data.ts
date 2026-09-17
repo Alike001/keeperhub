@@ -163,6 +163,18 @@ function buildPropertyForField(
   }
 
   if (field.type === "select" && field.options !== undefined) {
+    // A field that accepts a template cannot be a closed enum here: the
+    // schema is `additionalProperties: false`, so an agent deriving the value
+    // from an earlier step would have its pin data rejected for a value the
+    // step resolves perfectly well.
+    if (field.allowTemplate) {
+      return {
+        type: "string",
+        description: `${description} Accepts one of ${field.options
+          .map((option) => option.value)
+          .join(", ")}, or a template.`,
+      };
+    }
     return {
       type: "string",
       description,

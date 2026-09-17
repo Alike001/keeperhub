@@ -174,18 +174,20 @@ export async function PUT(
       );
     }
 
+    // What actually went, compared against what is stored: a key sent with a
+    // new value in the same request is a rotation and keeps that value, and a
+    // key the connection never held was never there to remove.
+    const removedConfigKeys = clearedConfigKeys.filter((key) => {
+      const replacement = body.config?.[key];
+      const supplied =
+        replacement !== undefined && replacement !== null && replacement !== "";
+      return !supplied && existing !== null && key in existing.config;
+    });
+
     const integration = await updateIntegration(
       integrationId,
       userId ?? "",
-      // A clear with no other change still has to reach the merge, so the
-      // config defaults to what is stored rather than staying undefined.
-      {
-        ...body,
-        clearedConfigKeys,
-        ...(body.config === undefined && clearedConfigKeys.length > 0
-          ? { config: {} }
-          : {}),
-      },
+      { ...body, clearedConfigKeys },
       organizationId,
       existing
     );
@@ -215,7 +217,9 @@ export async function PUT(
         // Named, because removing a credential is the one update here that
         // destroys something. Key names only - never a value - so the log can
         // tell a rotation from a deletion, and say which credential went.
-        ...(clearedConfigKeys.length > 0 ? { clearedConfigKeys } : {}),
+        ...(removedConfigKeys.length > 0
+          ? { clearedConfigKeys: removedConfigKeys }
+          : {}),
       },
       metadata: buildAuditMetadata(request),
     });

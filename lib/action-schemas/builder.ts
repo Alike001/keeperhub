@@ -108,8 +108,15 @@ function mapFieldType(field: ActionConfigFieldBase): string {
       return "string (JSON ABI - auto-fetched for verified contracts)";
     case "abi-event-select":
       return "string (event name from ABI)";
-    case "select":
-      return `string (${field.options?.map((o) => `"${o.value}"`).join(" | ") || "select"})`;
+    case "select": {
+      const options =
+        field.options?.map((o) => `"${o.value}"`).join(" | ") || "select";
+      // A field that takes a template says so, or an agent reads a closed
+      // enum and never offers the capability the field's help text does.
+      return field.allowTemplate
+        ? `string (${options}, or a {{@nodeId:Label.field}} template)`
+        : `string (${options})`;
+    }
     case "fail-on-error-switch":
       return "boolean";
     case "template-input":

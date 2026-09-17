@@ -509,7 +509,15 @@ export async function updateIntegration(
     updateData.name = updates.name;
   }
 
-  if (updates.config !== undefined || updates.clearedConfigKeys?.length) {
+  // A clear needs something to remove keys from. Without the stored config
+  // there is nothing to merge against, and writing the result would replace
+  // every key rather than the named ones - so the clear is ignored instead,
+  // which is what it did before it was honoured at all.
+  const canClear = Boolean(existingIntegration);
+  if (
+    updates.config !== undefined ||
+    (updates.clearedConfigKeys?.length && canClear)
+  ) {
     // Clients never receive stored secrets back, so an unchanged secret
     // arrives blank. Merge for every type or the update would erase it.
     const incoming = updates.config ?? {};
