@@ -141,7 +141,7 @@ Every failure names the object it is about, and the ones that cannot succeed on 
 | Token revoked, or presented to the wrong region | Fails with a credential error. Test Connection tells you when the region checkbox is the cause |
 | PagerDuty account lapsed or downgraded | Fails with PagerDuty's `402`: the plan does not allow the request |
 | Rate limited, 5xx, network fault | Retried, twice by default, honouring the delay PagerDuty asks for |
-| Payload rejected (`400`) | Fails immediately, quoting PagerDuty's own error. An empty summary is not the cause - that is handled with a fallback title - so look at a Component, Group or Class template that rendered to something very large |
+| Payload rejected (`400`) | Fails immediately, quoting PagerDuty's own error. An empty summary is not the cause - that is handled with a fallback title - and every templated field is bounded, so this is rare |
 
 Because the trigger action reads the routing key from PagerDuty before it sends anything, a dead account or a dead credential fails on that read rather than firing an event nobody receives. The resolved key is cached for five minutes so a REST blip cannot stop a page, so a credential revoked in the last few minutes may still page from cache - deliberately, because a page sent on a stale key is better than one not sent at all. A service that is disabled or in a maintenance window is never read from cache, so re-enabling one takes effect on the next run.
 

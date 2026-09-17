@@ -146,6 +146,29 @@ describe("buildUpdateEvent", () => {
   });
 });
 
+/**
+ * The size guard can only drop custom details and links. A grouping field that
+ * rendered to something enormous took the event over the limit with nothing
+ * left to sacrifice, and PagerDuty rejected the whole page.
+ */
+describe("grouping fields", () => {
+  it.each(["component", "group", "class"])("bounds %s", (field) => {
+    const { body } = buildTriggerEvent({
+      routingKey: "R1",
+      dedupKey: "k1",
+      timestamp: "2026-01-01T00:00:00Z",
+      input: {
+        summary: "s",
+        severity: "error",
+        source: "src",
+        [field]: "x".repeat(5000),
+      },
+    });
+    const payload = body.payload as unknown as Record<string, string>;
+    expect(payload[field]).toHaveLength(1024);
+  });
+});
+
 describe("parseLinks", () => {
   it("takes a bare url and uses it as its own text", () => {
     expect(parseLinks("https://etherscan.io/tx/0x1")).toEqual({

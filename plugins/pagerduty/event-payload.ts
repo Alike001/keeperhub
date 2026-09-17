@@ -170,9 +170,14 @@ export function buildTriggerEvent(params: {
       // to drop.
       source: truncateRunes(input.source, MAX_SUMMARY_CHARS),
       timestamp: params.timestamp,
-      component: omitEmpty(input.component),
-      group: omitEmpty(input.group),
-      class: omitEmpty(input.class),
+      // Bounded for the same reason as source. These three were the last
+      // templated fields with no ceiling, and the size guard below can only
+      // drop custom details and links - so a component that rendered to
+      // something enormous produced a 400 nothing could mitigate, and the
+      // page was lost to a field nobody thinks of as risky.
+      component: omitEmpty(truncateRunes(input.component ?? "", MAX_SUMMARY_CHARS)),
+      group: omitEmpty(truncateRunes(input.group ?? "", MAX_SUMMARY_CHARS)),
+      class: omitEmpty(truncateRunes(input.class ?? "", MAX_SUMMARY_CHARS)),
       custom_details: input.customDetails,
     },
   };
