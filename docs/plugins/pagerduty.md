@@ -190,6 +190,25 @@ If the whole event is still over 512 KB, the custom details are dropped and repl
 
 A shortened **dedup key** deserves a second look. Two keys that differ only after character 255 become the same key, so two nodes that should own separate alerts end up updating one. That is the case `fieldsTrimmed` exists to surface.
 
+### What happens if PagerDuty changes their API
+
+The integration pins what it can and fails loudly for the rest.
+
+**Pinned.** REST calls send `Accept: application/vnd.pagerduty+json;version=2`, so a v3 cannot arrive unannounced. The Events API is versioned in its path (`/v2/enqueue`), so the same holds there.
+
+**Changes that fail loudly**, with a message naming what was missing, are the great majority: a renamed or removed response field, a moved endpoint, a changed authentication or scope model, a rejected payload, a tightened limit. Each surfaces as a failed run quoting PagerDuty's own error.
+
+**The change that could fail quietly** is a new enum value, because an unknown string has to be interpreted as something. Each is handled so that it reports rather than assumes:
+
+| New value from PagerDuty | What the node does |
+|---|---|
+| A service status (today: `active`, `warning`, `critical`, `maintenance`, `disabled`) | Sends the event anyway -- refusing to page over an unfamiliar status would be far worse -- and says in `message` that it cannot tell whether an incident was raised, naming the status |
+| An incident status (today: `triggered`, `acknowledged`, `resolved`) | Reports `incidentStatus: unknown` rather than guessing |
+| A severity | Falls back to `error`, the middle of the scale |
+| A raised size or length limit | Keeps trimming to the old one and reports it in `fieldsTrimmed`; conservative, never lost |
+
+**Checking on purpose.** **Send a test alert** on the node runs the full round trip -- trigger, acknowledge, resolve -- against a real service, and reports each leg. Running it periodically against a sandbox account is the way to learn about a breaking change from monitoring rather than from an incident.
+
 ### Backup notification
 
 Set **Backup connection** on the trigger action to an existing Discord, Slack or Telegram connection. When the event cannot be delivered after the retries, the same alert -- plus the reason PagerDuty refused it -- is posted there instead. The run is still marked failed: the backup is for the person who should be woken now, the failed run is for whoever reads history later.

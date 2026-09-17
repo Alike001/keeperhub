@@ -31,6 +31,7 @@ import {
   parseLinks,
   postEventWithRetries,
   resolveRoutingKeyWithRetries,
+  serviceStatusIsRecognised,
   serviceSwallowsEvents,
   type Trim,
 } from "./pagerduty-core";
@@ -271,6 +272,29 @@ async function notifyBackup(params: {
     );
   }
   return outcome;
+}
+
+/**
+ * What the node says happened, once the event is away.
+ *
+ * The middle case is the one worth the code: PagerDuty reported a service
+ * status this plugin does not know. The event went out, which is right -
+ * refusing to page over an unfamiliar status string would be far worse - but
+ * whether an incident came of it cannot be inferred, and saying nothing would
+ * report a page that may never have been raised.
+ */
+function unrecognisedStatusNote(
+  serviceStatus: string | undefined,
+  suppressed: boolean,
+  pagerDutyMessage: string | undefined
+): string | undefined {
+  if (suppressed) {
+    return `PagerDuty accepted the event, but the service is in ${serviceStatus} and will not raise an incident from it.`;
+  }
+  if (!serviceStatusIsRecognised(serviceStatus)) {
+    return `PagerDuty accepted the event, but reported the service as "${serviceStatus}", which this node does not recognise - so it cannot tell whether an incident was raised. Check the service in PagerDuty, and report this: it means PagerDuty has a service state this integration predates.`;
+  }
+  return pagerDutyMessage;
 }
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: one linear path - validate, gate, resolve, send - each branch returning its own result
@@ -520,9 +544,7 @@ async function stepHandler(
     summaryFellBack,
     serviceStatus: routingKey.value.serviceStatus,
     suppressedByService: suppressed,
-    message: suppressed
-      ? `PagerDuty accepted the event, but the service is in ${routingKey.value.serviceStatus} and will not raise an incident from it.`
-      : result.value.message,
+    message: unrecognisedStatusNote(routingKey.value.serviceStatus, suppressed, result.value.message),
   };
 }
 

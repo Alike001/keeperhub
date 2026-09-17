@@ -464,6 +464,39 @@ describe("trigger incident", () => {
     ).toBeUndefined();
   });
 
+  /**
+   * PagerDuty publishes five service statuses today and the node's whole
+   * report turns on which group one falls into. A sixth added later would
+   * match neither, and reading "not one of the two I know swallow events" as
+   * "fine" would report a page PagerDuty never raised - silently, and only on
+   * services in that new state.
+   */
+  it("says so when PagerDuty reports a service status it does not know", async () => {
+    mockHappyPath(202, "hibernating");
+    const result = await run();
+
+    // Still delivered: refusing to page over an unfamiliar status string
+    // would be far worse than not knowing what came of it.
+    expect(result).toMatchObject({
+      delivered: true,
+      status: "triggered",
+      serviceStatus: "hibernating",
+      suppressedByService: false,
+    });
+    expect(String(result.message)).toContain("does not recognise");
+    expect(String(result.message)).toContain("hibernating");
+  });
+
+  it.each(["active", "warning", "critical"])(
+    "says nothing extra for the known paging status %s",
+    async (status) => {
+      mockHappyPath(202, status);
+      const result = await run();
+      expect(result).toMatchObject({ delivered: true, status: "triggered" });
+      expect(String(result.message ?? "")).not.toContain("does not recognise");
+    }
+  );
+
   it("sends the links it could use and counts the ones it could not", async () => {
     mockHappyPath();
     const result = await run({

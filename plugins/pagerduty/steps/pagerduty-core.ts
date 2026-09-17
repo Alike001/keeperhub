@@ -731,8 +731,43 @@ export type ResolvedService = {
 };
 
 /** A service in one of these states accepts events and creates no incident. */
+const SWALLOWING_STATUSES: ReadonlySet<string> = new Set([
+  "disabled",
+  "maintenance",
+]);
+
+/** A service in one of these states takes an event and raises an incident. */
+const PAGING_STATUSES: ReadonlySet<string> = new Set([
+  "active",
+  "warning",
+  "critical",
+]);
+
 export function serviceSwallowsEvents(status: string | undefined): boolean {
-  return status === "disabled" || status === "maintenance";
+  return status !== undefined && SWALLOWING_STATUSES.has(status);
+}
+
+/**
+ * Whether this plugin knows what a service status means.
+ *
+ * PagerDuty publishes five today, and the node's whole report of what
+ * happened turns on which group a status falls into: three raise an incident,
+ * two swallow the event and raise none. A sixth added later would match
+ * neither, and treating "not one of the two I know swallow events" as "fine"
+ * would have the node reporting a page that PagerDuty never raised - silently,
+ * and only on the service in that new state.
+ *
+ * So an unrecognised status is called out rather than assumed. The event is
+ * still sent, because refusing to page over a status string this plugin has
+ * not heard of would be the worse failure by far; what changes is that the
+ * node says it could not tell, instead of saying everything is fine.
+ */
+export function serviceStatusIsRecognised(status: string | undefined): boolean {
+  return (
+    status === undefined ||
+    PAGING_STATUSES.has(status) ||
+    SWALLOWING_STATUSES.has(status)
+  );
 }
 
 export async function resolveRoutingKey(
