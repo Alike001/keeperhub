@@ -22,6 +22,34 @@ afterEach(() => {
 });
 
 describe("PagerDuty connection test", () => {
+  /**
+   * The steps bound every request they make; this file used to bound none, so
+   * a host that accepted the connection and never answered held Test
+   * Connection open with a spinner and nothing to tell it from a slow
+   * account. The 401 path probes the other region, so it is two of these.
+   */
+  it("bounds every request it makes", async () => {
+    fetchMock.mockResolvedValue(response(200, { services: [] }));
+    await testPagerDuty({ PAGERDUTY_API_TOKEN: "t" });
+    const init = fetchMock.mock.calls[0][1] as { signal?: AbortSignal };
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("bounds the OAuth exchange too", async () => {
+    fetchMock
+      .mockResolvedValueOnce(response(200, { access_token: "tok" }))
+      .mockResolvedValueOnce(response(200, { services: [] }));
+    await testPagerDuty({
+      PAGERDUTY_OAUTH_CLIENT_ID: "id",
+      PAGERDUTY_OAUTH_CLIENT_SECRET: "secret",
+      PAGERDUTY_SUBDOMAIN: "acme",
+    });
+    for (const call of fetchMock.mock.calls) {
+      const init = call[1] as { signal?: AbortSignal };
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+    }
+  });
+
   it("checks the permission the plugin actually needs", async () => {
     fetchMock.mockResolvedValue(response(200, { services: [] }));
     const result = await testPagerDuty({ PAGERDUTY_API_TOKEN: "t" });

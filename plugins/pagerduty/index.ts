@@ -48,6 +48,7 @@ const retryFields: ActionConfigFieldBase[] = [
     key: "failOnError",
     label: "Fail the workflow if the page could not be delivered",
     type: "fail-on-error-switch",
+    defaultValue: "true",
     helpText:
       "On by default, and it covers every way a page fails to land: a rejection, a timeout, an outage, a deleted service. Turn it off to keep the run going and branch on the node's `status` output instead - it is the one that separates a real page from an event a maintenance window swallowed.",
   },
@@ -155,7 +156,11 @@ function sendDelayField(
     min: 0,
     max: 5,
     placeholder: "0",
-    example: "2",
+    // Deliberately blank rather than an example. `example` is what seeds the
+    // AI's config for this action, and a 2 there would have every generated
+    // Resolve hold its event back by two seconds that nobody asked for.
+    // Dropping it alone is worse: a number field with neither falls to 10.
+    defaultValue: "",
     helpText: `Holds the ${action} back before sending it. For the case where two runs of this workflow overlap and the healthy one finishes first: the ${action} can then reach PagerDuty before the trigger it is acting on, and PagerDuty drops an update matching no open alert - with a 202, so it looks like success - ${cost}. A second or two loses that race on purpose. It costs exactly that much time on every run, so leave it at 0 unless runs of this workflow can overlap. Default 0, max 5.`,
   };
 }
@@ -450,7 +455,12 @@ const pagerDutyPlugin: IntegrationPlugin = {
               min: 1,
               max: 20,
               placeholder: "1",
-              example: "2",
+              // Blank, not 2. This is the field that decides whether the node
+              // pages at all on the first failure, and `example` is what the
+              // AI's generated config carries - a 2 there means every
+              // AI-built PagerDuty node silently sits out the first failure.
+              // Blank reads as "leave it", which resolves to 1: page now.
+              defaultValue: "",
               helpText:
                 "Pages on the Nth run in a row that reaches this node; one run that does not reach it resets the count. On a schedule of every X minutes, N delays the first page by about (N-1) times X - at 3 on an hourly cron that is two hours. Held runs are recorded, not silent. Default 1.",
             },
@@ -678,6 +688,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
           key: "fallbackToServicePolicy",
           label: "Fall back to the service policy if that one is gone",
           type: "fail-on-error-switch",
+          defaultValue: "true",
           helpText:
             "On by default: a policy that has been deleted should not stop the incident, because paging the default rota beats paging nobody. The node's output says when it fell back.",
         },
@@ -721,6 +732,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
           key: "failOnError",
           label: "Fail workflow if PagerDuty rejects the incident",
           type: "fail-on-error-switch",
+          defaultValue: "true",
         },
       ],
     },

@@ -1,5 +1,9 @@
 import type { ActionConfigFieldBase, PluginAction } from "@/plugins/registry";
-import { flattenConfigFields, getAllIntegrations } from "@/plugins/registry";
+import {
+  flattenConfigFields,
+  getAllIntegrations,
+  isDisplayOnlyField,
+} from "@/plugins/registry";
 
 /**
  * Per-node pin data schema returned by prepare_test_pin_data MCP tool.
@@ -121,6 +125,13 @@ function buildPinSchemaForAction(action: PluginAction): {
   const required: string[] = [];
 
   for (const field of flat) {
+    // A field that renders a panel collects no value, so it is not a property
+    // an agent can set. The schema is `additionalProperties: false`, which
+    // makes listing one worse than useless: it invites a value that the step
+    // never reads.
+    if (isDisplayOnlyField(field.type)) {
+      continue;
+    }
     properties[field.key] = buildPropertyForField(field);
     if (field.required === true) {
       required.push(field.key);

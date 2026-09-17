@@ -14,6 +14,15 @@ const API_HOST = "https://api.pagerduty.com";
 const API_HOST_EU = "https://api.eu.pagerduty.com";
 const IDENTITY_TOKEN_URL = "https://identity.pagerduty.com/oauth/token";
 const OAUTH_SCOPES = "services.read escalation_policies.read";
+/**
+ * Every request here is bounded, as every request the steps make is.
+ *
+ * Without it a host that accepts the connection and never answers holds Test
+ * Connection open for as long as the platform allows, with a spinner and no
+ * way to tell it from a slow account. The 401 path makes a second round trip
+ * to probe the other service region, so the exposure is two of these, not one.
+ */
+const REQUEST_TIMEOUT_MS = 10_000;
 const ACCEPT_V2 = "application/vnd.pagerduty+json;version=2";
 /** Printable ASCII only, mirroring the guard the steps apply. */
 const HEADER_SAFE_TOKEN = /^[\x21-\x7e]{1,256}$/;
@@ -69,6 +78,7 @@ async function resolveHeader(
       client_secret: clientSecret,
       scope: `as_account-${region}.${subdomain} ${OAUTH_SCOPES}`,
     }).toString(),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
 
   if (!response.ok) {
@@ -108,6 +118,7 @@ async function listServices(
   return await fetch(`${host}/services?limit=1`, {
     method: "GET",
     headers: { Authorization: header, Accept: ACCEPT_V2 },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
 }
 

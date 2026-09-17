@@ -603,6 +603,22 @@ export function flattenConfigFields(
 }
 
 /**
+ * Field types that render something rather than collect a value.
+ *
+ * They still belong in `configFields`, because that is what puts them on the
+ * node in the right place, but they have no value to seed into an example
+ * config and the step never reads their key.
+ */
+const DISPLAY_ONLY_FIELD_SUFFIXES = ["-preview", "-test-node"] as const;
+
+export function isDisplayOnlyField(type: string | undefined): boolean {
+  return (
+    type !== undefined &&
+    DISPLAY_ONLY_FIELD_SUFFIXES.some((suffix) => type.endsWith(suffix))
+  );
+}
+
+/**
  * Generate AI prompt section for all available actions
  * This dynamically builds the action types documentation for the AI
  */
@@ -621,6 +637,13 @@ export function generateAIActionPrompts(): string {
       const flatFields = flattenConfigFields(action.configFields);
 
       for (const field of flatFields) {
+        // A field that renders a panel rather than collecting a value has
+        // nothing to seed. Without this it falls through to the string branch
+        // below and the prompt tells the model to emit
+        // `"pagerdutyPreview":"Your preview"` - a key the step never reads,
+        // in every generated node, and in the system prompt on every call.
+        if (isDisplayOnlyField(field.type)) continue;
+
         // Include a conditional field when its condition holds for the
         // example assembled so far. Fields are visited in declaration order,
         // so a field's dependencies are already in the example.
