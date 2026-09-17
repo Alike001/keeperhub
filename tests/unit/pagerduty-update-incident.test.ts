@@ -134,7 +134,7 @@ describe("resolve incident", () => {
 
     const result = await resolveIncidentStep({
       integrationId: "int-1",
-      pagerdutyServiceId: "PSKY1",
+      pagerdutyServiceId: "PSVC1",
       dedupKey: "keeperhub/wf-8/node-3",
       _context: CONTEXT,
     } as never);
@@ -172,7 +172,7 @@ describe("resolve incident", () => {
 
     await resolveIncidentStep({
       integrationId: "int-1",
-      pagerdutyServiceId: "PSKY1",
+      pagerdutyServiceId: "PSVC1",
       dedupKeyFromNodeId: "node-3",
       _context: CONTEXT,
     } as never);
@@ -191,7 +191,7 @@ describe("resolve incident", () => {
 
     await resolveIncidentStep({
       integrationId: "int-1",
-      pagerdutyServiceId: "PSKY1",
+      pagerdutyServiceId: "PSVC1",
       dedupKeyFromNodeId: "node-3",
       dedupKey: "vault-7",
       _context: CONTEXT,
@@ -208,7 +208,7 @@ describe("resolve incident", () => {
   it("refuses to run without a dedup key instead of sending one nothing matches", async () => {
     const result = await resolveIncidentStep({
       integrationId: "int-1",
-      pagerdutyServiceId: "PSKY1",
+      pagerdutyServiceId: "PSVC1",
       _context: CONTEXT,
     } as never);
 
@@ -229,7 +229,7 @@ describe("resolve incident", () => {
 
     const result = await resolveIncidentStep({
       integrationId: "int-1",
-      pagerdutyServiceId: "PSKY1",
+      pagerdutyServiceId: "PSVC1",
       dedupKey: "k1",
       verifyWithPagerDuty: true,
       _context: CONTEXT,
@@ -259,7 +259,7 @@ describe("resolve incident", () => {
 
     await resolveIncidentStep({
       integrationId: "int-1",
-      pagerdutyServiceId: "PSKY1",
+      pagerdutyServiceId: "PSVC1",
       dedupKey: "k1",
       verifyWithPagerDuty: true,
       _context: CONTEXT,
@@ -277,7 +277,7 @@ describe("resolve incident", () => {
 
     const result = await resolveIncidentStep({
       integrationId: "int-1",
-      pagerdutyServiceId: "PSKY1",
+      pagerdutyServiceId: "PSVC1",
       dedupKey: "k1",
       verifyWithPagerDuty: true,
       _context: CONTEXT,
@@ -299,7 +299,7 @@ describe("resolve incident", () => {
 
     await resolveIncidentStep({
       integrationId: "int-1",
-      pagerdutyServiceId: "PSKY1",
+      pagerdutyServiceId: "PSVC1",
       dedupKey: "k1",
       verifyWithPagerDuty: false,
       _context: CONTEXT,
@@ -325,7 +325,7 @@ describe("resolve incident", () => {
 
     const result = await resolveIncidentStep({
       integrationId: "int-1",
-      pagerdutyServiceId: "PSKY1",
+      pagerdutyServiceId: "PSVC1",
       dedupKey: "k1",
       _context: CONTEXT,
     } as never);
@@ -341,7 +341,7 @@ describe("acknowledge incident", () => {
 
     const result = await acknowledgeIncidentStep({
       integrationId: "int-1",
-      pagerdutyServiceId: "PSKY1",
+      pagerdutyServiceId: "PSVC1",
       dedupKey: "k1",
       _context: { ...CONTEXT, nodeType: "pagerduty/acknowledge-incident" },
     } as never);
@@ -365,7 +365,7 @@ describe("acknowledge incident", () => {
 
     const result = await acknowledgeIncidentStep({
       integrationId: "int-1",
-      pagerdutyServiceId: "PSKY1",
+      pagerdutyServiceId: "PSVC1",
       dedupKey: "k1",
       verifyWithPagerDuty: true,
       _context: { ...CONTEXT, nodeType: "pagerduty/acknowledge-incident" },
@@ -381,7 +381,7 @@ describe("acknowledge incident", () => {
 
       const result = await resolveIncidentStep({
         integrationId: "int-1",
-        pagerdutyServiceId: "PSKY1",
+        pagerdutyServiceId: "PSVC1",
         dedupKey: "k1",
         verifyWithPagerDuty: false,
         _context: CONTEXT,
@@ -399,7 +399,7 @@ describe("acknowledge incident", () => {
 
       const result = await resolveIncidentStep({
         integrationId: "int-1",
-        pagerdutyServiceId: "PSKY1",
+        pagerdutyServiceId: "PSVC1",
         dedupKey: "k1",
         sendDelaySeconds: 2,
         verifyWithPagerDuty: false,
@@ -445,7 +445,7 @@ describe("acknowledge incident", () => {
 
       await resolveIncidentStep({
         integrationId: "int-1",
-        pagerdutyServiceId: "PSKY1",
+        pagerdutyServiceId: "PSVC1",
         dedupKey: "k1",
         sendDelaySeconds: 3,
         verifyWithPagerDuty: false,
@@ -460,7 +460,7 @@ describe("acknowledge incident", () => {
 
       const result = await resolveIncidentStep({
         integrationId: "int-1",
-        pagerdutyServiceId: "PSKY1",
+        pagerdutyServiceId: "PSVC1",
         dedupKey: "k1",
         sendDelaySeconds: 5,
         failOnError: false,
@@ -482,7 +482,7 @@ describe("acknowledge incident", () => {
 
       const result = await acknowledgeIncidentStep({
         integrationId: "int-1",
-        pagerdutyServiceId: "PSKY1",
+        pagerdutyServiceId: "PSVC1",
         dedupKey: "k1",
         sendDelaySeconds: 3,
         verifyWithPagerDuty: false,
@@ -503,7 +503,7 @@ describe("acknowledge incident", () => {
 
       await acknowledgeIncidentStep({
         integrationId: "int-1",
-        pagerdutyServiceId: "PSKY1",
+        pagerdutyServiceId: "PSVC1",
         dedupKey: "k1",
         verifyWithPagerDuty: false,
         _context: CONTEXT,
@@ -518,7 +518,7 @@ describe("acknowledge incident", () => {
 
       await resolveIncidentStep({
         integrationId: "int-1",
-        pagerdutyServiceId: "PSKY1",
+        pagerdutyServiceId: "PSVC1",
         dedupKey: "k1",
         sendDelaySeconds: "600",
         verifyWithPagerDuty: false,

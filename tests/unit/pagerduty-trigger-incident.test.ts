@@ -78,7 +78,7 @@ function mockHappyPath(eventStatus = 202, serviceStatus = "active") {
     .mockResolvedValueOnce(
       response(200, {
         service: {
-          id: "PSKY1",
+          id: "PSVC1",
           status: serviceStatus,
           integrations: [
             { id: "PI1", type: "events_api_v2_inbound_integration" },
@@ -100,7 +100,7 @@ function mockHappyPath(eventStatus = 202, serviceStatus = "active") {
 function run(overrides: Record<string, unknown> = {}) {
   return triggerIncidentStep({
     integrationId: "int-1",
-    pagerdutyServiceId: "PSKY1",
+    pagerdutyServiceId: "PSVC1",
     summary: "Keeper stalled",
     _context: CONTEXT,
     ...overrides,
@@ -209,7 +209,7 @@ describe("trigger incident", () => {
       .mockResolvedValueOnce(
         response(200, {
           service: {
-            id: "PSKY1",
+            id: "PSVC1",
             status: "maintenance",
             integrations: [
               { id: "PI1", type: "events_api_v2_inbound_integration" },
@@ -298,7 +298,7 @@ describe("trigger incident", () => {
       .mockResolvedValueOnce(
         response(200, {
           service: {
-            id: "PSKY1",
+            id: "PSVC1",
             status: "disabled",
             integrations: [
               { id: "PI1", type: "events_api_v2_inbound_integration" },
@@ -338,7 +338,7 @@ describe("trigger incident", () => {
       .mockResolvedValueOnce(
         response(200, {
           service: {
-            id: "PSKY1",
+            id: "PSVC1",
             status: "active",
             integrations: [
               { id: "PI1", type: "events_api_v2_inbound_integration" },

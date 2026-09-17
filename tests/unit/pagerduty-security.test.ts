@@ -114,7 +114,7 @@ describe("From header safety", () => {
 
   it("never sends a header-injecting From value to PagerDuty", async () => {
     const result = await createIncident(CREDS, {
-      serviceId: "PSKY1",
+      serviceId: "PSVC1",
       title: "t",
       fromEmail: "ops@acme.io\r\nX-Injected: 1",
     });
@@ -133,7 +133,7 @@ describe("create incident", () => {
   function run(overrides: Record<string, unknown> = {}) {
     return createIncidentStep({
       integrationId: "int-1",
-      pagerdutyServiceId: "PSKY1",
+      pagerdutyServiceId: "PSVC1",
       title: "Keeper stalled",
       fromEmail: "ops@acme.io",
       _context: {

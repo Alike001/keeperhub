@@ -118,16 +118,16 @@ describe("listServices", () => {
       response(200, {
         services: [
           {
-            id: "PSKY1",
-            name: "Sky Keeper Bots",
-            html_url: "https://acme.pagerduty.com/service-directory/PSKY1",
+            id: "PSVC1",
+            name: "Keeper Bots",
+            html_url: "https://acme.pagerduty.com/service-directory/PSVC1",
             escalation_policy: { id: "PEP1", summary: "Platform On-Call" },
             integrations: [
               { id: "PI1", type: "events_api_v2_inbound_integration" },
             ],
           },
           {
-            id: "PSKY2",
+            id: "PSVC2",
             name: "Email only",
             integrations: [
               { id: "PI2", type: "generic_email_inbound_integration" },
@@ -142,8 +142,8 @@ describe("listServices", () => {
     if (result.ok) {
       expect(result.value.truncated).toBe(false);
       expect(result.value.services[0]).toMatchObject({
-        id: "PSKY1",
-        name: "Sky Keeper Bots",
+        id: "PSVC1",
+        name: "Keeper Bots",
         escalationPolicyName: "Platform On-Call",
         acceptsEvents: true,
       });
@@ -231,7 +231,7 @@ describe("OAuth scope requests", () => {
   it("asks only for the scopes the call needs", async () => {
     tokenThenOk();
     await findIncidentByKey(OAUTH_CREDS, {
-      serviceId: "PSKY1",
+      serviceId: "PSVC1",
       incidentKey: "k1",
     });
     const scope = new URLSearchParams(
@@ -260,7 +260,7 @@ describe("OAuth scope requests", () => {
   it("holds a separate token per scope set rather than reusing one", async () => {
     tokenThenOk();
     await findIncidentByKey(OAUTH_CREDS, {
-      serviceId: "PSKY1",
+      serviceId: "PSVC1",
       incidentKey: "k1",
     });
     safeFetch
@@ -282,7 +282,7 @@ describe("OAuth scope requests", () => {
       )
       .mockResolvedValueOnce(response(200, { incidents: [] }));
     const result = await findIncidentByKey(OAUTH_CREDS, {
-      serviceId: "PSKY1",
+      serviceId: "PSVC1",
       incidentKey: "k1",
     });
     expect(result.ok).toBe(true);
@@ -334,7 +334,7 @@ describe("the in-process caches do not grow without bound", () => {
         .mockResolvedValueOnce(
           response(200, { integration: { integration_key: "R1" } })
         );
-      await resolveRoutingKey(TOKEN_CREDS, "PSKY1");
+      await resolveRoutingKey(TOKEN_CREDS, "PSVC1");
       expect(cacheSizesForTest().routingKeys).toBe(1);
 
       // Past the five-minute TTL, writing any other entry sweeps the dead one.
@@ -352,7 +352,7 @@ describe("the in-process caches do not grow without bound", () => {
         .mockResolvedValueOnce(
           response(200, { integration: { integration_key: "R2" } })
         );
-      await resolveRoutingKey(TOKEN_CREDS, "PSKY2");
+      await resolveRoutingKey(TOKEN_CREDS, "PSVC2");
       expect(cacheSizesForTest().routingKeys).toBe(1);
     } finally {
       clock.mockRestore();
@@ -361,8 +361,8 @@ describe("the in-process caches do not grow without bound", () => {
 
   it("keeps an entry that is still live", async () => {
     for (const [service, key] of [
-      ["PSKY1", "R1"],
-      ["PSKY2", "R2"],
+      ["PSVC1", "R1"],
+      ["PSVC2", "R2"],
     ]) {
       safeFetch
         .mockResolvedValueOnce(
@@ -436,7 +436,7 @@ describe("resolveRoutingKey", () => {
       .mockResolvedValueOnce(
         response(200, {
           service: {
-            id: "PSKY1",
+            id: "PSVC1",
             integrations: [
               { id: "PI9", type: "events_api_v2_inbound_integration" },
             ],
@@ -447,7 +447,7 @@ describe("resolveRoutingKey", () => {
         response(200, { integration: { integration_key: "R123" } })
       );
 
-    const result = await resolveRoutingKey(TOKEN_CREDS, "PSKY1");
+    const result = await resolveRoutingKey(TOKEN_CREDS, "PSVC1");
     expect(result).toEqual({
       ok: true,
       value: { routingKey: "R123", serviceStatus: undefined },
@@ -469,14 +469,14 @@ describe("resolveRoutingKey", () => {
     safeFetch.mockResolvedValue(
       response(200, {
         service: {
-          id: "PSKY2",
+          id: "PSVC2",
           integrations: [
             { id: "PI2", type: "generic_email_inbound_integration" },
           ],
         },
       })
     );
-    const result = await resolveRoutingKey(TOKEN_CREDS, "PSKY2");
+    const result = await resolveRoutingKey(TOKEN_CREDS, "PSVC2");
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.failure.message).toContain("no Events API v2 integration");
@@ -496,7 +496,7 @@ describe("resolveRoutingKey", () => {
       )
       .mockResolvedValueOnce(response(200, { integration: {} }));
 
-    const result = await resolveRoutingKey(TOKEN_CREDS, "PSKY1");
+    const result = await resolveRoutingKey(TOKEN_CREDS, "PSVC1");
     expect(result.ok).toBe(false);
   });
 });
@@ -641,7 +641,7 @@ describe("findIncidentByKey", () => {
       })
     );
     const result = await findIncidentByKey(TOKEN_CREDS, {
-      serviceId: "PSKY1",
+      serviceId: "PSVC1",
       incidentKey: "k1",
     });
     expect(result).toEqual({
@@ -653,7 +653,7 @@ describe("findIncidentByKey", () => {
   it("answers unknown rather than 'absent' when PagerDuty returns nothing", async () => {
     safeFetch.mockResolvedValue(response(200, { incidents: [] }));
     const result = await findIncidentByKey(TOKEN_CREDS, {
-      serviceId: "PSKY1",
+      serviceId: "PSVC1",
       incidentKey: "k1",
     });
     expect(result).toEqual({ ok: true, value: { status: "unknown" } });
@@ -674,7 +674,7 @@ describe("createIncident", () => {
     );
 
     const result = await createIncident(TOKEN_CREDS, {
-      serviceId: "PSKY1",
+      serviceId: "PSVC1",
       title: "Keeper stalled",
       fromEmail: "ops@acme.io",
     });
@@ -688,7 +688,7 @@ describe("createIncident", () => {
   it("carries the escalation policy override when one is given", async () => {
     safeFetch.mockResolvedValue(response(201, { incident: { id: "PINC1" } }));
     await createIncident(TOKEN_CREDS, {
-      serviceId: "PSKY1",
+      serviceId: "PSVC1",
       title: "t",
       fromEmail: "ops@acme.io",
       escalationPolicyId: "PEP9",

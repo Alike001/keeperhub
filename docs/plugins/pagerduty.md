@@ -223,7 +223,7 @@ Import keeps every node id, which is what makes the references work: `{{@nodeId:
 
 What does not travel is credentials. The PagerDuty connection is stripped, and so is the backup Discord, Slack or Telegram connection -- both are ids belonging to the organisation that exported, and an export is a file people pass around. The importer picks their own on each node; the pickers show an empty connection rather than a reference that silently resolves to nothing.
 
-The **service id** does travel, deliberately. It is not a credential, and an imported workflow that names `PSKY123` should say so: if that service is not in the importing account, the picker says exactly that rather than quietly repointing the page at another team.
+The **service id** does travel, deliberately. It is not a credential, and an imported workflow that names `PSVC123` should say so: if that service is not in the importing account, the picker says exactly that rather than quietly repointing the page at another team.
 
 ### Backup notification
 

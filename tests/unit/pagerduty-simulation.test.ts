@@ -192,9 +192,9 @@ function pagerDutyIsHealthy(serviceStatus = "active", eventStatus = 202) {
     .mockResolvedValueOnce(
       response(200, {
         service: {
-          id: "PSKY1",
+          id: "PSVC1",
           status: serviceStatus,
-          html_url: "https://acme.pagerduty.com/services/PSKY1",
+          html_url: "https://acme.pagerduty.com/services/PSVC1",
           integrations: [
             { id: "PI1", type: "events_api_v2_inbound_integration" },
           ],
@@ -266,7 +266,7 @@ beforeEach(() => {
  */
 describe("simulation: hourly vault check that flaps, then breaks, then recovers", () => {
   const triggerConfig = configureAsEditor("trigger-incident", {
-    pagerdutyServiceId: "PSKY1",
+    pagerdutyServiceId: "PSVC1",
     summary: "Vault 0xabc has not been poked in 6 hours",
     consecutiveRuns: 3,
   });
@@ -356,7 +356,7 @@ describe("simulation: hourly vault check that flaps, then breaks, then recovers"
     expect(paged).toMatchObject({ status: "triggered" });
 
     const resolveConfig = configureAsEditor("resolve-incident", {
-      pagerdutyServiceId: "PSKY1",
+      pagerdutyServiceId: "PSVC1",
       dedupKeyFromNodeId: TRIGGER_NODE,
     });
     // The routing key is still warm from the page a moment ago, so the resolve
@@ -424,7 +424,7 @@ describe("simulation: a node created through the API rather than the editor", ()
     const result = (await resolveIncidentStep({
       integrationId: "int-pd",
       // Exactly what an MCP caller sends: the required fields, nothing else.
-      pagerdutyServiceId: "PSKY1",
+      pagerdutyServiceId: "PSVC1",
       dedupKey: "keeperhub/wf/node-page",
       _context: {
         nodeId: RESOLVE_NODE,
@@ -444,7 +444,7 @@ describe("simulation: a node created through the API rather than the editor", ()
 
 describe("simulation: things that go wrong while it is live", () => {
   const triggerConfig = configureAsEditor("trigger-incident", {
-    pagerdutyServiceId: "PSKY1",
+    pagerdutyServiceId: "PSVC1",
     summary: "Keeper stalled",
     backupIntegrationId: "int-discord",
   });
@@ -476,7 +476,7 @@ describe("simulation: things that go wrong while it is live", () => {
       (safeFetch.mock.calls.at(-1) as [string, { body: string }])[1].body
     );
     expect(posted).toContain("PagerDuty page FAILED");
-    expect(posted).toContain("PSKY1");
+    expect(posted).toContain("PSVC1");
   });
 
   it("does not claim a page when a maintenance window swallows the event", async () => {
@@ -543,7 +543,7 @@ describe("simulation: the workflow is duplicated", () => {
   it("closes the copy's own alert, not the original's", () => {
     const idMap = new Map([[TRIGGER_NODE, COPY_TRIGGER]]);
     const original = configureAsEditor("resolve-incident", {
-      pagerdutyServiceId: "PSKY1",
+      pagerdutyServiceId: "PSVC1",
       dedupKeyFromNodeId: TRIGGER_NODE,
     });
 
@@ -579,7 +579,7 @@ describe("simulation: the workflow is duplicated", () => {
 
 describe("simulation: runs that overlap, and the very first run", () => {
   const triggerConfig = configureAsEditor("trigger-incident", {
-    pagerdutyServiceId: "PSKY1",
+    pagerdutyServiceId: "PSVC1",
     summary: "Keeper stalled",
     consecutiveRuns: 3,
   });
@@ -620,7 +620,7 @@ describe("simulation: acknowledge while somebody looks, then resolve", () => {
     pagerDutyIsHealthy();
     const paged = await runTrigger(run, {
       ...configureAsEditor("trigger-incident", {
-        pagerdutyServiceId: "PSKY1",
+        pagerdutyServiceId: "PSVC1",
         summary: "Keeper stalled",
       }),
     });
@@ -628,7 +628,7 @@ describe("simulation: acknowledge while somebody looks, then resolve", () => {
     const shared = {
       integrationId: "int-pd",
       ...configureAsEditor("acknowledge-incident", {
-        pagerdutyServiceId: "PSKY1",
+        pagerdutyServiceId: "PSVC1",
         dedupKeyFromNodeId: TRIGGER_NODE,
       }),
       _context: {
@@ -667,7 +667,7 @@ describe("simulation: acknowledge while somebody looks, then resolve", () => {
     const resolved = (await resolveIncidentStep({
       ...shared,
       ...configureAsEditor("resolve-incident", {
-        pagerdutyServiceId: "PSKY1",
+        pagerdutyServiceId: "PSVC1",
         dedupKeyFromNodeId: TRIGGER_NODE,
       }),
       _context: { ...shared._context, nodeId: RESOLVE_NODE },
@@ -698,7 +698,7 @@ describe("simulation: Create Incident on a read-only connection", () => {
     const result = (await createIncidentStep({
       integrationId: "int-pd",
       ...configureAsEditor("create-incident", {
-        pagerdutyServiceId: "PSKY1",
+        pagerdutyServiceId: "PSVC1",
         title: "Page the database rota directly",
       }),
       failOnError: false,
@@ -727,7 +727,7 @@ describe("simulation: Create Incident on a read-only connection", () => {
  */
 describe("simulation: two nodes fire at once", () => {
   const sharedConfig = configureAsEditor("trigger-incident", {
-    pagerdutyServiceId: "PSKY1",
+    pagerdutyServiceId: "PSVC1",
     summary: "Keeper stalled",
   });
 
@@ -860,7 +860,7 @@ describe("simulation: two nodes fire at once", () => {
     const resolved = (await resolveIncidentStep({
       integrationId: "int-pd",
       ...configureAsEditor("resolve-incident", {
-        pagerdutyServiceId: "PSKY1",
+        pagerdutyServiceId: "PSVC1",
         dedupKeyFromNodeId: TRIGGER_NODE,
       }),
       _context: {
@@ -931,7 +931,7 @@ describe("simulation: two nodes fire at once", () => {
     const resolved = (await resolveIncidentStep({
       integrationId: "int-pd",
       ...configureAsEditor("resolve-incident", {
-        pagerdutyServiceId: "PSKY1",
+        pagerdutyServiceId: "PSVC1",
         dedupKeyFromNodeId: TRIGGER_NODE,
         sendDelaySeconds: 2,
       }),

@@ -19,20 +19,20 @@ import { subdomainFromHtmlUrl } from "@/plugins/pagerduty/steps/pagerduty-core";
  */
 describe("the PagerDuty service link", () => {
   it("matches the shape PagerDuty returns for a US account", () => {
-    const fromPagerDuty = "https://acme.pagerduty.com/services/PSKY1";
+    const fromPagerDuty = "https://acme.pagerduty.com/services/PSVC1";
     const subdomain = subdomainFromHtmlUrl(fromPagerDuty);
     expect(subdomain).toBe("acme");
-    expect(pagerDutyServiceUrl(subdomain ?? "", false, "PSKY1")).toBe(
+    expect(pagerDutyServiceUrl(subdomain ?? "", false, "PSVC1")).toBe(
       fromPagerDuty
     );
   });
 
   it("matches the shape PagerDuty returns for an EU account", () => {
-    const fromPagerDuty = "https://acme.eu.pagerduty.com/services/PSKY1";
+    const fromPagerDuty = "https://acme.eu.pagerduty.com/services/PSVC1";
     const subdomain = subdomainFromHtmlUrl(fromPagerDuty);
     // The parser strips the region, which is why the builder puts it back.
     expect(subdomain).toBe("acme");
-    expect(pagerDutyServiceUrl(subdomain ?? "", true, "PSKY1")).toBe(
+    expect(pagerDutyServiceUrl(subdomain ?? "", true, "PSVC1")).toBe(
       fromPagerDuty
     );
   });
@@ -51,7 +51,7 @@ describe("the PagerDuty service link", () => {
   });
 
   it("stays on pagerduty.com whatever the id is", () => {
-    for (const id of ["../../../evil.com", "PSKY1#@evil.com", "a/b"]) {
+    for (const id of ["../../../evil.com", "PSVC1#@evil.com", "a/b"]) {
       expect(new URL(pagerDutyServiceUrl("acme", false, id)).hostname).toBe(
         "acme.pagerduty.com"
       );

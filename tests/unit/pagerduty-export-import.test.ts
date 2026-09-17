@@ -45,7 +45,7 @@ function pagerDutyWorkflow() {
           config: {
             actionType: "pagerduty/trigger-incident",
             integrationId: "int-pagerduty",
-            pagerdutyServiceId: "PSKY1",
+            pagerdutyServiceId: "PSVC1",
             // The references the question is about, in three shapes: a whole
             // value, one embedded in a sentence, and one inside JSON.
             summary: "Vault {{@node-check:Check Vault.id}} stalled",
@@ -69,7 +69,7 @@ function pagerDutyWorkflow() {
           config: {
             actionType: "pagerduty/resolve-incident",
             integrationId: "int-pagerduty",
-            pagerdutyServiceId: "PSKY1",
+            pagerdutyServiceId: "PSVC1",
             // Not a template: a bare node id, which is the whole reason the
             // resolve works on the branch where the trigger never ran.
             dedupKeyFromNodeId: TRIGGER_NODE,
@@ -145,7 +145,7 @@ describe("exporting and importing a workflow with PagerDuty nodes", () => {
 
   it("keeps the PagerDuty service id, which the importer's picker checks", () => {
     const { imported } = exportThenImport();
-    expect(configOf(imported, TRIGGER_NODE).pagerdutyServiceId).toBe("PSKY1");
+    expect(configOf(imported, TRIGGER_NODE).pagerdutyServiceId).toBe("PSVC1");
   });
 
   /**
