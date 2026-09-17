@@ -57,6 +57,8 @@ If the account is ever renamed, update the subdomain field: the OAuth scope stri
 
 Two checks, at the two points where something can be wrong.
 
+When a picker cannot read the account at all, it offers **Check the connection**, which opens the connection in Settings - because every cause of that message is fixed there or in PagerDuty, not on the node.
+
 **Test Connection**, on the connection form when you add or edit it, runs `GET /services?limit=1` -- the exact permission every action needs. It tells a bad token from a wrong region from a rate limit from a network fault, and on a `401` it tries the other service region and says which way to set the checkbox.
 
 **Send a test alert**, on the node itself once a connection and a service are picked, does what the connection test cannot: it proves the *service* works. A valid credential says nothing about the service you just chose, and a service with no Events API v2 integration, a disabled one, one inside a maintenance window and one wired to the wrong rota all look identical in the dropdown.
@@ -162,7 +164,7 @@ Every failure names the object it is about, and the ones that cannot succeed on 
 
 | What happened | What the node does |
 |---------------|--------------------|
-| Service deleted, or not visible to these credentials | Fails naming the service id. The node keeps the id rather than repointing at another service |
+| Service deleted, or not visible to these credentials | Fails naming the service id. The node keeps the id rather than repointing at another service. The picker offers **Open in PagerDuty** for it: gone means deleted, a service that loads means this connection cannot see it |
 | Service disabled in PagerDuty | Fails. A disabled service accepts events and raises no incident, so the page would have gone nowhere |
 | Service in a maintenance window | Delivers, with `status: suppressed` and `suppressedByService` -- PagerDuty takes the event and raises no incident until the window ends. Branch on `status`, not `delivered` |
 | Service has no Events API v2 integration | Fails naming the service and the fix |

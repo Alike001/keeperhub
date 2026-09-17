@@ -1,8 +1,17 @@
 "use client";
 
-import { AlertTriangle, Info, Loader2, RefreshCw, Send } from "lucide-react";
+import {
+  AlertTriangle,
+  ExternalLink,
+  Info,
+  KeyRound,
+  Loader2,
+  RefreshCw,
+  Send,
+} from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { authClient } from "@/lib/auth-client";
 import {
   Select,
   SelectContent,
@@ -150,6 +159,73 @@ function Notice({
   );
 }
 
+/**
+ * Where a service lives in PagerDuty's own UI.
+ *
+ * Built from the account the picker already read rather than from the
+ * service's own `html_url`, because the case this is for is a service that is
+ * no longer in the list and therefore has no `html_url` here. PagerDuty
+ * returns exactly this shape for a service it does know.
+ */
+function pagerDutyServiceUrl(
+  subdomain: string,
+  euRegion: boolean | undefined,
+  serviceId: string
+): string {
+  return `https://${subdomain}${euRegion ? ".eu" : ""}.pagerduty.com/services/${encodeURIComponent(serviceId)}`;
+}
+
+/**
+ * Opens the object in PagerDuty. On a service the picker can no longer
+ * account for this is a diagnostic rather than a convenience: the warning
+ * names two causes, and they look identical from here. A 404 means it really
+ * was deleted; a service that loads means the credential simply cannot see
+ * it - a scoped OAuth app without access to it, or a connection pointing at a
+ * different account than somebody thinks.
+ */
+function OpenInPagerDutyButton({ href }: { href: string }) {
+  return (
+    <Button asChild size="sm" variant="ghost">
+      <a href={href} rel="noopener noreferrer" target="_blank">
+        <ExternalLink className="size-3" />
+        Open in PagerDuty
+      </a>
+    </Button>
+  );
+}
+
+/**
+ * Takes somebody to the connection when PagerDuty would not answer for it.
+ *
+ * The messages above this say what PagerDuty returned - a rejected
+ * credential, a missing scope, a lapsed plan - but every one of them is fixed
+ * somewhere other than this node. Test Connection on the connection itself is
+ * the thing that tells a bad token from a wrong service region from a rate
+ * limit, and it is also where the token is replaced, so that is where this
+ * goes.
+ *
+ * Renders nothing when the organisation is not loaded yet, rather than a link
+ * that would land somewhere wrong.
+ */
+function CheckConnectionButton() {
+  const { data: activeOrg } = authClient.useActiveOrganization();
+  if (!activeOrg?.id) {
+    return null;
+  }
+  return (
+    <Button asChild size="sm" variant="ghost">
+      <a
+        href={`/settings/${activeOrg.id}/connections`}
+        rel="noopener noreferrer"
+        target="_blank"
+      >
+        <KeyRound className="size-3" />
+        Check the connection
+      </a>
+    </Button>
+  );
+}
+
 function ReloadButton({ onClick }: { onClick: () => void }) {
   return (
     <button
@@ -281,8 +357,9 @@ export function PagerDutyServiceField({
       {error && (
         <Notice tone="warning">
           <p>{error}</p>
-          <div className="mt-1">
+          <div className="mt-1 flex flex-wrap items-center gap-2">
             <ReloadButton onClick={reload} />
+            <CheckConnectionButton />
           </div>
         </Notice>
       )}
@@ -303,9 +380,16 @@ export function PagerDutyServiceField({
           Service <code className="font-mono">{value}</code> is not in this
           account any more - deleted, or outside what this connection can see.
           The node still points at it, so nothing has been quietly repointed at
-          another team. Pick a service to fix it.
-          <div className="mt-1">
+          another team. Open it in PagerDuty to tell those two apart: gone
+          means deleted, and a service that loads means this connection cannot
+          see it. Pick a service to fix it.
+          <div className="mt-1 flex flex-wrap items-center gap-2">
             <ReloadButton onClick={reload} />
+            {accountSubdomain ? (
+              <OpenInPagerDutyButton
+                href={pagerDutyServiceUrl(accountSubdomain, euRegion, value)}
+              />
+            ) : null}
           </div>
         </Notice>
       )}
@@ -456,8 +540,9 @@ export function PagerDutyEscalationPolicyField({
       {error && (
         <Notice tone="warning">
           <p>{error}</p>
-          <div className="mt-1">
+          <div className="mt-1 flex flex-wrap items-center gap-2">
             <ReloadButton onClick={reload} />
+            <CheckConnectionButton />
           </div>
         </Notice>
       )}
@@ -567,7 +652,14 @@ export function PagerDutyPriorityField({
           ))}
         </SelectContent>
       </Select>
-      {error && <Notice tone="warning">{error}</Notice>}
+      {error && (
+        <Notice tone="warning">
+          <p>{error}</p>
+          <div className="mt-1">
+            <CheckConnectionButton />
+          </div>
+        </Notice>
+      )}
     </div>
   );
 }
