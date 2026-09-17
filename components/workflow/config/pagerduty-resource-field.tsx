@@ -2,6 +2,7 @@
 
 import { AlertTriangle, Info, Loader2, RefreshCw, Send } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -139,7 +140,7 @@ function Notice({
     <div
       className={`flex items-start gap-2 rounded-md border p-2 text-xs ${
         tone === "warning"
-          ? "border-yellow-500/40 bg-yellow-500/5 text-yellow-700 dark:text-yellow-300"
+          ? "border-yellow-500/40 bg-yellow-500/10 text-yellow-700 dark:text-yellow-300"
           : "border-border bg-muted/30 text-muted-foreground"
       }`}
     >
@@ -731,11 +732,12 @@ export function PagerDutyTestNodeButton({
 
   return (
     <div className="space-y-2">
-      <button
-        className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 font-medium text-xs hover:bg-muted disabled:opacity-50"
+      <Button
         disabled={disabled || running}
         onClick={runTest}
+        size="sm"
         type="button"
+        variant="outline"
       >
         {running ? (
           <Loader2 className="size-3.5 animate-spin" />
@@ -743,7 +745,7 @@ export function PagerDutyTestNodeButton({
           <Send className="size-3.5" />
         )}
         {running ? "Sending" : "Send a test alert"}
-      </button>
+      </Button>
 
       <p className="ml-1 text-muted-foreground text-xs">
         Opens a real alert on this service at the lowest severity, acknowledges

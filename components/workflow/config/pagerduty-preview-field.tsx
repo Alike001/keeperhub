@@ -8,12 +8,16 @@ import {
   normaliseSeverity,
   parseLinks,
 } from "@/plugins/pagerduty/event-payload";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { usePagerDutyServices } from "./pagerduty-resource-field";
 
 const ROUTING_KEY_PLACEHOLDER = "resolved from the service at run time";
 const DEDUP_KEY_PLACEHOLDER = "keeperhub/<workflow>/<node>";
 const EVENTS_HOST = "https://events.pagerduty.com";
 const EVENTS_HOST_EU = "https://events.eu.pagerduty.com";
+
+type Tab = "payload" | "incident";
 
 type PreviewConfig = Record<string, unknown>;
 
@@ -73,7 +77,7 @@ export function PagerDutyPreviewField({
    */
   siblingDedupKeys?: string[];
 }) {
-  const [tab, setTab] = useState<"payload" | "incident">("payload");
+  const [tab, setTab] = useState<Tab>("payload");
   const [copied, setCopied] = useState(false);
 
   const integrationId = text(config, "integrationId") || undefined;
@@ -133,29 +137,23 @@ export function PagerDutyPreviewField({
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
-        <div className="flex rounded-md border border-border p-0.5">
-          <button
-            className={`rounded px-2 py-0.5 text-xs ${tab === "payload" ? "bg-muted text-foreground" : "text-muted-foreground"}`}
-            disabled={disabled}
-            onClick={() => setTab("payload")}
-            type="button"
-          >
-            Payload
-          </button>
-          <button
-            className={`rounded px-2 py-0.5 text-xs ${tab === "incident" ? "bg-muted text-foreground" : "text-muted-foreground"}`}
-            disabled={disabled}
-            onClick={() => setTab("incident")}
-            type="button"
-          >
-            Incident
-          </button>
-        </div>
+        <Tabs onValueChange={(value) => setTab(value as Tab)} value={tab}>
+          <TabsList>
+            <TabsTrigger disabled={disabled} value="payload">
+              Payload
+            </TabsTrigger>
+            <TabsTrigger disabled={disabled} value="incident">
+              Incident
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
         {tab === "payload" && (
-          <button
-            className="ml-auto inline-flex items-center gap-1 text-muted-foreground text-xs hover:text-foreground"
+          <Button
+            className="ml-auto"
             onClick={copy}
+            size="sm"
             type="button"
+            variant="ghost"
           >
             {copied ? (
               <Check className="size-3" />
@@ -163,12 +161,12 @@ export function PagerDutyPreviewField({
               <Copy className="size-3" />
             )}
             {copied ? "Copied" : "Copy"}
-          </button>
+          </Button>
         )}
       </div>
 
       {sharedWith > 0 && (
-        <div className="flex items-start gap-2 rounded-md border border-yellow-500/40 bg-yellow-500/5 p-2 text-xs text-yellow-700 dark:text-yellow-300">
+        <div className="flex items-start gap-2 rounded-md border border-yellow-500/40 bg-yellow-500/10 p-2 text-xs text-yellow-700 dark:text-yellow-300">
           <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
           <div className="min-w-0">
             <p>
@@ -185,7 +183,7 @@ export function PagerDutyPreviewField({
       )}
 
       {trims.length > 0 && (
-        <div className="flex items-start gap-2 rounded-md border border-yellow-500/40 bg-yellow-500/5 p-2 text-xs text-yellow-700 dark:text-yellow-300">
+        <div className="flex items-start gap-2 rounded-md border border-yellow-500/40 bg-yellow-500/10 p-2 text-xs text-yellow-700 dark:text-yellow-300">
           <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
           <div className="min-w-0">
             {trims.map((trim) => (
@@ -205,14 +203,14 @@ export function PagerDutyPreviewField({
           <p className="text-muted-foreground text-xs">
             POST {euRegion ? EVENTS_HOST_EU : EVENTS_HOST}/v2/enqueue
           </p>
-          <pre className="max-h-72 overflow-auto rounded-md border border-border bg-muted/30 p-3 font-mono text-[11px] leading-relaxed">
+          <pre className="max-h-72 overflow-auto rounded-md border border-border bg-muted/30 p-3 font-mono text-[0.6875rem] leading-relaxed">
             {json}
           </pre>
         </div>
       ) : (
         <div className="rounded-md border border-border">
           <div className="flex items-center gap-2 border-border border-b bg-muted/30 px-3 py-2">
-            <span className="rounded bg-destructive/20 px-1.5 py-0.5 font-semibold text-[10px] text-destructive uppercase tracking-wide">
+            <span className="rounded bg-destructive/20 px-1.5 py-0.5 font-semibold text-[0.625rem] text-destructive uppercase tracking-wide">
               Triggered
             </span>
             <span className="text-muted-foreground text-xs">
