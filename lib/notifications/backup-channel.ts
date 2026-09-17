@@ -15,15 +15,15 @@
  * new. The channel is inferred from the credentials the connection holds, so
  * swapping the connection needs no second config field kept in sync.
  *
- * Used by the PagerDuty node when a page cannot be delivered; nothing about it
- * is PagerDuty-specific.
+ * Used by the PagerDuty node when a page cannot be delivered. Nothing here is
+ * PagerDuty-specific: the caller names itself for egress attribution and
+ * writes its own message, because what a failed alert should say is the
+ * caller's business, not this file's.
  */
 import { fetchCredentials } from "@/lib/credential-fetcher";
 import { safeFetch } from "@/lib/safe-fetch";
 import { getErrorMessage } from "@/lib/utils";
 
-/** Attributes the egress to the plugin that asked for the backup. */
-const PLUGIN = "pagerduty";
 const REQUEST_TIMEOUT_MS = 10_000;
 const SLACK_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage";
 const TELEGRAM_API_HOST = "https://api.telegram.org";
@@ -78,6 +78,7 @@ function isDiscordWebhook(rawUrl: string): boolean {
 
 async function postDiscord(
   credentials: Credentials,
+  plugin: string,
   message: string
 ): Promise<BackupOutcome> {
   const webhookUrl = credentials.webhookUrl ?? "";
@@ -91,7 +92,7 @@ async function postDiscord(
     };
   }
   const response = await safeFetch(webhookUrl, {
-    plugin: PLUGIN,
+    plugin,
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ content: message }),
@@ -109,6 +110,7 @@ async function postDiscord(
 
 async function postSlack(
   credentials: Credentials,
+  plugin: string,
   destination: string,
   message: string
 ): Promise<BackupOutcome> {
@@ -121,7 +123,7 @@ async function postSlack(
     };
   }
   const response = await safeFetch(SLACK_POST_MESSAGE_URL, {
-    plugin: PLUGIN,
+    plugin,
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -146,6 +148,7 @@ async function postSlack(
 
 async function postTelegram(
   credentials: Credentials,
+  plugin: string,
   destination: string,
   message: string
 ): Promise<BackupOutcome> {
@@ -160,7 +163,7 @@ async function postTelegram(
   const response = await safeFetch(
     `${TELEGRAM_API_HOST}/bot${credentials.TELEGRAM_BOT_TOKEN}/sendMessage`,
     {
-      plugin: PLUGIN,
+      plugin,
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ chat_id: destination, text: message }),
@@ -177,36 +180,18 @@ async function postTelegram(
       };
 }
 
-/** The message the responder sees instead of a page. */
-export function buildBackupMessage(params: {
-  summary: string;
-  severity: string;
-  serviceId: string;
-  reason: string;
-  workflowUrl?: string;
-}): string {
-  const lines = [
-    "PagerDuty page FAILED - this is the backup notification.",
-    `Alert: ${params.summary}`,
-    `Severity: ${params.severity}`,
-    `PagerDuty service: ${params.serviceId}`,
-    `Why PagerDuty did not take it: ${params.reason}`,
-  ];
-  if (params.workflowUrl) {
-    lines.push(`Workflow: ${params.workflowUrl}`);
-  }
-  return lines.join("\n");
-}
-
 /**
- * Post the backup message. Never throws: a failed backup is reported in the
- * step output next to the PagerDuty failure that caused it, because the one
- * thing worse than a missed page is a missed page whose backup failed silently.
+ * Post the backup message. Never throws: the outcome goes back to the caller
+ * to report in its step output, next to the failure that caused it, because
+ * the one thing worse than a missed alert is a missed alert whose backup
+ * failed silently.
  */
 export async function sendBackupNotification(params: {
   integrationId?: string;
   destination?: string;
   organizationId?: string | null;
+  /** The plugin asking for the backup, so its egress is attributed to it. */
+  plugin: string;
   message: string;
 }): Promise<BackupOutcome> {
   if (!params.integrationId) {
@@ -222,13 +207,23 @@ export async function sendBackupNotification(params: {
     const destination = params.destination?.trim() ?? "";
 
     if (channel === "discord") {
-      return await postDiscord(credentials, params.message);
+      return await postDiscord(credentials, params.plugin, params.message);
     }
     if (channel === "slack") {
-      return await postSlack(credentials, destination, params.message);
+      return await postSlack(
+        credentials,
+        params.plugin,
+        destination,
+        params.message
+      );
     }
     if (channel === "telegram") {
-      return await postTelegram(credentials, destination, params.message);
+      return await postTelegram(
+        credentials,
+        params.plugin,
+        destination,
+        params.message
+      );
     }
     return {
       attempted: true,

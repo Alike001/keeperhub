@@ -16,7 +16,6 @@ import {
 import type { PagerDutyCredentials } from "../credentials";
 import {
   type BackupOutcome,
-  buildBackupMessage,
   sendBackupNotification,
 } from "@/lib/notifications/backup-channel";
 import {
@@ -215,6 +214,34 @@ function toFailureResult(
 }
 
 /**
+ * The message the responder sees instead of a page.
+ *
+ * It is written here rather than in lib/notifications, because every line of
+ * it is PagerDuty's: which service was aimed at, and what PagerDuty said when
+ * it would not take the event. The delivery mechanism is shared; the wording
+ * is not.
+ */
+function buildBackupMessage(params: {
+  summary: string;
+  severity: string;
+  serviceId: string;
+  reason: string;
+  workflowUrl?: string;
+}): string {
+  const lines = [
+    "PagerDuty page FAILED - this is the backup notification.",
+    `Alert: ${params.summary}`,
+    `Severity: ${params.severity}`,
+    `PagerDuty service: ${params.serviceId}`,
+    `Why PagerDuty did not take it: ${params.reason}`,
+  ];
+  if (params.workflowUrl) {
+    lines.push(`Workflow: ${params.workflowUrl}`);
+  }
+  return lines.join("\n");
+}
+
+/**
  * Tell someone, through whatever channel the node names, that the page did not
  * go out. Runs before the failure is returned, whether or not the node is set
  * to fail the workflow: the run being marked failed is for the operator
@@ -236,6 +263,7 @@ async function notifyBackup(params: {
     integrationId: input.backupIntegrationId,
     destination: input.backupDestination,
     organizationId: input._context?.organizationId ?? null,
+    plugin: "pagerduty",
     message: buildBackupMessage({
       summary: params.summary,
       severity: String(input.severity ?? "error"),
