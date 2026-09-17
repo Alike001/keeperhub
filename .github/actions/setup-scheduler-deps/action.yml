@@ -10,11 +10,14 @@ runs:
         node-version: "22"
 
     - name: Setup pnpm
-      # No version input: pnpm/action-setup resolves the exact version from
-      # the packageManager field in the root package.json, and errors if both
-      # are set. Pinning in one place keeps CI and local installs on the same
-      # pnpm major, which patchedDependencies hashes depend on.
+      # Version comes from the packageManager field in this package's own
+      # package.json, not the repo root: this project pins a different pnpm
+      # than the main app. pnpm hashes patched dependencies differently across
+      # majors and validates the hash on a frozen install, so CI, the Docker
+      # images and local installs all have to agree.
       uses: pnpm/action-setup@v4
+      with:
+        package_json_file: keeperhub-scheduler/package.json
 
     - name: Get pnpm store directory
       shell: bash
