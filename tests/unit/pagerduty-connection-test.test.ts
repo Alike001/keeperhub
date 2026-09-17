@@ -210,3 +210,32 @@ describe("region diagnosis on a scoped OAuth connection", () => {
     expect(result.error).not.toContain("EU service region");
   });
 });
+
+/**
+ * One click, a bounded number of round trips.
+ *
+ * The 401 path probes the other region, and the OAuth path probes the other
+ * region too. Left to themselves they call each other: the first probe finds
+ * an OAuth rejection, probes back toward the region it started from, and a
+ * single Test Connection click spends five sequential ten-second requests on
+ * an answer it already had.
+ */
+describe("how many requests one Test Connection makes", () => {
+  it("does not probe back from inside a probe", async () => {
+    // API token on /services 401s, so the 401 path probes the other region;
+    // the credentials are OAuth-shaped there, and that exchange is refused.
+    fetchMock
+      .mockResolvedValueOnce(response(401, {}))
+      .mockResolvedValue(response(400, {}));
+
+    await testPagerDuty({
+      PAGERDUTY_API_TOKEN: "t",
+      PAGERDUTY_OAUTH_CLIENT_ID: "PDABC12.oauth.pagerduty.com",
+      PAGERDUTY_OAUTH_CLIENT_SECRET: "shh",
+      PAGERDUTY_SUBDOMAIN: "acme",
+    });
+
+    // /services, then the probe's token exchange. Not a third.
+    expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(2);
+  });
+});

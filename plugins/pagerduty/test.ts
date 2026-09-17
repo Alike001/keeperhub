@@ -27,7 +27,15 @@ type TestResult = { success: boolean; error?: string };
 
 async function resolveHeader(
   credentials: Record<string, string>,
-  region: string
+  region: string,
+  /**
+   * True when this call is itself a region probe. It suppresses the probe
+   * below, which would otherwise ask about the region we started from: the
+   * 401 path already calls this for the other region, and that call finding
+   * an OAuth rejection would probe back again, doubling the round trips on a
+   * single Test Connection click for an answer already in hand.
+   */
+  probing = false
 ): Promise<{ header: string } | TestResult> {
   const token = credentials.PAGERDUTY_API_TOKEN?.trim();
   if (token) {
@@ -71,6 +79,12 @@ async function resolveHeader(
 
   if (!response.ok) {
     if (response.status === 400 || response.status === 401) {
+      if (probing) {
+        return {
+          success: false,
+          error: "PagerDuty rejected the OAuth client credentials.",
+        };
+      }
       // The region is inside the scope string, not the host, so a scoped app
       // on the wrong region is rejected here rather than at /services - which
       // is where the region probe lives. Without this the EU checkbox's own
@@ -176,7 +190,7 @@ async function describeAuthFailure(
   const otherRegion = region === "eu" ? "us" : "eu";
   const otherHost = otherRegion === "eu" ? PAGERDUTY_API_HOST_EU : PAGERDUTY_API_HOST;
   try {
-    const auth = await resolveHeader(credentials, otherRegion);
+    const auth = await resolveHeader(credentials, otherRegion, true);
     if ("header" in auth) {
       const response = await listServices(otherHost, auth.header);
       if (response.ok) {
