@@ -216,7 +216,7 @@ async function runWithStateOverrides(
   const overrides: Record<string, Record<string, unknown>> = {};
   const results: RawCallResult[] = [];
 
-  for (const call of calls) {
+  for (const [index, call] of calls.entries()) {
     const tx = txForNode(from, call);
     // A snapshot per call: the accumulator keeps growing, and executeWithFailover
     // re-runs the operation on a retry, so the object handed to the node must
@@ -250,6 +250,13 @@ async function runWithStateOverrides(
       });
       // The sequence is what the caller asked about, so keep going: the later
       // calls still answer against the state as it stands.
+      continue;
+    }
+
+    // The last call's diff would seed a nonexistent next call, and it is the
+    // most expensive trace of the sequence (largest accumulated
+    // stateOverrides). Skip it.
+    if (index === calls.length - 1) {
       continue;
     }
 
@@ -291,7 +298,7 @@ function unavailableRest(calls: EncodedCall[], from: number): RawCallResult[] {
   return calls.slice(from).map(() => ({
     error: {
       message:
-        "Could not carry state to this call: the node did not answer debug_traceCall with prestateTracer",
+        "Could not carry state to this call: the node did not answer debug_traceCall with the prestateTracer trace and the accumulated state overrides",
     },
   }));
 }

@@ -300,11 +300,23 @@ describe("simulateCallSequence on a node without eth_simulateV1", () => {
   it("traces each call against the accumulated state, not the raw chain state", async () => {
     fallbackNode();
 
-    await run();
+    // Three calls so the final-call skip does not remove every trace: the
+    // second call's diff seeds the third call's eth_call.
+    await run([
+      ...APPROVE_THEN_DEPOSIT,
+      {
+        contractAddress: TOKEN,
+        abi: ERC20_ABI,
+        functionName: "allowance",
+        functionArgs: JSON.stringify([FROM, VAULT]),
+      },
+    ]);
 
     const traces = spies.send.mock.calls.filter(
       ([m]) => m === "debug_traceCall"
     );
+    // The last call's trace would only feed a nonexistent next call, so it
+    // is not sent.
     expect(traces).toHaveLength(2);
     // The first call has nothing to carry, so no overrides are sent.
     expect(traces[0][1][2]).toEqual({
