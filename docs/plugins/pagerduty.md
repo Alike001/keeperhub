@@ -40,6 +40,8 @@ A connection stays owned by whoever created it.
 - **Removed from the organization, account still active:** the connection keeps working. Removing someone from a team does not revoke the PagerDuty credential they configured, so rotate the key in PagerDuty and update the connection, or delete it, as part of offboarding.
 - **Someone else edits it:** rotating the token through **Edit** takes effect on the next run. Removing the connection in KeeperHub does not revoke the key at PagerDuty; delete it there too, under **Integrations > Developer Tools > API Access Keys**.
 
+The connection takes **one** credential, not both. Fill in the API token and the scoped OAuth fields are held shut; start with OAuth and the token field is held shut instead. Each is labelled Option A and Option B on the form, and the one not in use offers to take over if you picked the wrong one. If an older connection has both filled in, nothing is locked and the form says which one is actually used -- the token, which is the precedence the run time applies.
+
 ### Scoped OAuth instead of a token
 
 PagerDuty recommends scoped OAuth over account-wide keys, and the plugin accepts either. Register an app under **Integrations > Developer Tools > App Registration**, set Functionality to **Scoped OAuth**, and grant only:

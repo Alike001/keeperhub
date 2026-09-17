@@ -1,6 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { ExclusiveGroupHeading } from "@/components/overlays/exclusive-group-heading";
+import {
+  type ExclusiveGroup,
+  isFieldLocked,
+  resolveExclusiveGroups,
+} from "@/lib/integrations/exclusive-groups";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -363,7 +369,7 @@ export function EditConnectionForm({
       return null;
     }
 
-    return formFields.map((field) => {
+    const renderedFields = formFields.map((field) => {
       const help = renderFieldHelp(field);
       if (field.type === "password") {
         return (
@@ -427,6 +433,46 @@ export function EditConnectionForm({
             value={config[field.configKey] || ""}
           />
           {help}
+        </div>
+      );
+    });
+
+    // Alternative credentials: hold the option that is not in use shut, so a
+    // form listing four fields does not read as though it wants all four.
+    const exclusive = resolveExclusiveGroups(formFields, config);
+    const useThisInstead = (group: ExclusiveGroup) => {
+      const inUse = exclusive.groups.find(
+        (one) => one.id === exclusive.activeGroupId
+      );
+      for (const key of inUse?.configKeys ?? []) {
+        updateConfig(key, "");
+      }
+    };
+
+    return renderedFields.map((rendered, index) => {
+      const field = formFields[index];
+      const heading = exclusive.groups.find(
+        (group) => group.firstFieldId === field.id
+      );
+      const locked = isFieldLocked(field, exclusive);
+      if (!(heading || locked)) {
+        return rendered;
+      }
+      return (
+        <div className="space-y-2" key={field.id}>
+          {heading && (
+            <ExclusiveGroupHeading
+              group={heading}
+              onUseThisInstead={useThisInstead}
+              state={exclusive}
+            />
+          )}
+          <div
+            aria-hidden={locked}
+            className={locked ? "pointer-events-none opacity-45" : undefined}
+          >
+            {rendered}
+          </div>
         </div>
       );
     });

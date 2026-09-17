@@ -1,6 +1,12 @@
 "use client";
 
 import { useAtomValue } from "jotai";
+import { ExclusiveGroupHeading } from "@/components/overlays/exclusive-group-heading";
+import {
+  type ExclusiveGroup,
+  isFieldLocked,
+  resolveExclusiveGroups,
+} from "@/lib/integrations/exclusive-groups";
 import { Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -419,7 +425,7 @@ export function ConfigureConnectionForm({
       return null;
     }
 
-    return formFields.map((field) => {
+    const renderedFields = formFields.map((field) => {
       if (field.type === "password") {
         return (
           <SecretField
@@ -511,6 +517,46 @@ export function ConfigureConnectionForm({
               )}
             </p>
           )}
+        </div>
+      );
+    });
+
+    // Alternative credentials: hold the option that is not in use shut, so a
+    // form listing four fields does not read as though it wants all four.
+    const exclusive = resolveExclusiveGroups(formFields, config);
+    const useThisInstead = (group: ExclusiveGroup) => {
+      const inUse = exclusive.groups.find(
+        (one) => one.id === exclusive.activeGroupId
+      );
+      for (const key of inUse?.configKeys ?? []) {
+        updateConfig(key, "");
+      }
+    };
+
+    return renderedFields.map((rendered, index) => {
+      const field = formFields[index];
+      const heading = exclusive.groups.find(
+        (group) => group.firstFieldId === field.id
+      );
+      const locked = isFieldLocked(field, exclusive);
+      if (!(heading || locked)) {
+        return rendered;
+      }
+      return (
+        <div className="space-y-2" key={field.id}>
+          {heading && (
+            <ExclusiveGroupHeading
+              group={heading}
+              onUseThisInstead={useThisInstead}
+              state={exclusive}
+            />
+          )}
+          <div
+            aria-hidden={locked}
+            className={locked ? "pointer-events-none opacity-45" : undefined}
+          >
+            {rendered}
+          </div>
         </div>
       );
     });

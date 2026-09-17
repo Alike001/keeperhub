@@ -191,8 +191,10 @@ const pagerDutyPlugin: IntegrationPlugin = {
       placeholder: "20-character key from PagerDuty",
       configKey: "apiToken",
       envVar: "PAGERDUTY_API_TOKEN",
+      exclusiveGroup: "token",
+      exclusiveGroupLabel: "Option A - API token",
       helpText:
-        "PagerDuty: Integrations, Developer Tools, API Access Keys, Create New API Key - tick Read-only API Key. Creating one of those needs the Admin or Account Owner role; a personal read-only token from User Settings works too. PagerDuty shows the key once. Read-only covers Trigger, Acknowledge, Resolve and Change Event. Leave blank to use scoped OAuth below. Docs: ",
+        "PagerDuty: Integrations, Developer Tools, API Access Keys, Create New API Key - tick Read-only API Key. Creating one of those needs the Admin or Account Owner role; a personal read-only token from User Settings works too. PagerDuty shows the key once. Read-only covers Trigger, Acknowledge, Resolve and Change Event. Docs: ",
       helpLink: {
         text: "support.pagerduty.com/main/docs/api-access-keys",
         url: "https://support.pagerduty.com/main/docs/api-access-keys",
@@ -205,6 +207,8 @@ const pagerDutyPlugin: IntegrationPlugin = {
       placeholder: "PDABC12.oauth.pagerduty.com",
       configKey: "oauthClientId",
       envVar: "PAGERDUTY_OAUTH_CLIENT_ID",
+      exclusiveGroup: "oauth",
+      exclusiveGroupLabel: "Option B - Scoped OAuth",
       helpText:
         "Tighter than an API token, and PagerDuty's own recommendation. Register the app under Integrations, Developer Tools, App Registration, set Functionality to Scoped OAuth. Trigger, Acknowledge, Resolve and Change Event need services.read and escalation_policies.read. Three optional things need one more each: reading an incident back after an acknowledge or resolve needs incidents.read, the priority picker on Create Incident needs priorities.read, and Create Incident itself needs incidents.write. A read-only API token above covers all the reads without any of this.",
     },
@@ -215,6 +219,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
       placeholder: "Shown once when the app is created",
       configKey: "oauthClientSecret",
       envVar: "PAGERDUTY_OAUTH_CLIENT_SECRET",
+      exclusiveGroup: "oauth",
       helpText:
         "Exchanged for a short-lived token on demand; KeeperHub stores no token of its own.",
     },
@@ -225,6 +230,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
       placeholder: "acme",
       configKey: "subdomain",
       envVar: "PAGERDUTY_SUBDOMAIN",
+      exclusiveGroup: "oauth",
       helpText:
         "The first label of your PagerDuty address: acme.pagerduty.com means acme. Required for scoped OAuth, ignored when an API token is set. If the account is ever renamed, update this field: the OAuth scope string carries the subdomain, so the old one stops issuing tokens. Nothing else in a node has to change, because services and policies are stored by id.",
     },

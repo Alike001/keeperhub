@@ -333,6 +333,14 @@ export type IntegrationPlugin = {
     configKey: string; // Which key in IntegrationConfig to store the value
     envVar?: string; // Environment variable this field maps to (e.g., "RESEND_API_KEY")
     defaultValue?: string | boolean; // Default value for the field (for checkboxes, use boolean)
+    /**
+     * Marks this field as part of one of several alternative credentials, only
+     * one of which is used. The connection form holds the others shut once one
+     * is filled in, so "either this or that" is visible rather than implied.
+     */
+    exclusiveGroup?: string;
+    /** Shown on the divider that opens the group, on its first field. */
+    exclusiveGroupLabel?: string;
   }>;
 
   // Testing configuration (lazy-loaded to avoid bundling Node.js packages in client)
