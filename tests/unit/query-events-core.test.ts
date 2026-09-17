@@ -156,20 +156,13 @@ describe("queryBatchWithRetry", () => {
     expect(executeWithFailover).toHaveBeenCalledTimes(1);
   });
 
-  it("falls back to the head behind the safety margin when a tip batch returns no events", async () => {
-    // An empty tip batch has no event block to derive actualEnd from. Once
-    // an indexed-argument filter is in play, matching nothing near the head
-    // is the ordinary case rather than a rarity, so reporting start - 1
-    // would routinely put toBlock below fromBlock. The head read is a
-    // second call that can land on another replica, so it is reported
-    // minus the same margin that decides what counts as a tip batch: a few
-    // blocks re-scanned, never a range skipped.
+  it("reports no forward progress when a tip batch's latest query returns no events", async () => {
+    // With nothing returned, there is no value this call can vouch for as
+    // actually scanned -- reporting start - 1 means a future run re-checks
+    // the same window instead of risking a skipped range.
     const events: unknown[] = [];
     mockQueryFilter.mockResolvedValue(events);
-    const getBlockNumber = vi.fn().mockResolvedValue(400);
-    const executeWithFailover = vi.fn((operation) =>
-      operation({ getBlockNumber })
-    );
+    const executeWithFailover = vi.fn((operation) => operation(fakeProvider()));
 
     const promise = queryBatchWithRetry(
       mockRpc(executeWithFailover),
@@ -182,7 +175,7 @@ describe("queryBatchWithRetry", () => {
     );
     const expectation = expect(promise).resolves.toEqual({
       events,
-      actualEnd: 400 - TIP_SAFETY_MARGIN_BLOCKS,
+      actualEnd: 99,
     });
     await vi.runAllTimersAsync();
     await expectation;
@@ -192,56 +185,6 @@ describe("queryBatchWithRetry", () => {
       100,
       "latest"
     );
-  });
-
-  it("keeps the conservative start - 1 when the head read fails", async () => {
-    mockQueryFilter.mockResolvedValue([]);
-    const getBlockNumber = vi.fn().mockRejectedValue(new Error("rpc down"));
-    const executeWithFailover = vi.fn((operation) =>
-      operation({ getBlockNumber })
-    );
-
-    const promise = queryBatchWithRetry(
-      mockRpc(executeWithFailover),
-      "0xabc",
-      [],
-      "Lift",
-      100,
-      200,
-      true
-    );
-    const expectation = expect(promise).resolves.toEqual({
-      events: [],
-      actualEnd: 99,
-    });
-    await vi.runAllTimersAsync();
-    await expectation;
-  });
-
-  it("keeps the conservative start - 1 when the head is not ahead of the batch start", async () => {
-    // A head that sits at or behind this batch's start cannot vouch for any
-    // block in it, so nothing is claimed.
-    mockQueryFilter.mockResolvedValue([]);
-    const getBlockNumber = vi.fn().mockResolvedValue(102);
-    const executeWithFailover = vi.fn((operation) =>
-      operation({ getBlockNumber })
-    );
-
-    const promise = queryBatchWithRetry(
-      mockRpc(executeWithFailover),
-      "0xabc",
-      [],
-      "Lift",
-      100,
-      200,
-      true
-    );
-    const expectation = expect(promise).resolves.toEqual({
-      events: [],
-      actualEnd: 99,
-    });
-    await vi.runAllTimersAsync();
-    await expectation;
   });
 
   it("passes a compiled topic filter straight through instead of the ABI event filter", async () => {

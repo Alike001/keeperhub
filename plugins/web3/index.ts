@@ -1221,7 +1221,7 @@ const web3Plugin: IntegrationPlugin = {
           abiField: "abi",
           abiEventField: "eventName",
           helpTip:
-            "Optional. Filters at the RPC, so only matching logs are fetched. Only indexed parameters can be filtered this way. Leave a field empty to match any value for it.",
+            "Optional. Filters at the RPC, so only matching logs are fetched. Only indexed parameters can be filtered this way. Omit a parameter to match any value for it.",
         },
         {
           type: "group",

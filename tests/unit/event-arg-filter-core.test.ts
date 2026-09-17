@@ -153,6 +153,33 @@ describe("buildEventArgTopics", () => {
     expect(topics?.[2]).toBe(ethers.keccak256(ethers.toUtf8Bytes("hello")));
   });
 
+  it("hashes an indexed string verbatim, whitespace included", () => {
+    // The topic is keccak256 of the UTF-8 text, so " urgent" and "urgent"
+    // are different values. Trimming would hash the wrong one and match
+    // nothing while the step reports success.
+    const { topics } = ok(`{"label":" urgent"}`, MIXED);
+    expect(topics?.[2]).toBe(ethers.keccak256(ethers.toUtf8Bytes(" urgent")));
+  });
+
+  it("accepts an indexed string that is only whitespace, which is a real value", () => {
+    const { topics } = ok(`{"label":"  "}`, MIXED);
+    expect(topics?.[2]).toBe(ethers.keccak256(ethers.toUtf8Bytes("  ")));
+  });
+
+  it("reads a parameter named like an Object member as the user's key", () => {
+    // `toString` is indexed here and left unset. An ordinary object would
+    // hand back Object.prototype.toString for it and try to encode that.
+    const PROTO_NAMED = ethers.EventFragment.from(
+      "event Named(address indexed toString, address indexed to)"
+    );
+    const { topics } = ok(`{"to":"${ALICE}"}`, PROTO_NAMED);
+    expect(topics).toEqual([
+      PROTO_NAMED.topicHash,
+      null,
+      ethers.AbiCoder.defaultAbiCoder().encode(["address"], [ALICE]),
+    ]);
+  });
+
   it("accepts a boolean written as text", () => {
     const { topics } = ok(`{"flag":"true"}`, MIXED);
     expect(topics?.[3]).toBe(

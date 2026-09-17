@@ -28,9 +28,9 @@ export type SolidityValueCheck =
  * `solidityType`. Shape only: range and width are left to the ABI encoder,
  * which rejects an out-of-range number with its own message.
  *
- * `string` and dynamic `bytes` accept anything, because an indexed value of
- * either is keccak-hashed into the topic rather than stored, so there is no
- * shape to check beyond what the caller already has.
+ * `string` accepts anything: an indexed string is keccak-hashed as UTF-8
+ * text, so every value is encodable. Dynamic `bytes` is hashed too, but as
+ * bytes, so it still has to be hex.
  */
 export function checkSolidityValue(
   solidityType: string,

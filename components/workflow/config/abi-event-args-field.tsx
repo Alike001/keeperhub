@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -28,7 +29,8 @@ type AbiEventArgsFieldProps = {
   field: ActionConfigFieldBase;
   abiValue: string;
   eventValue: string;
-  value: string;
+  /** The stored filter: a JSON string from the editor, or an object from the API. */
+  value: unknown;
   onChange: (value: unknown) => void;
   disabled?: boolean;
 };
@@ -93,20 +95,51 @@ function parseIndexedParams(abiValue: string, eventName: string): ParamsState {
   };
 }
 
-function parseValue(raw: string): Record<string, string> {
+type StoredFilter =
+  | { kind: "ok"; filters: Record<string, string> }
+  | { kind: "unreadable" };
+
+function toFilterRecord(parsed: unknown): StoredFilter {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { kind: "unreadable" };
+  }
+  const filters: Record<string, string> = Object.create(null);
+  for (const [key, entry] of Object.entries(parsed)) {
+    if (
+      typeof entry === "string" ||
+      typeof entry === "number" ||
+      typeof entry === "boolean"
+    ) {
+      filters[key] = String(entry);
+    } else {
+      return { kind: "unreadable" };
+    }
+  }
+  return { kind: "ok", filters };
+}
+
+/**
+ * Read the stored filter without ever showing a value it does not hold.
+ *
+ * A value that does not parse is reported as unreadable rather than shown
+ * as an empty filter: the step fails on it, and empty inputs would read as
+ * "matching every value" while it does.
+ */
+function parseStored(raw: unknown): StoredFilter {
+  if (raw === undefined || raw === null) {
+    return { kind: "ok", filters: Object.create(null) };
+  }
+  if (typeof raw !== "string") {
+    return toFilterRecord(raw);
+  }
   if (!raw.trim()) {
-    return {};
+    return { kind: "ok", filters: Object.create(null) };
   }
   try {
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed as Record<string, string>;
-    }
+    return toFilterRecord(JSON.parse(raw));
   } catch {
-    // A hand-edited value that no longer parses starts over as empty rather
-    // than throwing the whole config panel away.
+    return { kind: "unreadable" };
   }
-  return {};
 }
 
 function placeholderFor(param: EventParam): string {
@@ -141,7 +174,12 @@ export function AbiEventArgsField({
     () => parseIndexedParams(abiValue, eventValue),
     [abiValue, eventValue]
   );
-  const stored = React.useMemo(() => parseValue(value), [value]);
+  const parsedStored = React.useMemo(() => parseStored(value), [value]);
+  const stored = React.useMemo<Record<string, string>>(
+    () =>
+      parsedStored.kind === "ok" ? parsedStored.filters : Object.create(null),
+    [parsedStored]
+  );
 
   // Only values belonging to the event now selected are shown or kept.
   // Switching Transfer to Approval otherwise leaves the old parameter in the
@@ -156,7 +194,7 @@ export function AbiEventArgsField({
     [state]
   );
   const current = React.useMemo(() => {
-    const kept: Record<string, string> = {};
+    const kept: Record<string, string> = Object.create(null);
     for (const [key, entry] of Object.entries(stored)) {
       if (allowed.has(key)) {
         kept[key] = entry;
@@ -169,14 +207,15 @@ export function AbiEventArgsField({
 
   React.useEffect(() => {
     // Prune only once the ABI and event have actually resolved, so a
-    // half-loaded panel never clears a saved filter.
-    if (state.kind !== "ready" || staleKeys.length === 0) {
+    // half-loaded panel never clears a saved filter, and never for a viewer
+    // who cannot edit: opening a node read-only must not rewrite it.
+    if (disabled || state.kind !== "ready" || staleKeys.length === 0) {
       return;
     }
     onChange(
       Object.keys(current).length === 0 ? "" : JSON.stringify(current)
     );
-  }, [state.kind, staleKeys.length, current, onChange]);
+  }, [disabled, state.kind, staleKeys.length, current, onChange]);
 
   const update = (name: string, next: string) => {
     const merged = { ...current };
@@ -208,6 +247,23 @@ export function AbiEventArgsField({
         {state.unnamed > 0
           ? `${eventValue} indexes ${state.unnamed} parameter(s) the ABI does not name, so they cannot be filtered by name`
           : `${eventValue} has no indexed parameters, so every occurrence is returned`}
+      </div>
+    );
+  }
+
+  if (parsedStored.kind === "unreadable") {
+    return (
+      <div className="space-y-2 rounded-md border border-dashed p-3 text-center text-muted-foreground text-sm">
+        <p>
+          The saved filter is not a JSON object of parameter names to values,
+          so it cannot be shown here. The step will fail on it until it is
+          fixed or cleared.
+        </p>
+        {!disabled && (
+          <Button onClick={() => onChange("")} size="sm" variant="outline">
+            Clear filter
+          </Button>
+        )}
       </div>
     );
   }

@@ -89,50 +89,14 @@ async function fetchFixedBatch(
 // resolves "latest" against its own head, so it can never reject its own
 // answer as beyond its own head.
 //
-// When the call returns events, `actualEnd` comes from the highest block
-// among them and from nothing else. A separate getBlockNumber() is not used
-// for that: even issued against the same `provider` object, it is not
-// guaranteed to land on the same backend replica, so it could report a head
-// more advanced than what this call's replica resolved "latest" to --
-// overstating what was scanned and, if a caller checkpoints off `toBlock`,
-// skipping a range on the next run.
-//
-// The one exception is an empty result, where there is no event block to
-// derive anything from; see resolveEmptyTipEnd, which takes the head read
-// but reports it behind TIP_SAFETY_MARGIN_BLOCKS precisely because the
-// replica it came from may be ahead of this one.
-// When the tip batch comes back empty there is no event block to derive
-// `actualEnd` from, and `start - 1` (scanned nothing) is the only value the
-// query itself can vouch for. That was a rare case while every query carried
-// the bare event signature and a busy contract almost always returned
-// something. An argument filter inverts it: matching nothing in the last
-// few hundred blocks is the normal outcome, so the step would routinely
-// report a `toBlock` below its own `fromBlock` while reporting success.
-//
-// So an empty tip batch falls back to the head, minus the same
-// TIP_SAFETY_MARGIN_BLOCKS that decides which batch is a tip batch: the
-// margin is this file's existing statement of how far two replicas behind
-// one endpoint may diverge near the head. The head read is a second call
-// that may land on a different replica, so subtracting the margin keeps the
-// reported range at or behind what the query covered -- understating it by
-// a few blocks, which a checkpointing caller re-scans harmlessly, rather
-// than overstating it and skipping a range for good.
-//
-// It stays a floor, never a claim: if the head read fails, or lands at or
-// below `start`, the conservative `start - 1` is reported unchanged.
-async function resolveEmptyTipEnd(
-  provider: ethers.JsonRpcProvider,
-  start: number
-): Promise<number> {
-  try {
-    const head = await provider.getBlockNumber();
-    const vouched = head - TIP_SAFETY_MARGIN_BLOCKS;
-    return vouched >= start ? vouched : start - 1;
-  } catch {
-    return start - 1;
-  }
-}
-
+// A separate getBlockNumber() call is deliberately NOT used to report
+// `actualEnd`: even issued against the same `provider` object, a concurrent
+// request isn't guaranteed to land on the same backend replica as the
+// queryFilter call, so it could report a head more advanced than what this
+// call's replica actually resolved "latest" to -- overstating what was
+// scanned and, if a caller checkpoints off `toBlock`, risking a skipped
+// range on the next run. The highest event block actually returned is the
+// only value this exact call can vouch for.
 async function fetchTipBatch(
   provider: ethers.JsonRpcProvider,
   contractAddress: string,
@@ -144,10 +108,6 @@ async function fetchTipBatch(
   const contract = new ethers.Contract(contractAddress, parsedAbi, provider);
   const eventFilter = resolveEventFilter(contract, eventName, topics);
   const events = await contract.queryFilter(eventFilter, start, "latest");
-
-  if (events.length === 0) {
-    return { events, actualEnd: await resolveEmptyTipEnd(provider, start) };
-  }
 
   const actualEnd = events.reduce(
     (max, event) => Math.max(max, event.blockNumber),

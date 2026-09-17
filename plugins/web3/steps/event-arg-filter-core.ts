@@ -132,7 +132,9 @@ function parseFilterObject(
 function collectFilters(
   raw: Record<string, unknown>
 ): { success: true; filters: EventArgFilters } | { success: false; error: string } {
-  const filters: EventArgFilters = {};
+  // No prototype, so a parameter named `toString` or `__proto__` is looked up
+  // as the user's key and never as an inherited member.
+  const filters: EventArgFilters = Object.create(null);
   for (const [key, value] of Object.entries(raw)) {
     if (value === null || value === undefined) {
       return {
@@ -146,9 +148,9 @@ function collectFilters(
         error: `Filter for '${key}' must be a single value, not an object or array.`,
       };
     }
-    // Trimmed so a pasted value with surrounding whitespace is not reported
-    // later as a malformed address.
-    const text = String(value).trim();
+    // Kept verbatim: whether surrounding whitespace is part of the value
+    // depends on the parameter's type, which is only known in finishTopics.
+    const text = String(value);
     if (text === "") {
       return {
         success: false,
@@ -214,7 +216,9 @@ function finishTopics(
     .map((param) => param.name);
   const nameList = names.length > 0 ? names.join(", ") : "none";
 
-  for (const [key] of entries) {
+  // Values as they will be encoded, keyed by parameter name.
+  const normalized = new Map<string, string>();
+  for (const [key, rawValue] of entries) {
     const param = byName.get(key);
     if (!param) {
       const known = fragment.inputs.find((input) => input.name === key);
@@ -236,13 +240,24 @@ function finishTopics(
         error: `'${key}' is an indexed ${param.type}, whose topic is a hash of the encoded contents rather than a value that can be matched. Filterable here: ${nameList}.`,
       };
     }
-    const check = checkSolidityValue(param.type, parsed.filters[key]);
+    // An indexed string is hashed as UTF-8, so whitespace is part of the
+    // value and " urgent" must not match "urgent". Every other type is a
+    // scalar a pasted value may carry stray whitespace around.
+    const value = param.type === "string" ? rawValue : rawValue.trim();
+    if (value === "") {
+      return {
+        success: false,
+        error: `Filter for '${key}' is empty. Remove the parameter to match any value for it.`,
+      };
+    }
+    const check = checkSolidityValue(param.type, value);
     if (!check.valid) {
       return {
         success: false,
         error: `Filter for '${key}' (${param.type}) must be ${check.expected}.`,
       };
     }
+    normalized.set(key, value);
   }
 
   // Every indexed input holds a topic slot, named or not, so the positions
@@ -251,7 +266,7 @@ function finishTopics(
   // value onto the wrong topic.
   const topics: (string | null)[] = [fragment.topicHash];
   for (const input of fragment.inputs.filter((i) => i.indexed)) {
-    const value = input.name ? parsed.filters[input.name] : undefined;
+    const value = input.name ? normalized.get(input.name) : undefined;
     if (value === undefined) {
       topics.push(null);
       continue;

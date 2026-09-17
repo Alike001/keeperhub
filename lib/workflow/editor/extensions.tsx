@@ -167,12 +167,17 @@ registerFieldRenderer(
 registerFieldRenderer(
   "abi-event-args",
   ({ field, config, onUpdateConfig, disabled }) => {
-    const abiValue =
-      (config[field.abiField || "abi"] as string | undefined) || "";
-    const eventValue =
-      (config[field.abiEventField || "eventName"] as string | undefined) || "";
+    const rawAbi = config[field.abiField || "abi"];
+    const abiValue = typeof rawAbi === "string" ? rawAbi : "";
+    const rawEvent = config[field.abiEventField || "eventName"];
+    const eventValue = typeof rawEvent === "string" ? rawEvent : "";
+    // Passed through as stored: the step accepts the filter as a JSON string
+    // or as an object, and the field reads both.
+    const rawValue = config[field.key];
     const value =
-      (config[field.key] as string | undefined) || field.defaultValue || "";
+      rawValue === undefined || rawValue === null || rawValue === ""
+        ? (field.defaultValue ?? "")
+        : rawValue;
 
     return (
       <div className="space-y-2" key={field.key}>

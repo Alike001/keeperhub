@@ -373,7 +373,7 @@ Query historical smart contract events (logs) across a block range with automati
 - Contract Address (required)
 - Contract ABI (required, auto-fetched from block explorer)
 - Event Name (required, selected from ABI)
-- Filter by Indexed Arguments (optional) -- a value for any indexed parameter of the event. Leave a parameter empty to match any value for it
+- Filter by Indexed Arguments (optional) -- a value for any indexed parameter of the event. Omit a parameter to match any value for it; a parameter given an empty value fails the step
 - Block Lookback -- number of blocks to scan back from To Block (default: 6500, ~1 day on Ethereum). Ignored if From Block is set
 - From Block -- explicit start block (overrides Block Lookback)
 - To Block -- end block number (default: latest)
@@ -390,7 +390,7 @@ Query historical smart contract events (logs) across a block range with automati
 
 **Filtering by indexed arguments**
 
-The filter is applied by the RPC node, not after the fact, so a narrow filter changes what the query costs rather than only what it returns. On a busy contract that is the difference between a query that works and one that does not: a 200-block window on USDC holds around 15,000 `Transfer` events, and filtering on one sender returns around 130.
+The filter is applied by the RPC node, not after the fact, so a narrow filter changes what the query costs rather than only what it returns. On a busy contract that can be the difference between a query that completes and one that times out or hits the provider's response limit.
 
 Only indexed parameters can be filtered. Whether a parameter is indexed is fixed by the contract, so the configuration panel lists the ones available and disables the rest.
 
