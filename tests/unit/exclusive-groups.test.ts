@@ -114,3 +114,47 @@ describe("resolveExclusiveGroups", () => {
     expect(state.ambiguous).toBe(false);
   });
 });
+
+/**
+ * The warning that survives not knowing the values.
+ *
+ * On a form that is never sent the credential it is editing, which group wins
+ * cannot be worked out - but "more than one of these holds something" can,
+ * and that is the state nobody can diagnose from the screen, because the run
+ * time silently prefers one of them.
+ */
+describe("with values the caller cannot see", () => {
+  const fields = [
+    { id: "token", configKey: "apiToken", exclusiveGroup: "token" },
+    { id: "clientId", configKey: "oauthClientId", exclusiveGroup: "oauth" },
+    { id: "secret", configKey: "oauthClientSecret", exclusiveGroup: "oauth" },
+  ];
+
+  it("names nothing as in use and locks nothing", () => {
+    const state = resolveExclusiveGroups(
+      fields,
+      { apiToken: "stored" },
+      new Set(["apiToken", "oauthClientSecret"])
+    );
+    expect(state.activeGroupId).toBeUndefined();
+    for (const field of fields) {
+      expect(isFieldLocked(field, state)).toBe(false);
+    }
+  });
+
+  it("still reports both filled, which is the case worth saying", () => {
+    expect(
+      resolveExclusiveGroups(
+        fields,
+        { apiToken: "stored", oauthClientId: "PDABC12" },
+        new Set(["apiToken", "oauthClientSecret"])
+      ).ambiguous
+    ).toBe(true);
+  });
+
+  it("says nothing when only one group holds anything", () => {
+    expect(
+      resolveExclusiveGroups(fields, {}, new Set(["apiToken"])).ambiguous
+    ).toBe(false);
+  });
+});

@@ -30,8 +30,11 @@ export function telegramSendMessageUrl(botToken: string): string {
 /**
  * Whether a stored value is a Discord webhook this may post to.
  *
- * https only, one of the two Discord hosts or a subdomain of them, and the
- * webhook path - so a stored URL cannot redirect a message to another service.
+ * Matched by hostname over https, not by substring: a substring match on
+ * "discord.com/api/webhooks/" is satisfied by an off-host URL carrying it in
+ * the path (https://10.0.0.1/discord.com/api/webhooks/x), which points egress
+ * at an internal host. safeFetch's SSRF guard is the network-layer backstop;
+ * this rejects an off-host URL before any request is attempted.
  */
 export function isValidDiscordWebhookUrl(rawUrl: string): boolean {
   let parsed: URL;

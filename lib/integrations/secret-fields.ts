@@ -105,13 +105,9 @@ export function mergeSecretConfig(
 /**
  * Remove the keys a caller explicitly asked to clear.
  *
- * `mergeSecretConfig` above cannot express this. A blank secret has to mean
+ * `mergeSecretConfig` above cannot express this: a blank secret means
  * "unchanged" there, because the stored value is never sent to the browser
- * and so cannot be sent back - which left a stored credential with no way to
- * be taken away short of deleting the connection. That is not academic: a
- * leaked API token could be replaced in the form and blanked, the save would
- * report success, and the leaked token went on authorising every run because
- * it was still stored and still won over the new credential.
+ * and so cannot be sent back. Removing one therefore has to be asked for.
  *
  * A key that also carries a new value in the same request is left alone, so
  * clearing and re-entering in one go keeps what was typed.
@@ -139,4 +135,32 @@ export function removeClearedKeys(
     delete result[key];
   }
   return result;
+}
+
+/**
+ * Which secret keys this connection actually holds, without their values.
+ *
+ * The edit form is told nothing about stored credentials, which is right for
+ * the values and wrong for the question "is there one". Without this it
+ * cannot say which of two alternative credentials is in use, cannot hold the
+ * unused one shut, and cannot warn when both are filled - the case somebody
+ * has no other way to diagnose, because the run time silently prefers one.
+ *
+ * A boolean per key leaks nothing a caller could not already infer by trying
+ * the connection.
+ */
+export function storedSecretKeys(
+  config: IntegrationConfig,
+  integrationType: IntegrationType | string
+): string[] {
+  const secretKeys = getSecretConfigKeys(integrationType);
+  if (secretKeys === null) {
+    return [];
+  }
+  return Object.keys(config).filter(
+    (key) =>
+      secretKeys.has(key) &&
+      typeof config[key] === "string" &&
+      (config[key] as string).length > 0
+  );
 }

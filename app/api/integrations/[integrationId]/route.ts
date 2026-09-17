@@ -8,7 +8,10 @@ import {
   updateIntegration,
 } from "@/lib/db/integrations";
 import { organizationWallets } from "@/lib/db/schema";
-import { stripSecretConfig } from "@/lib/integrations/secret-fields";
+import {
+  storedSecretKeys,
+  stripSecretConfig,
+} from "@/lib/integrations/secret-fields";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { SCOPE_MCP_READ, SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
@@ -21,6 +24,13 @@ export type GetIntegrationResponse = {
   name: string;
   type: string;
   config: IntegrationConfig;
+  /**
+   * Which secret keys hold a value, never the values. The form needs this to
+   * say which of two alternative credentials is in use and to warn when both
+   * are, neither of which it can work out from `config` - secrets are
+   * stripped from it.
+   */
+  storedSecretKeys: string[];
   createdAt: string;
   updatedAt: string;
   walletAddress?: string;
@@ -82,6 +92,7 @@ export async function GET(
       name: integration.name,
       type: integration.type,
       config: stripSecretConfig(integration.config, integration.type),
+      storedSecretKeys: storedSecretKeys(integration.config, integration.type),
       createdAt: integration.createdAt.toISOString(),
       updatedAt: integration.updatedAt.toISOString(),
     };
@@ -229,6 +240,7 @@ export async function PUT(
       name: integration.name,
       type: integration.type,
       config: stripSecretConfig(integration.config, integration.type),
+      storedSecretKeys: storedSecretKeys(integration.config, integration.type),
       createdAt: integration.createdAt.toISOString(),
       updatedAt: integration.updatedAt.toISOString(),
     };

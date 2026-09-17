@@ -423,6 +423,8 @@ export type Integration = {
 };
 
 export type IntegrationWithConfig = Integration & {
+  /** Secret keys holding a value, never the values. */
+  storedSecretKeys?: string[];
   config: IntegrationConfig;
 };
 

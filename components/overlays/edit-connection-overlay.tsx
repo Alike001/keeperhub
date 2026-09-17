@@ -145,6 +145,7 @@ export function EditConnectionForm({
         setName(full.name);
         const normalized = normalizeConfig(full.config);
         setConfig(normalized);
+        setStoredSecrets(full.storedSecretKeys ?? []);
         if (integration.type === "database") {
           setDbTab(detectDefaultTab(normalized));
         }
@@ -177,6 +178,9 @@ export function EditConnectionForm({
    * field, and typing a replacement cancels it.
    */
   const [clearedKeys, setClearedKeys] = useState<Set<string>>(new Set());
+
+  /** Secret keys the connection holds a value for. Values never come down. */
+  const [storedSecrets, setStoredSecrets] = useState<string[]>([]);
 
   const updateConfig = (key: string, value: string) => {
     setConfig((prev) => ({ ...prev, [key]: value }));
@@ -501,7 +505,27 @@ export function EditConnectionForm({
     // form listing four fields does not read as though it wants all four.
     // Every secret key: this form never receives their stored values, so it
     // cannot tell a blank field from a credential that is already set.
-    const exclusive = resolveExclusiveGroups(formFields, config, secretKeys);
+    // A stored secret counts as filled, so nothing is unknown any more and
+    // the form can say which credential is in use, hold the other shut, and
+    // warn when both are - the case the run time resolves silently.
+    const knownConfig: Record<string, unknown> = { ...config };
+    for (const key of storedSecrets) {
+      if (!(knownConfig[key] as string | undefined)?.length) {
+        knownConfig[key] = "stored";
+      }
+    }
+    const pendingUnknown = new Set(
+      [...secretKeys].filter(
+        (key) => !(storedSecrets.includes(key) || config[key]?.length)
+      )
+    );
+    const exclusive = resolveExclusiveGroups(
+      formFields,
+      knownConfig,
+      // Only keys that are neither stored nor typed remain unknown, which for
+      // a loaded connection is none of them.
+      pendingUnknown.size === secretKeys.size ? secretKeys : new Set<string>()
+    );
     // Groups that hold a credential, not groups that exist: a form declaring
     // one credential group beside a group of ordinary settings would
     // otherwise offer removal on its only credential, which is the case this
@@ -514,7 +538,15 @@ export function EditConnectionForm({
         (one) => one.id === exclusive.activeGroupId
       );
       for (const key of inUse?.configKeys ?? []) {
-        updateConfig(key, "");
+        // Emptying the field is not enough for a stored secret: a blank one
+        // means "unchanged" on the way back, so the credential being switched
+        // away from has to be marked for removal or the run time would go on
+        // preferring it.
+        if (storedSecrets.includes(key)) {
+          markCleared(key);
+        } else {
+          updateConfig(key, "");
+        }
       }
     };
 

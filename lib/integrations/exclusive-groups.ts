@@ -50,18 +50,12 @@ function hasValue(value: unknown): boolean {
 /**
  * Resolve which alternative is in use.
  *
- * `unknownKeys` are keys whose value the caller cannot see. The edit form is
- * the case: credential values are never sent to the browser, so a stored API
- * token reads as blank there. Without this, typing an OAuth client id on a
- * connection that already holds a token made the OAuth group the only filled
- * one - the form then announced the scoped app as in use and held the token
- * field shut, while at run time `resolveAuthHeader` still preferred the token
- * and authorised every call with it. The screen said the opposite of what
- * would happen, and "Use this instead" could not correct it, because an empty
- * value is stripped before the update and never clears a stored secret.
- *
- * A group holding an unknown key is therefore treated as possibly filled,
- * which makes the state ambiguous and locks nothing.
+ * `unknownKeys` are keys whose value the caller cannot see - a form that is
+ * never sent the credential it is editing. A group holding one is treated as
+ * possibly filled: it locks nothing and names nothing as in use, while still
+ * reporting the state as ambiguous when more than one group holds something.
+ * Naming a group in use on a guess would contradict the run time, which
+ * resolves the same question from the values.
  */
 export function resolveExclusiveGroups(
   fields: readonly ExclusiveField[],
@@ -99,8 +93,11 @@ export function resolveExclusiveGroups(
   const filled = groups.filter((group) => group.filled);
   if (anyUnknown) {
     // Nothing can be locked and nothing can be declared in use, because the
-    // values that would decide it are not here.
-    return { groups, activeGroupId: undefined, ambiguous: false };
+    // values that would decide it are not here. `ambiguous` is still reported
+    // though: it says only that more than one group holds something, which is
+    // exactly what an unknown key establishes, and it drives the one warning
+    // that does not need to know which group wins.
+    return { groups, activeGroupId: undefined, ambiguous: filled.length > 1 };
   }
   return {
     groups,

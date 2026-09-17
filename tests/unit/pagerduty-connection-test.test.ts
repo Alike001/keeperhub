@@ -241,11 +241,12 @@ describe("how many requests one Test Connection makes", () => {
     });
 
     expect(fetchMock.mock.calls.length).toBe(3);
-    // And the identity endpoint really was reached, so this is the OAuth path.
-    expect(
-      fetchMock.mock.calls.filter((call) =>
-        String(call[0]).includes("identity.pagerduty.com")
-      ).length
-    ).toBeGreaterThan(0);
+    // And the identity endpoint really was reached, so this is the OAuth
+    // path. Matched on the parsed hostname: a substring test would also pass
+    // for a URL that merely carries the host in its path.
+    const hosts = fetchMock.mock.calls.map(
+      (call) => new URL(String(call[0])).hostname
+    );
+    expect(hosts).toContain("identity.pagerduty.com");
   });
 });

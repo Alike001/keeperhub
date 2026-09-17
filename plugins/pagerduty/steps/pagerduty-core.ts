@@ -38,6 +38,7 @@ import {
   PAGERDUTY_EVENTS_HOST,
   PAGERDUTY_EVENTS_HOST_EU,
   PAGERDUTY_IDENTITY_TOKEN_URL,
+  PAGERDUTY_OAUTH_SCOPES_MINIMAL,
   PAGERDUTY_REQUEST_TIMEOUT_MS,
   pagerDutyOAuthScope,
   type PagerDutyEventBody,
@@ -74,11 +75,8 @@ const IDENTITY_TOKEN_URL = PAGERDUTY_IDENTITY_TOKEN_URL;
 const REQUEST_TIMEOUT_MS = PAGERDUTY_REQUEST_TIMEOUT_MS;
 const PLUGIN = "pagerduty";
 const ACCEPT_V2 = PAGERDUTY_ACCEPT_V2;
-/**
- * The two scopes every action needs: reading services, which includes their
- * integrations and so the routing key, and reading escalation policies.
- */
-const OAUTH_SCOPES_MINIMAL = "services.read escalation_policies.read";
+/** Re-exported name for the pair; it lives beside the scope builder. */
+const OAUTH_SCOPES_MINIMAL = PAGERDUTY_OAUTH_SCOPES_MINIMAL;
 
 /**
  * The scopes to ask for on behalf of one call.
@@ -1228,7 +1226,9 @@ export async function createIncident(
     };
 
     if (!response.ok) {
-      if (response.status === 401) {
+      // A 403 here means the cached token lacks incidents.write, so it has
+      // to be dropped for a newly granted scope to take effect.
+      if (response.status === 401 || response.status === 403) {
         invalidateOAuthToken(credentials);
       }
       // PagerDuty answers a 403 here with "Access Denied", which does not

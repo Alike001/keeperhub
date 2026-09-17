@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import pagerDutyPlugin from "@/plugins/pagerduty";
-import { flattenConfigFields, isDisplayOnlyField } from "@/plugins/registry";
+import { buildExampleConfig } from "@/plugins/registry";
 
 /**
  * What an AI-generated PagerDuty node is seeded with.
@@ -14,32 +14,15 @@ import { flattenConfigFields, isDisplayOnlyField } from "@/plugins/registry";
  * setting for every generated node, not documentation - so a field whose
  * example differs from its real default silently changes what those nodes do.
  *
- * This mirrors that resolution rather than calling it, because the real one
- * walks every registered plugin and needs the whole registry loaded.
+ * This calls the real builder. Mirroring it here instead meant a change to
+ * the seeding rules could not fail these tests.
  */
 function seededConfig(slug: string): Record<string, unknown> {
   const action = pagerDutyPlugin.actions.find((one) => one.slug === slug);
   if (!action) {
     throw new Error(`no action ${slug}`);
   }
-  const config: Record<string, unknown> = {};
-  for (const field of flattenConfigFields(action.configFields ?? [])) {
-    if (isDisplayOnlyField(field.type)) {
-      continue;
-    }
-    if (field.example !== undefined) {
-      config[field.key] = field.example;
-    } else if (field.defaultValue !== undefined) {
-      config[field.key] = field.defaultValue;
-    } else if (field.type === "number") {
-      config[field.key] = 10;
-    } else if (field.type === "select" && field.options?.[0]) {
-      config[field.key] = field.options[0].value;
-    } else {
-      config[field.key] = `Your ${field.label.toLowerCase()}`;
-    }
-  }
-  return config;
+  return buildExampleConfig(`pagerduty/${slug}`, action.configFields);
 }
 
 describe("what an AI-generated PagerDuty node carries", () => {

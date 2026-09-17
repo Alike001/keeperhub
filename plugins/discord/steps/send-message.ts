@@ -85,15 +85,6 @@ const LOG_LABELS = {
 };
 
 /**
- * Validates a Discord webhook URL by hostname over https, not by substring.
- * A substring match on "discord.com/api/webhooks/" is satisfied by an
- * off-host URL that carries it in the path (e.g.
- * https://10.0.0.1/discord.com/api/webhooks/x), which points egress at an
- * internal host. The safeFetch SSRF guard is the network-layer backstop;
- * this rejects an off-host URL before any request is attempted.
- */
-
-/**
  * One attempt outcome, kept separate from the step result so the retry loop
  * can tell a transient failure from one that will fail identically on the
  * next attempt without re-parsing error strings.

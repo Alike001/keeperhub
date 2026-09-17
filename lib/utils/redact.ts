@@ -83,12 +83,8 @@ const SENSITIVE_PATTERNS = [
  * Check if a key name indicates sensitive data
  */
 function isSensitiveKey(key: string): boolean {
-  // Exact match, case-insensitively on both sides. The set is written in the
-  // spellings people use, which includes camelCase, and comparing a lowered
-  // key against them made every camelCase entry with no snake_case twin dead:
-  // `fromEmail`, `privateKey`, `databaseUrl`, `connectionString`,
-  // `cardNumber`, `phoneNumber` and `socialSecurity` all matched nothing and
-  // were logged verbatim, none of them being caught by the patterns either.
+  // Case-insensitive on both sides: the list is written in the spellings
+  // people use, which includes camelCase.
   if (SENSITIVE_KEYS_LOWER.has(key.toLowerCase())) {
     return true;
   }

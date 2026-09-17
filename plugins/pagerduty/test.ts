@@ -17,11 +17,14 @@ import {
   PAGERDUTY_API_HOST,
   PAGERDUTY_API_HOST_EU,
   PAGERDUTY_IDENTITY_TOKEN_URL,
+  PAGERDUTY_OAUTH_SCOPES_MINIMAL,
   PAGERDUTY_REQUEST_TIMEOUT_MS,
   pagerDutyOAuthScope,
 } from "./event-payload";
 
-const OAUTH_SCOPES = "services.read escalation_policies.read";
+// The same pair the nodes ask for. Written out here a second time, this check
+// would keep passing for a connection whose scopes the nodes had outgrown.
+const OAUTH_SCOPES = PAGERDUTY_OAUTH_SCOPES_MINIMAL;
 
 type TestResult = { success: boolean; error?: string };
 

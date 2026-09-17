@@ -4,33 +4,20 @@ vi.mock("server-only", () => ({}));
 
 import { summariseGroup } from "@/lib/workflow/editor/group-summary";
 import pagerDutyPlugin from "@/plugins/pagerduty";
-import {
-  flattenConfigFields,
-  isDisplayOnlyField,
-  isFieldGroup,
-} from "@/plugins/registry";
+import { buildExampleConfig, isFieldGroup } from "@/plugins/registry";
 
-/** Mirrors `generateAIActionPrompts`, which needs the whole registry loaded. */
+/**
+ * The real seeding, not a copy of it. `generateAIActionPrompts` walks every
+ * registered plugin, so the per-action body is exported separately - a test
+ * that reimplemented the ladder could not fail when the ladder changed, which
+ * is the only thing this file is for.
+ */
 function seededConfig(slug: string): Record<string, unknown> {
   const action = pagerDutyPlugin.actions.find((one) => one.slug === slug);
-  const config: Record<string, unknown> = {};
-  for (const field of flattenConfigFields(action?.configFields ?? [])) {
-    if (isDisplayOnlyField(field.type)) {
-      continue;
-    }
-    if (field.example !== undefined) {
-      config[field.key] = field.example;
-    } else if (field.defaultValue !== undefined) {
-      config[field.key] = field.defaultValue;
-    } else if (field.type === "number") {
-      config[field.key] = 10;
-    } else if (field.type === "select" && field.options?.[0]) {
-      config[field.key] = field.options[0].value;
-    } else {
-      config[field.key] = `Your ${field.label.toLowerCase()}`;
-    }
+  if (!action) {
+    throw new Error(`no action ${slug}`);
   }
-  return config;
+  return buildExampleConfig(`pagerduty/${slug}`, action.configFields);
 }
 
 /**

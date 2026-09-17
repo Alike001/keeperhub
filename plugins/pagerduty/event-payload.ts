@@ -49,6 +49,17 @@ export function isEuRegionFlag(raw: string | undefined): boolean {
   return TRUTHY_REGION_FLAGS.has(raw?.trim().toLowerCase() ?? "");
 }
 
+/**
+ * The two scopes every action needs: reading services, which includes their
+ * integrations and so the routing key, and reading escalation policies.
+ *
+ * Every scope request is built by appending to this pair, and Test Connection
+ * asks for it as-is - so a copy of it elsewhere would let the check pass for
+ * a connection the nodes cannot use.
+ */
+export const PAGERDUTY_OAUTH_SCOPES_MINIMAL =
+  "services.read escalation_policies.read";
+
 /** The scope string PagerDuty's client-credentials grant expects. */
 export function pagerDutyOAuthScope(
   euRegion: boolean,

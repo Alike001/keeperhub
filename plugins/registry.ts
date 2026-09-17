@@ -636,6 +636,49 @@ export function isDisplayOnlyField(type: string | undefined): boolean {
 }
 
 /**
+ * The example config one action contributes to the generation prompt.
+ *
+ * Exported so a test can assert on what a generated node carries without
+ * copying this ladder. A copy cannot fail when the ladder changes, which is
+ * the one thing such a test is for.
+ */
+export function buildExampleConfig(
+  actionType: string,
+  configFields: ActionConfigField[] | undefined
+): Record<string, string | number> {
+  const exampleConfig: Record<string, string | number> = { actionType };
+
+  for (const field of flattenConfigFields(configFields ?? [])) {
+    // A field that renders a panel rather than collecting a value has
+    // nothing to seed. Without this it falls through to the string branch
+    // below and the prompt tells the model to emit
+    // `"pagerdutyPreview":"Your preview"` - a key the step never reads,
+    // in every generated node, and in the system prompt on every call.
+    if (isDisplayOnlyField(field.type)) continue;
+
+    // Include a conditional field when its condition holds for the
+    // example assembled so far. Fields are visited in declaration order,
+    // so a field's dependencies are already in the example.
+    if (!evaluateShowWhen(field.showWhen, exampleConfig)) continue;
+
+    // Use example, defaultValue, or a sensible default based on type
+    if (field.example !== undefined) {
+      exampleConfig[field.key] = field.example;
+    } else if (field.defaultValue !== undefined) {
+      exampleConfig[field.key] = field.defaultValue;
+    } else if (field.type === "number") {
+      exampleConfig[field.key] = 10;
+    } else if (field.type === "select" && field.options?.[0]) {
+      exampleConfig[field.key] = field.options[0].value;
+    } else {
+      exampleConfig[field.key] = `Your ${field.label.toLowerCase()}`;
+    }
+  }
+
+  return exampleConfig;
+}
+
+/**
  * Generate AI prompt section for all available actions
  * This dynamically builds the action types documentation for the AI
  */
@@ -645,40 +688,7 @@ export function generateAIActionPrompts(): string {
   for (const plugin of integrationRegistry.values()) {
     for (const action of plugin.actions) {
       const fullId = computeActionId(plugin.type, action.slug);
-
-      // Build example config from configFields (flatten groups)
-      const exampleConfig: Record<string, string | number> = {
-        actionType: fullId,
-      };
-
-      const flatFields = flattenConfigFields(action.configFields);
-
-      for (const field of flatFields) {
-        // A field that renders a panel rather than collecting a value has
-        // nothing to seed. Without this it falls through to the string branch
-        // below and the prompt tells the model to emit
-        // `"pagerdutyPreview":"Your preview"` - a key the step never reads,
-        // in every generated node, and in the system prompt on every call.
-        if (isDisplayOnlyField(field.type)) continue;
-
-        // Include a conditional field when its condition holds for the
-        // example assembled so far. Fields are visited in declaration order,
-        // so a field's dependencies are already in the example.
-        if (!evaluateShowWhen(field.showWhen, exampleConfig)) continue;
-
-        // Use example, defaultValue, or a sensible default based on type
-        if (field.example !== undefined) {
-          exampleConfig[field.key] = field.example;
-        } else if (field.defaultValue !== undefined) {
-          exampleConfig[field.key] = field.defaultValue;
-        } else if (field.type === "number") {
-          exampleConfig[field.key] = 10;
-        } else if (field.type === "select" && field.options?.[0]) {
-          exampleConfig[field.key] = field.options[0].value;
-        } else {
-          exampleConfig[field.key] = `Your ${field.label.toLowerCase()}`;
-        }
-      }
+      const exampleConfig = buildExampleConfig(fullId, action.configFields);
 
       lines.push(
         `- ${action.label} (${fullId}): ${JSON.stringify(exampleConfig)}`

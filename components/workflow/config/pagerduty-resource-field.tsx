@@ -791,26 +791,9 @@ const LEG_LABEL: Record<string, string> = {
 };
 
 /**
- * Sends one real alert through the selected service and takes it back again.
- *
- * The reason to do this from the node rather than trust the connection test:
- * a valid credential proves nothing about the service somebody just picked.
- * A service with no Events API v2 integration, one that is disabled, one in a
- * maintenance window and one that pages the wrong rota all look identical in
- * the picker, and the first time anybody finds out is during an incident.
- *
- * It is explicit about what it does. The button says so before it is pressed,
- * because it genuinely reaches on-call's service, and the round trip ends
- * resolved so nothing is left for somebody to tidy up.
- */
-/**
  * Why the test cannot be run yet, in the words of whatever is actually
- * missing.
- *
- * "Pick a connection and a service above" was one message for every case, and
- * it was wrong in the one that matters: a connection whose token is rejected
- * loads no services, so there is nothing to pick, and the message read as
- * though the connection itself had not been set.
+ * missing. A connection whose credential is rejected lists no services, so
+ * "pick a service" would be an instruction nobody can follow.
  */
 function PagerDutyTestNotReady({
   reason,
@@ -859,6 +842,19 @@ function PagerDutyTestNotReady({
   );
 }
 
+/**
+ * Sends one real alert through the selected service and takes it back again.
+ *
+ * The reason to do this from the node rather than trust the connection test:
+ * a valid credential proves nothing about the service somebody just picked.
+ * A service with no Events API v2 integration, one that is disabled, one in a
+ * maintenance window and one that pages the wrong rota all look identical in
+ * the picker, and the first time anybody finds out is during an incident.
+ *
+ * It is explicit about what it does. The button says so before it is pressed,
+ * because it genuinely reaches on-call's service, and the round trip ends
+ * resolved so nothing is left for somebody to tidy up.
+ */
 export function PagerDutyTestNodeButton({
   integrationId,
   serviceId,

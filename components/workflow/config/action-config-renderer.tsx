@@ -948,6 +948,7 @@ function FieldGroup({
 
   return (
     <div className="space-y-2">
+      <div className="flex items-center gap-1">
       <button
         className="ml-1 flex items-center gap-1 text-left"
         onClick={() => setIsExpanded(!isExpanded)}
@@ -959,19 +960,18 @@ function FieldGroup({
             isExpanded ? "" : "-rotate-90"
           }`}
         />
-        {summary && summary.count > 0 && (
+      </button>
+      {summary && summary.count > 0 && (
           <Tooltip>
             <TooltipTrigger asChild>
               <span
                 aria-label={`${summary.count} set: ${summary.labels.join(", ")}`}
                 className="ml-0.5 rounded-full bg-primary/15 px-1.5 py-0.5 font-medium text-[0.625rem] text-primary leading-none"
-                // Radix puts focus handlers on whatever it is given, and a
-                // span cannot take focus on its own. Without this the names
-                // are mouse-only, and they are the only place they appear
-                // while the group is shut.
+                // A span cannot take focus on its own, and these names are
+                // the only place the group's contents appear while it is shut.
                 tabIndex={0}
               >
-                {summary.count} set
+              {summary.count} set
               </span>
             </TooltipTrigger>
             <TooltipContent className="max-w-xs" side="top">
@@ -979,7 +979,7 @@ function FieldGroup({
             </TooltipContent>
           </Tooltip>
         )}
-      </button>
+      </div>
       {isExpanded && (
         <div className="ml-1 space-y-4 border-primary/50 border-l-2 py-2 pl-3">
           {fields.map((field) =>

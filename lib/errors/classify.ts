@@ -612,17 +612,9 @@ export function applyErrorClassHint(
   }
   if (hint === ExecutionErrorType.USER) {
     return {
-      // An unmatched message falls through to WORKFLOW_ENGINE, which is on
-      // the system side by definition, so a revoked credential or a bad field
-      // was counted as an executor fault in the dashboards that sum by
-      // category. Where a rule did match, its answer stands - it knows more
-      // than a step's blanket hint does.
-      //
-      // "Matched" is the code, not the category. WORKFLOW_ENGINE is also what
-      // E-0001 (execution timed out), E-0002 (exceeded max retries) and
-      // E-0003 (unknown action type) carry, and those are recognised executor
-      // faults: keying off the category re-bucketed them too, which is the
-      // opposite of what this is for.
+      // A step's hint only overrides the category when no rule matched;
+      // otherwise the rule's answer stands. "Matched" is the code, not the
+      // category - E-0001, E-0002 and E-0003 also carry WORKFLOW_ENGINE.
       errorCategory: isDefaultClassification(classification)
         ? ErrorCategory.CONFIGURATION
         : classification.errorCategory,
