@@ -30,7 +30,7 @@ Returns aggregated analytics for the organization including run counts, success 
 | `range` | string | Time range: `1h`, `24h`, `7d`, `30d`, `custom` (default: `24h`). An unrecognised value is not rejected: `?range=90d` falls through to the `24h` offset |
 | `customStart` | string | ISO timestamp for custom range start |
 | `customEnd` | string | ISO timestamp for custom range end |
-| `projectId` | string | Restrict the figures to one workflow project |
+| `projectId` | string | Restrict the figures to one workflow project. It also removes direct executions from the response entirely, so `totalRuns`, both gas totals and every network row lose their direct half |
 
 ### Response
 
@@ -67,13 +67,13 @@ Returns aggregated analytics for the organization including run counts, success 
 | `successCount` | number | Runs that completed successfully |
 | `errorCount` | number | Runs that failed |
 | `cancelledCount` | number | Workflow runs that were cancelled |
-| `skippedCount` | number | Workflow runs whose steps were skipped |
+| `skippedCount` | number | Workflow runs with status `skipped`, which is a run the platform refused before it started: over the plan limit, a gated action, or an unpaid pay-as-you-go charge |
 | `successRate` | number | Fraction of runs that succeeded, `0` to `1`, not a percentage. The dashboard renders it as a percentage by multiplying by 100 (`components/analytics/kpi-cards.tsx`), so a consumer that wants one has to do the same |
 | `avgDurationMs` | number or null | Mean duration in milliseconds, or `null` when the window holds no completed run to average |
 | `totalGasWei` | string | Every wei the runs burned over the range, sponsored gas included. A decimal string, because the figure overflows a JavaScript number |
 | `sponsoredGasWei` | string | The sponsored portion of `totalGasWei`, read from the gas-credit ledger. A subset rather than a second figure: adding the two double counts, and the wallet-paid share is the subtraction |
 | `activeRuns` | number | Runs in flight at the moment of the request, counted for the organization rather than the window |
-| `previousPeriod` | object or null | The same counts over the window immediately before this one, so a caller can render deltas. It carries `totalRuns`, `successCount`, `errorCount`, `cancelledCount`, `skippedCount`, `avgDurationMs`, `totalGasWei` and `sponsoredGasWei`, and deliberately not `successRate` or `activeRuns`: derive the previous rate from its own `successCount / totalRuns` |
+| `previousPeriod` | object | The same counts over the window immediately before this one, so a caller can render deltas. It carries `totalRuns`, `successCount`, `errorCount`, `cancelledCount`, `skippedCount`, `avgDurationMs`, `totalGasWei` and `sponsoredGasWei`, and deliberately not `successRate` or `activeRuns`: derive the previous rate from its own `successCount / totalRuns` |
 
 ## Get Time Series Data
 
@@ -145,7 +145,7 @@ Same as summary endpoint.
 }
 ```
 
-`network` is whatever the step recorded, and the API does not normalise it: a chain id as a string on most rows, the slug an older plugin wrote (`tempo-testnet`) where the chain registry could not resolve it, and the literal `unknown` when the row recorded nothing. It is not a display name and nothing on this endpoint maps it to one, so treat it as an opaque key: `Number(network)` gives `NaN` on real rows. The display-name mapping lives in the runs table, in a different surface.
+`network` is whatever the step recorded, and the API does not normalise it: a chain id as a string on most rows, and on the rest either the slug a plugin wrote (`tempo-testnet`, stored verbatim rather than resolved through the chain registry) or the literal `unknown` when the row recorded nothing. It is not a display name and nothing on this endpoint maps it to one, so treat it as an opaque key: `Number(network)` is `NaN` on the slug rows and on `unknown`. The display-name mapping lives in the runs table, in a different surface.
 
 `executionCount` is not a run count on the workflow half. The direct half counts direct executions that reached `completed` or `failed`, but the workflow half has no run-status predicate: it counts every `workflow_execution_logs` row that recorded gas, which is one per gas-bearing step, including steps of a run that is still in progress. `successCount` and `errorCount` on that half are step statuses for the same reason. Summing `executionCount` across networks therefore gives settled direct executions plus gas-bearing workflow steps, which is what this Gas Breakdown table shows, rather than run volume.
 
@@ -165,16 +165,16 @@ Returns a unified list of both workflow executions and direct executions with pa
 | `customStart` | string | ISO timestamp for custom range start |
 | `customEnd` | string | ISO timestamp for custom range end |
 | `status` | string | Filter by status. Repeatable. One of `pending`, `running`, `success`, `error`, `system_error`, `external_error`, `skipped`, `cancelled` |
-| `source` | string | Filter by source: `workflow`, `direct` |
+| `source` | string | Filter by source: `workflow`, `direct`. Repeatable |
 | `network` | string | Restrict to these networks. Repeatable |
-| `gas` | string | Restrict to rows whose gas fell on these networks. Repeatable |
+| `gas` | string | How the run's gas was paid: `sponsored`, `wallet` or `free`. Repeatable. Any other value is dropped rather than refused, so `?gas=8453` returns the unfiltered list with no error: filter by chain with `network` above |
 | `durationMin` | number | Only runs at or above this duration, in milliseconds |
-| `durationMax` | number | Only runs at or below this duration, in milliseconds |
-| `search` | string | Match on run id, workflow name or error text |
+| `durationMax` | number | Only runs strictly below this duration, in milliseconds. The bound is exclusive: a run of exactly this duration is not returned |
+| `search` | string | Match on the run id and the workflow name for workflow runs, and the run id, type and network for direct runs. No column holding an error message is searched, so searching an error string returns an empty page. Truncated to 128 characters |
 | `limit` | number | Results per page (default: 50, capped at 100: a larger value is clamped rather than rejected) |
 | `cursor` | string | Pagination cursor from previous response |
 | `page` | number | One-based page number, an alternative to `cursor`. Values below 1 are clamped to 1 |
-| `projectId` | string | Restrict the listing to one workflow project |
+| `projectId` | string | Restrict the listing to one workflow project. Direct executions are excluded rather than filtered |
 
 ### Response
 
@@ -226,25 +226,38 @@ Returns a unified list of both workflow executions and direct executions with pa
 
 `startedAt`, not `createdAt`: a run is dated from when it started, and a run that
 has not finished carries `completedAt: null` and `durationMs: null`. `directType`
-is set on direct executions and is exactly one of `transfer`, `contract-call` or
-`check-and-execute` (hyphenated: `contract_call` never matches) and `null` on
-workflow runs, where `source`, `workflowId` and `workflowName` carry the
-identity instead.
+is set on direct executions and `null` on workflow runs, where `source`,
+`workflowId` and `workflowName` carry the identity instead. It is not an enum and
+not exhaustive: `transfer`, `contract-call` and `check-and-execute` are the values
+the direct-execution routes write (hyphenated, so `contract_call` never matches),
+`protocol-action` comes from the protocol runner, and a node execution writes the
+resolved action id it ran, which is any system action (`Database Query`,
+`HTTP Request`, `Condition`) or any plugin action id. A caller switching on it
+exhaustively falls through on every protocol and node execution.
 
 `transactionHashes` is an array on both sources, one entry per on-chain write in
 submission order, with a direct execution surfacing its single hash as a
-one-element array so both render through the same code. The minimal entry is
-`hash`, `nodeId` and `nodeName`, as shown above. `chainId`, `network` and
+one-element array so both render through the same code. Every entry carries
+`hash`, `nodeId` and `nodeName`, which are the first three fields in the example
+above; everything below them is optional. `chainId`, `network` and
 `iterationIndex` are omitted rather than set to `null` when the log row had no
 value for them, so test for their presence rather than comparing against `null`.
 
-The receipt verification KeeperHub performs independently (`verified`,
-`receiptStatus`, `blockNumber`, `gasUsed`, `verifiedAt`) is the part a caller
-cannot reconstruct from the chain alone, and it is present only on entries that
-were verified at finalize: an entry whose hash matched no verification result is
-returned untouched, and a run that failed inspects only the writes still in
-flight. A missing `verified` therefore means not verified in this response,
-never verification failed.
+On a workflow entry, the receipt verification KeeperHub performs independently
+(`verified`, `receiptStatus`, `blockNumber`, `gasUsed`, `verifiedAt`) is the part a
+caller cannot reconstruct from the chain alone, and it is present only where it
+ran at finalize: an entry whose hash matched no verification result is returned
+untouched, and a run that failed inspects only the writes still in flight. A
+missing `verified` on a workflow entry therefore means not verified in this
+response, never verification failed.
+
+A direct run's entry carries none of those five fields. It is synthesised from
+the execution's single `transaction_hash`, with `nodeId: "direct"` and
+`nodeName: "Direct execution"` as sentinels rather than real identifiers, plus
+`network` when the execution recorded one. Discriminate on `source === "direct"`
+rather than on the sentinel strings. The verification the direct execution
+recorded lives in that execution's own receipts, which this endpoint does not
+read.
 
 An empty array means the run produced no on-chain write, or finalized before the
 column was backfilled.
@@ -304,6 +317,12 @@ step's own data from the execution's stored output if you need it.
 `null` elsewhere. An empty array is the expected answer for a run whose step logs
 retention has taken, which the runs listing reports through
 `stepLogRetentionCutoff`.
+
+Step logs are workflow-only: the query joins `workflow_executions` and `workflows`,
+so a direct run id, which List Runs returns alongside workflow ids, gives an empty
+array and a `200`, exactly as an unknown id does. Retention is not the only
+explanation for an empty array, and it is the wrong one to reach for when the id
+came from a direct row.
 
 ## Get Spend Cap Data
 
