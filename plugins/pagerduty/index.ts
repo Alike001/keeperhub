@@ -349,23 +349,6 @@ const pagerDutyPlugin: IntegrationPlugin = {
         dedupKeyField,
         {
           type: "group",
-          label: "When to page",
-          fields: [
-            {
-              key: "consecutiveRuns",
-              label: "Consecutive runs before paging",
-              type: "number",
-              min: 1,
-              max: 20,
-              placeholder: "1",
-              example: "2",
-              helpText:
-                "Pages on the Nth run in a row that reaches this node; one run that does not reach it resets the count. On a schedule of every X minutes, N delays the first page by about (N-1) times X - at 3 on an hourly cron that is two hours. Held runs are recorded, not silent. Default 1.",
-            },
-          ],
-        },
-        {
-          type: "group",
           label: "Details",
           fields: [
             {
@@ -415,11 +398,6 @@ const pagerDutyPlugin: IntegrationPlugin = {
         },
         {
           type: "group",
-          label: "Delivery",
-          fields: retryFields,
-        },
-        {
-          type: "group",
           label: "If the page cannot be delivered",
           fields: [
             {
@@ -457,6 +435,28 @@ const pagerDutyPlugin: IntegrationPlugin = {
           type: "pagerduty-preview",
         },
         testNodeField,
+        // Last and collapsed, the way every other plugin's Advanced group is.
+        // What is above it is what somebody has to decide to page at all; what
+        // is in it changes when and how hard the node tries, and has a working
+        // default for every field.
+        {
+          type: "group",
+          label: "Advanced",
+          fields: [
+            {
+              key: "consecutiveRuns",
+              label: "Consecutive runs before paging",
+              type: "number",
+              min: 1,
+              max: 20,
+              placeholder: "1",
+              example: "2",
+              helpText:
+                "Pages on the Nth run in a row that reaches this node; one run that does not reach it resets the count. On a schedule of every X minutes, N delays the first page by about (N-1) times X - at 3 on an hourly cron that is two hours. Held runs are recorded, not silent. Default 1.",
+            },
+            ...retryFields,
+          ],
+        },
       ],
     },
     {
