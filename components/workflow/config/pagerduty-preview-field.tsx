@@ -62,9 +62,16 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 export function PagerDutyPreviewField({
   config,
   disabled,
+  siblingDedupKeys = [],
 }: {
   config: PreviewConfig;
   disabled?: boolean;
+  /**
+   * Explicit dedup keys set on every Trigger Incident node on this canvas,
+   * this node included - the config here carries no node id to exclude itself
+   * by, so a key counts as shared once it appears twice.
+   */
+  siblingDedupKeys?: string[];
 }) {
   const [tab, setTab] = useState<"payload" | "incident">("payload");
   const [copied, setCopied] = useState(false);
@@ -82,6 +89,16 @@ export function PagerDutyPreviewField({
 
   // Parsed the way the step parses them, so a line that is not an https url
   // is missing from the payload here rather than missing from the incident.
+  // Only an explicit key can collide. The default is derived from the node id,
+  // so two untouched nodes never share one.
+  const explicitKey = text(config, "dedupKey").trim();
+  const sharedWith = explicitKey
+    ? Math.max(
+        0,
+        siblingDedupKeys.filter((key) => key === explicitKey).length - 1
+      )
+    : 0;
+
   const links = parseLinks(text(config, "links"));
   const { body, detailsDropped, trims } = buildTriggerEvent({
     routingKey: ROUTING_KEY_PLACEHOLDER,
@@ -149,6 +166,23 @@ export function PagerDutyPreviewField({
           </button>
         )}
       </div>
+
+      {sharedWith > 0 && (
+        <div className="flex items-start gap-2 rounded-md border border-yellow-500/40 bg-yellow-500/5 p-2 text-xs text-yellow-700 dark:text-yellow-300">
+          <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+          <div className="min-w-0">
+            <p>
+              {sharedWith === 1
+                ? "Another Trigger Incident node"
+                : `${sharedWith} other Trigger Incident nodes`}{" "}
+              on this canvas use this dedup key. PagerDuty folds events sharing
+              a key into one alert, so these nodes share a single alert between
+              them - and a Resolve on any of them closes it for all. Give each
+              one its own key unless that is what you want.
+            </p>
+          </div>
+        </div>
+      )}
 
       {trims.length > 0 && (
         <div className="flex items-start gap-2 rounded-md border border-yellow-500/40 bg-yellow-500/5 p-2 text-xs text-yellow-700 dark:text-yellow-300">

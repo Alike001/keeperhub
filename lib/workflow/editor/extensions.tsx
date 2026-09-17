@@ -714,9 +714,44 @@ registerFieldRenderer("pagerduty-test-node", ({ field, config, disabled }) => (
 registerFieldRenderer("pagerduty-preview", ({ field, config, disabled }) => (
   <div className="space-y-2" key={field.key}>
     <Label className="ml-1">{field.label}</Label>
-    <PagerDutyPreviewField config={config} disabled={disabled} />
+    <PagerDutyPreviewFieldConnected config={config} disabled={disabled} />
   </div>
 ));
+
+/**
+ * The explicit dedup keys every Trigger Incident node on this canvas uses.
+ *
+ * Two nodes sharing a key share one PagerDuty alert, and a Resolve on either
+ * closes it for both. That is occasionally what somebody wants and usually a
+ * copy-paste, and it is invisible at run time because PagerDuty merges the
+ * events rather than complaining.
+ */
+function PagerDutyPreviewFieldConnected({
+  config,
+  disabled,
+}: {
+  config: Record<string, unknown>;
+  disabled?: boolean;
+}) {
+  // Every Trigger Incident node's explicit key, this one included: the config
+  // a field renderer gets carries no node id, so there is nothing to exclude
+  // itself by. The preview counts a key as shared once it appears twice.
+  const nodes = useAtomValue(nodesAtom);
+  const siblingDedupKeys = nodes
+    .filter(
+      (node) => node.data?.config?.actionType === "pagerduty/trigger-incident"
+    )
+    .map((node) => configString(node.data?.config?.dedupKey).trim())
+    .filter(Boolean);
+
+  return (
+    <PagerDutyPreviewField
+      config={config}
+      disabled={disabled}
+      siblingDedupKeys={siblingDedupKeys}
+    />
+  );
+}
 
 registerFieldRenderer(
   "pagerduty-backup-connection-select",

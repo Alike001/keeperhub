@@ -711,3 +711,165 @@ describe("simulation: Create Incident on a read-only connection", () => {
     expect(message).toContain("Access Denied");
   });
 });
+
+/**
+ * Two nodes, or two runs, hitting PagerDuty at the same moment.
+ *
+ * Everything this node sends carries a dedup key, which is what makes the
+ * concurrent cases safe rather than lucky: PagerDuty merges repeat triggers
+ * sharing a key into the one open alert. These pin that down, and pin down the
+ * one ordering that is genuinely unsafe.
+ */
+describe("simulation: two nodes fire at once", () => {
+  const sharedConfig = configureAsEditor("trigger-incident", {
+    pagerdutyServiceId: "PSKY1",
+    summary: "Keeper stalled",
+  });
+
+  /**
+   * Two runs of the same workflow overlapping - a schedule firing faster than
+   * the workflow finishes. Both reach the node, both derive the same key from
+   * the node id, and PagerDuty folds them into one alert. One page, not two.
+   */
+  it("sends one alert for two overlapping runs of the same node", async () => {
+    const first = recordRun("success", [TRIGGER_NODE]);
+    const second = recordRun("success", [TRIGGER_NODE]);
+
+    pagerDutyIsHealthy();
+    const a = await runTrigger(first, sharedConfig);
+    pagerDutyIsHealthy();
+    const b = await runTrigger(second, sharedConfig);
+
+    expect(a.dedupKey).toBe(b.dedupKey);
+    expect(a).toMatchObject({ delivered: true });
+    expect(b).toMatchObject({ delivered: true });
+  });
+
+  /**
+   * Two genuinely concurrent calls, awaited together. The routing key cache is
+   * a plain Map behind an await, so both can miss and both can fetch; the
+   * point is that both still send, with the same key, and neither corrupts
+   * what the other cached.
+   */
+  it("survives two calls racing through the routing key cache", async () => {
+    const first = recordRun("success", [TRIGGER_NODE]);
+    const second = recordRun("success", [TRIGGER_NODE]);
+
+    safeFetch.mockReset();
+    safeFetch.mockImplementation((url: string) => {
+      if (String(url).includes("/integrations/")) {
+        return Promise.resolve(
+          response(200, { integration: { integration_key: "R1" } })
+        );
+      }
+      if (String(url).includes("/services/")) {
+        return Promise.resolve(
+          response(200, {
+            service: {
+              status: "active",
+              integrations: [
+                { id: "PI1", type: "events_api_v2_inbound_integration" },
+              ],
+            },
+          })
+        );
+      }
+      return Promise.resolve(response(202, { status: "success" }));
+    });
+
+    const [a, b] = await Promise.all([
+      runTrigger(first, sharedConfig),
+      runTrigger(second, sharedConfig),
+    ]);
+
+    expect(a).toMatchObject({ delivered: true, status: "triggered" });
+    expect(b).toMatchObject({ delivered: true, status: "triggered" });
+    expect(a.dedupKey).toBe(b.dedupKey);
+  });
+
+  /**
+   * Two different nodes deliberately given the same explicit dedup key. They
+   * share one alert, which is what a shared key means - and it also means a
+   * resolve on either closes the alert the other opened. Worth knowing, and
+   * the reason the dedup key help text calls this out.
+   */
+  it("gives two nodes with the same explicit key one shared alert", async () => {
+    const run = recordRun("success", [TRIGGER_NODE]);
+    pagerDutyIsHealthy();
+    const fromA = await runTrigger(run, {
+      ...sharedConfig,
+      dedupKey: "vault-0xabc",
+    });
+
+    currentRun.nodeId = "node-other";
+    pagerDutyIsHealthy();
+    const fromB = (await triggerIncidentStep({
+      integrationId: "int-pd",
+      ...sharedConfig,
+      dedupKey: "vault-0xabc",
+      _context: {
+        nodeId: "node-other",
+        nodeName: "Second pager",
+        nodeType: "pagerduty/trigger-incident",
+        workflowId: WORKFLOW_ID,
+        executionId: run.id,
+        organizationId: "org-1",
+      },
+    } as never)) as unknown as Record<string, unknown>;
+
+    expect(fromA.dedupKey).toBe("vault-0xabc");
+    expect(fromB.dedupKey).toBe("vault-0xabc");
+  });
+
+  /**
+   * The one ordering that genuinely loses: a resolve arriving before the
+   * trigger it was meant to close. PagerDuty drops an update whose key matches
+   * no open alert, answering 202, and the trigger then opens an alert nobody
+   * closes.
+   *
+   * A node cannot reorder two runs. What it can do is not report success at
+   * the resolve, and it does: the read-back is on by default and comes back
+   * with no incident to show, which is the only signal there is.
+   */
+  it("reports a resolve that arrived before its trigger as closing nothing", async () => {
+    safeFetch.mockReset();
+    safeFetch
+      .mockResolvedValueOnce(
+        response(200, {
+          service: {
+            status: "active",
+            integrations: [
+              { id: "PI1", type: "events_api_v2_inbound_integration" },
+            ],
+          },
+        })
+      )
+      .mockResolvedValueOnce(
+        response(200, { integration: { integration_key: "R1" } })
+      )
+      // PagerDuty takes the resolve and drops it: nothing carries that key yet.
+      .mockResolvedValueOnce(response(202, { status: "success" }))
+      // ...so the read-back finds no incident.
+      .mockResolvedValueOnce(response(200, { incidents: [] }));
+
+    const resolved = (await resolveIncidentStep({
+      integrationId: "int-pd",
+      ...configureAsEditor("resolve-incident", {
+        pagerdutyServiceId: "PSKY1",
+        dedupKeyFromNodeId: TRIGGER_NODE,
+      }),
+      _context: {
+        nodeId: RESOLVE_NODE,
+        nodeName: "Close",
+        nodeType: "pagerduty/resolve-incident",
+        workflowId: WORKFLOW_ID,
+        organizationId: "org-1",
+      },
+    } as never)) as Record<string, unknown>;
+
+    // PagerDuty accepted the event, so `delivered` is true and says nothing.
+    expect(resolved.delivered).toBe(true);
+    // The read-back is the part that does say something.
+    expect(resolved.incidentStatus).toBe("unknown");
+  });
+});
