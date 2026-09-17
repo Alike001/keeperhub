@@ -470,61 +470,6 @@ const pagerDutyPlugin: IntegrationPlugin = {
       ],
     },
     {
-      slug: "resolve-incident",
-      label: "Resolve Incident",
-      description:
-        "Close the alert carrying this dedup key. PagerDuty drops it silently when no open alert matches, so this is a no-op rather than an error",
-      category: "PagerDuty",
-      stepFunction: "resolveIncidentStep",
-      stepImportPath: "resolve-incident",
-      docUrl: "https://docs.keeperhub.com/plugins/pagerduty",
-      outputFields: [
-        { field: "delivered", description: "Whether PagerDuty accepted the event" },
-        { field: "dedupKey", description: "Key of the alert that was resolved" },
-        {
-          field: "incidentStatus",
-          description:
-            "Incident status when the check is on: triggered, acknowledged, resolved, or unknown",
-        },
-        {
-          field: "incidentPriority",
-          description: "The incident's priority when the check is on and it has one",
-        },
-        { field: "incidentUrl", description: "Link to the incident, when the check found it" },
-        {
-          field: "error",
-          description:
-            "Why the event was not delivered, when it was not and the node was told not to fail the run",
-        },
-        {
-          field: "verificationError",
-          description: "Why the check could not read the incident back, when it could not",
-        },
-        {
-          field: "delayedSeconds",
-          description:
-            "Seconds this node waited before sending, when it was asked to wait",
-        },
-        { field: "action", description: "acknowledge or resolve" },
-        { field: "message", description: "PagerDuty's own response message" },
-      ],
-      configFields: [
-        serviceField,
-        triggerNodeField,
-        targetDedupKeyField,
-        // On by default for a resolve: an incident that quietly stays open is
-        // the failure this action exists to prevent, and the check is what
-        // turns PagerDuty's unconditional 202 into an answer.
-        verifyField("true"),
-        {
-          type: "group",
-          label: "Delivery",
-          fields: [sendDelayField("resolve"), ...retryFields],
-        },
-        testNodeField,
-      ],
-    },
-    {
       slug: "acknowledge-incident",
       label: "Acknowledge Incident",
       description:
@@ -627,6 +572,61 @@ const pagerDutyPlugin: IntegrationPlugin = {
           placeholder: '{ "commit": "{{Build.sha}}" }',
         },
         { type: "group", label: "Delivery", fields: changeEventRetryFields },
+      ],
+    },
+    {
+      slug: "resolve-incident",
+      label: "Resolve Incident",
+      description:
+        "Close the alert carrying this dedup key. PagerDuty drops it silently when no open alert matches, so this is a no-op rather than an error",
+      category: "PagerDuty",
+      stepFunction: "resolveIncidentStep",
+      stepImportPath: "resolve-incident",
+      docUrl: "https://docs.keeperhub.com/plugins/pagerduty",
+      outputFields: [
+        { field: "delivered", description: "Whether PagerDuty accepted the event" },
+        { field: "dedupKey", description: "Key of the alert that was resolved" },
+        {
+          field: "incidentStatus",
+          description:
+            "Incident status when the check is on: triggered, acknowledged, resolved, or unknown",
+        },
+        {
+          field: "incidentPriority",
+          description: "The incident's priority when the check is on and it has one",
+        },
+        { field: "incidentUrl", description: "Link to the incident, when the check found it" },
+        {
+          field: "error",
+          description:
+            "Why the event was not delivered, when it was not and the node was told not to fail the run",
+        },
+        {
+          field: "verificationError",
+          description: "Why the check could not read the incident back, when it could not",
+        },
+        {
+          field: "delayedSeconds",
+          description:
+            "Seconds this node waited before sending, when it was asked to wait",
+        },
+        { field: "action", description: "acknowledge or resolve" },
+        { field: "message", description: "PagerDuty's own response message" },
+      ],
+      configFields: [
+        serviceField,
+        triggerNodeField,
+        targetDedupKeyField,
+        // On by default for a resolve: an incident that quietly stays open is
+        // the failure this action exists to prevent, and the check is what
+        // turns PagerDuty's unconditional 202 into an answer.
+        verifyField("true"),
+        {
+          type: "group",
+          label: "Delivery",
+          fields: [sendDelayField("resolve"), ...retryFields],
+        },
+        testNodeField,
       ],
     },
     {

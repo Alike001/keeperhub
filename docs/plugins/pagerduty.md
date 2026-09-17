@@ -14,9 +14,9 @@ The routing key that authorises an event is never stored in the workflow. The no
 | Action | Description |
 |--------|-------------|
 | Trigger Incident | Open or update an alert on a service |
-| Resolve Incident | Close the alert carrying a given dedup key |
 | Acknowledge Incident | Acknowledge that alert without resolving it |
 | Send Change Event | Record a deploy or config change on a service timeline; never pages |
+| Resolve Incident | Close the alert carrying a given dedup key |
 | Create Incident (REST) | Create an incident directly, with an escalation policy override and urgency |
 
 The first four use the Events API v2 and work with a read-only credential. Create Incident uses the REST API and needs a write-capable one.
