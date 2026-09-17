@@ -10,7 +10,6 @@ import {
 import type { AuthMethod } from "@/lib/middleware/auth-helpers";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { SUPPORTED_CHAIN_IDS } from "@/lib/rpc/types";
-import { isDirectExecutionSupported } from "@/plugins/protocol/steps/resolve-protocol-meta";
 import { withToolLogging } from "./logging";
 import { deprecatedToolDescription } from "./mcp-tool-catalog";
 import {
@@ -2331,7 +2330,7 @@ export function registerMetaTools(
   // Meta-tool 1: Search and discover available protocol actions
   server.tool(
     "search_protocol_actions",
-    "Search for available protocol actions across all supported DeFi protocols (Aave, Morpho, Chronicle, Chainlink, Uniswap, Compound, Lido, etc.). Call this first to discover what actions are available and what parameters they require, then use execute_protocol_action only when directExecutionSupported is true; otherwise use workflow execution.",
+    "Search for available protocol actions across all supported DeFi protocols (Aave, Morpho, Chronicle, Chainlink, Uniswap, Compound, Lido, etc.). Call this first to discover what actions are available and what parameters they require, then use execute_protocol_action only when protocolDirectExecution is true; otherwise use the action-specific sibling tool (such as execute_transfer or execute_contract_call) or workflow execution.",
     {
       query: z
         .string()
@@ -2377,6 +2376,7 @@ export function registerMetaTools(
             requiresCredentials?: boolean;
             requiredPlan?: string | null;
             featureEnabled?: boolean;
+            protocolDirectExecution?: boolean;
           }
         >;
 
@@ -2407,9 +2407,7 @@ export function registerMetaTools(
           requiresCredentials: a.requiresCredentials,
           requiredPlan: a.requiredPlan ?? null,
           featureEnabled: a.featureEnabled ?? true,
-          directExecutionSupported: isDirectExecutionSupported(
-            a.actionType ?? ""
-          ),
+          protocolDirectExecution: a.protocolDirectExecution ?? false,
         }));
 
         return {

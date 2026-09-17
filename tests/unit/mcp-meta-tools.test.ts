@@ -1205,17 +1205,20 @@ describe("search_protocol_actions: query filtering", () => {
       label: "Uniswap V3: Swap Exact Input",
       description:
         "Swap an exact amount of input tokens for as many output tokens as possible (single-hop)",
+      protocolDirectExecution: true,
     },
     "web3/approve-token": {
       actionType: "web3/approve-token",
       label: "Approve ERC20 Token",
       description:
         "Approve a spender contract to spend ERC20 tokens on behalf of your wallet (required before swaps and DeFi interactions)",
+      protocolDirectExecution: false,
     },
     "web3/check-balance": {
       actionType: "web3/check-balance",
       label: "Get Native Token Balance",
       description: "Get native token balance (ETH, MATIC, etc.) of any address",
+      protocolDirectExecution: false,
     },
   };
 
@@ -1249,7 +1252,7 @@ describe("search_protocol_actions: query filtering", () => {
       count: number;
       actions: Array<{
         actionType: string;
-        directExecutionSupported: boolean;
+        protocolDirectExecution: boolean;
       }>;
       hint?: string;
     };
@@ -1305,21 +1308,21 @@ describe("search_protocol_actions: query filtering", () => {
     expect(body.hint).toBeUndefined();
   });
 
-  it("Test 36: reports direct execution support from the protocol registry", async () => {
+  it("Test 36: reports protocol direct execution support from the shared schema", async () => {
     const body = await invokeSearch({});
 
     expect(
       body.actions.find(
         (action) => action.actionType === "uniswap/swap-exact-input"
-      )?.directExecutionSupported
+      )?.protocolDirectExecution
     ).toBe(true);
     expect(
       body.actions.find((action) => action.actionType === "web3/approve-token")
-        ?.directExecutionSupported
+        ?.protocolDirectExecution
     ).toBe(false);
     expect(
       body.actions.find((action) => action.actionType === "web3/check-balance")
-        ?.directExecutionSupported
+        ?.protocolDirectExecution
     ).toBe(false);
   });
 });
