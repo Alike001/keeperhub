@@ -215,6 +215,16 @@ The integration pins what it can and fails loudly for the rest.
 
 **Checking on purpose.** **Send a test alert** on the node runs the full round trip -- trigger, acknowledge, resolve -- against a real service, and reports each leg. Running it periodically against a sandbox account is the way to learn about a breaking change from monitoring rather than from an incident.
 
+### Exporting and importing a workflow
+
+A workflow with PagerDuty nodes exports and imports cleanly, and stays reusable in another organisation.
+
+Import keeps every node id, which is what makes the references work: `{{@nodeId:Node.field}}` in a summary, a source, custom details or a link all resolve exactly as they did, and so does the bare node id the Resolve and Acknowledge actions store to name the trigger they close. Nothing has to be rewritten because nothing moved. (Duplicating a workflow *does* regenerate ids, which is why duplication rewrites both.)
+
+What does not travel is credentials. The PagerDuty connection is stripped, and so is the backup Discord, Slack or Telegram connection -- both are ids belonging to the organisation that exported, and an export is a file people pass around. The importer picks their own on each node; the pickers show an empty connection rather than a reference that silently resolves to nothing.
+
+The **service id** does travel, deliberately. It is not a credential, and an imported workflow that names `PSKY123` should say so: if that service is not in the importing account, the picker says exactly that rather than quietly repointing the page at another team.
+
 ### Backup notification
 
 Set **Backup connection** on the trigger action to an existing Discord, Slack or Telegram connection. When the event cannot be delivered after the retries, the same alert -- plus the reason PagerDuty refused it -- is posted there instead. The run is still marked failed: the backup is for the person who should be woken now, the failed run is for whoever reads history later.
