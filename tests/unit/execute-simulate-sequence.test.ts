@@ -335,6 +335,60 @@ describe("simulateCallSequence on a node without eth_simulateV1", () => {
     });
   });
 
+  it("proves state actually flows: the trace post depends on the state passed in", async () => {
+    // A node whose prestateTracer output depends on the state it is given:
+    // on raw latest state it writes "0xraw"; when the request already
+    // carries a TOKEN entry it writes "0xcarried" instead. A stub that
+    // ignored stateOverrides would produce a constant post and could not
+    // be told apart from a correct one by request-shape assertions alone.
+    spies.send.mockImplementation((method: string, params: unknown[]) => {
+      if (method === "eth_simulateV1") {
+        return Promise.reject(
+          new Error("the method eth_simulateV1 does not exist")
+        );
+      }
+      if (method === "eth_call") {
+        return Promise.resolve(TRUE);
+      }
+      if (method === "eth_estimateGas") {
+        return Promise.resolve("0x5208");
+      }
+      if (method === "debug_traceCall") {
+        const opts = (params[2] ?? {}) as {
+          stateOverrides?: Record<string, unknown>;
+        };
+        const carried = Object.keys(opts.stateOverrides ?? {}).length > 0;
+        const slot = carried ? "0xcarried" : "0xraw";
+        return Promise.resolve({
+          post: { [TOKEN]: { storage: { [slot]: "0x1" } } },
+        });
+      }
+      return Promise.reject(new Error(`unexpected ${method}`));
+    });
+
+    await run([
+      ...APPROVE_THEN_DEPOSIT,
+      {
+        contractAddress: TOKEN,
+        abi: ERC20_ABI,
+        functionName: "allowance",
+        functionArgs: JSON.stringify([FROM, VAULT]),
+      },
+    ]);
+
+    const calls = spies.send.mock.calls.filter(([m]) => m === "eth_call");
+    // Call 1 was traced on raw state, so only its "0xraw" write is carried.
+    expect(calls[1][1][2]).toEqual({
+      [TOKEN]: { stateDiff: { "0xraw": "0x1" } },
+    });
+    // Call 2's trace ran ON TOP of call 1's state, so the "0xcarried" diff
+    // it produced must reach call 2's eth_call. If the trace were run
+    // against raw latest state instead, this would show 0xraw again.
+    expect(calls[2][1][2]).toEqual({
+      [TOKEN]: { stateDiff: { "0xraw": "0x1", "0xcarried": "0x1" } },
+    });
+  });
+
   it("does not retry eth_simulateV1 for that chain again", async () => {
     fallbackNode();
 
