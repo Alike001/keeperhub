@@ -65,6 +65,7 @@ export type ActionConfigFieldBase = {
     | "pagerduty-service-select" // Services read live from the node's PagerDuty connection
     | "pagerduty-escalation-policy-select" // Escalation policies read live from that connection
     | "pagerduty-preview" // Read-only payload and incident preview for a PagerDuty node
+    | "pagerduty-test-node" // Sends one real alert through the selected service and takes it back
     | "pagerduty-backup-connection-select" // Existing Discord/Slack/Telegram connection used when a page fails
     | "pagerduty-priority-select" // Account incident priorities, read live (REST only)
     | "pagerduty-trigger-node-select"; // A Trigger Incident node in this workflow, for the dedup key

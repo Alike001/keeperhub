@@ -73,6 +73,22 @@ const changeEventRetryFields: ActionConfigFieldBase[] = retryFields.map(
       : field
 );
 
+/**
+ * A real round trip through the service the node names: open an alert,
+ * acknowledge it, resolve it.
+ *
+ * The connection test proves the credential works. It proves nothing about
+ * the service somebody just picked, and a service with no Events API v2
+ * integration, one that is disabled, one inside a maintenance window and one
+ * wired to the wrong rota all look the same in a dropdown. Without this the
+ * first time anybody learns which they have is during an incident.
+ */
+const testNodeField: ActionConfigFieldBase = {
+  key: "pagerdutyTestNode",
+  label: "Try it",
+  type: "pagerduty-test-node",
+};
+
 const dedupKeyField: ActionConfigFieldBase = {
   key: "dedupKey",
   label: "Dedup key",
@@ -394,6 +410,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
           label: "Preview",
           type: "pagerduty-preview",
         },
+        testNodeField,
       ],
     },
     {
@@ -437,6 +454,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
         // turns PagerDuty's unconditional 202 into an answer.
         verifyField("true"),
         { type: "group", label: "Delivery", fields: retryFields },
+        testNodeField,
       ],
     },
     {
@@ -481,6 +499,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
         // the 202 says nothing either way.
         verifyField("true"),
         { type: "group", label: "Delivery", fields: retryFields },
+        testNodeField,
       ],
     },
     {

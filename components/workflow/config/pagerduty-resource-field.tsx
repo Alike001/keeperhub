@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, Info, Loader2, RefreshCw } from "lucide-react";
+import { AlertTriangle, Info, Loader2, RefreshCw, Send } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import {
   Select,
@@ -634,6 +634,164 @@ export function PagerDutyTriggerNodeField({
           <code className="font-mono">{selected?.dedupKey}</code>). Put the
           same value in the dedup key field below, or this closes nothing.
         </Notice>
+      )}
+    </div>
+  );
+}
+
+type TestLeg = { step: string; ok: boolean; error?: string };
+type TestOutcome = {
+  ok: boolean;
+  legs: TestLeg[];
+  incidentUrl?: string;
+  warning?: string;
+  error?: string;
+};
+
+const LEG_LABEL: Record<string, string> = {
+  trigger: "Opened an alert",
+  acknowledge: "Acknowledged it",
+  resolve: "Resolved it",
+};
+
+/**
+ * Sends one real alert through the selected service and takes it back again.
+ *
+ * The reason to do this from the node rather than trust the connection test:
+ * a valid credential proves nothing about the service somebody just picked.
+ * A service with no Events API v2 integration, one that is disabled, one in a
+ * maintenance window and one that pages the wrong rota all look identical in
+ * the picker, and the first time anybody finds out is during an incident.
+ *
+ * It is explicit about what it does. The button says so before it is pressed,
+ * because it genuinely reaches on-call's service, and the round trip ends
+ * resolved so nothing is left for somebody to tidy up.
+ */
+export function PagerDutyTestNodeButton({
+  integrationId,
+  serviceId,
+  disabled,
+}: {
+  integrationId?: string;
+  serviceId?: string;
+  disabled?: boolean;
+}) {
+  const [running, setRunning] = useState(false);
+  const [outcome, setOutcome] = useState<TestOutcome | null>(null);
+
+  const ready = Boolean(integrationId && serviceId);
+
+  const runTest = async (): Promise<void> => {
+    if (!(ready && integrationId) || running) {
+      return;
+    }
+    setRunning(true);
+    setOutcome(null);
+    try {
+      const res = await fetch(
+        `/api/integrations/${encodeURIComponent(integrationId)}/pagerduty/test-node`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ serviceId }),
+        }
+      );
+      const body = (await res.json().catch(() => ({}))) as TestOutcome;
+      setOutcome(
+        res.ok
+          ? body
+          : {
+              ok: false,
+              legs: [],
+              error:
+                typeof body?.error === "string"
+                  ? body.error
+                  : `The test could not be run (HTTP ${res.status}).`,
+            }
+      );
+    } catch (error) {
+      setOutcome({
+        ok: false,
+        legs: [],
+        error: `Could not reach KeeperHub to run the test${error instanceof Error ? ` (${error.message})` : ""}. Nothing was sent to PagerDuty.`,
+      });
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  if (!ready) {
+    return (
+      <Notice tone="info">
+        Pick a connection and a service above, then you can send one real test
+        alert through them from here.
+      </Notice>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <button
+        className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 font-medium text-xs hover:bg-muted disabled:opacity-50"
+        disabled={disabled || running}
+        onClick={runTest}
+        type="button"
+      >
+        {running ? (
+          <Loader2 className="size-3.5 animate-spin" />
+        ) : (
+          <Send className="size-3.5" />
+        )}
+        {running ? "Sending" : "Send a test alert"}
+      </button>
+
+      <p className="ml-1 text-muted-foreground text-xs">
+        Opens a real alert on this service at the lowest severity, acknowledges
+        it and resolves it, in about a second. It uses a dedup key of its own,
+        so it cannot touch an alert a workflow opened, and it leaves nothing
+        open. If the service notifies on info-severity events, on-call may see
+        it briefly.
+      </p>
+
+      {outcome?.error && (
+        <Notice tone="warning">
+          <p>{outcome.error}</p>
+        </Notice>
+      )}
+
+      {outcome && !outcome.error && (
+        <Notice tone={outcome.ok ? "info" : "warning"}>
+          <div className="space-y-0.5">
+            {outcome.legs.map((leg) => (
+              <p key={leg.step}>
+                {leg.ok ? "Done: " : "Failed: "}
+                {LEG_LABEL[leg.step] ?? leg.step}
+                {leg.error ? ` - ${leg.error}` : ""}
+              </p>
+            ))}
+            {outcome.ok && (
+              <p className="pt-1">
+                This node can page {serviceId} and close what it opens.
+              </p>
+            )}
+            {outcome.incidentUrl && (
+              <p className="pt-1">
+                <a
+                  className="underline hover:text-foreground"
+                  href={outcome.incidentUrl}
+                  rel="noopener noreferrer"
+                  target="_blank"
+                >
+                  See it in PagerDuty
+                </a>
+              </p>
+            )}
+          </div>
+        </Notice>
+      )}
+
+      {outcome?.warning && (
+        <Notice tone="warning">{outcome.warning}</Notice>
       )}
     </div>
   );

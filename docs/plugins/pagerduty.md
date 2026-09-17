@@ -51,6 +51,22 @@ Add `incidents.read` if you want the acknowledge and resolve actions to check th
 
 If the account is ever renamed, update the subdomain field: the OAuth scope string carries it. An API token is unaffected by a rename, and nothing in a workflow has to change either way, because services and escalation policies are stored by id.
 
+### Checking it works before you need it
+
+Two checks, at the two points where something can be wrong.
+
+**Test Connection**, on the connection form when you add or edit it, runs `GET /services?limit=1` -- the exact permission every action needs. It tells a bad token from a wrong region from a rate limit from a network fault, and on a `401` it tries the other service region and says which way to set the checkbox.
+
+**Send a test alert**, on the node itself once a connection and a service are picked, does what the connection test cannot: it proves the *service* works. A valid credential says nothing about the service you just chose, and a service with no Events API v2 integration, a disabled one, one inside a maintenance window and one wired to the wrong rota all look identical in the dropdown.
+
+It opens a real alert on that service at `info` severity, acknowledges it, resolves it, and reports each leg. Three things make it safe to press:
+
+- It uses a dedup key of its own, so it can never merge into or close an alert one of your workflows opened.
+- It ends resolved, so nothing is left for anyone to tidy up.
+- The summary says what it is, in case the service notifies before the resolve lands. If the service is in maintenance or disabled, the result says the test proved the routing and proved nothing about anybody being paged.
+
+It does reach on-call's real service. On a service that notifies on `info` events, somebody may see it briefly.
+
 ### Every service needs an Events API v2 integration
 
 An event reaches a service through an integration on that service. In PagerDuty, open the service, go to **Integrations**, and add an **Events API v2** integration if it has none. The service picker marks services that cannot take events.

@@ -30,6 +30,7 @@ import {
   PagerDutyEscalationPolicyField,
   PagerDutyPriorityField,
   PagerDutyServiceField,
+  PagerDutyTestNodeButton,
   PagerDutyTriggerNodeField,
 } from "@/components/workflow/config/pagerduty-resource-field";
 import { TokenSelectField } from "@/components/workflow/config/token-select-field";
@@ -698,6 +699,17 @@ registerFieldRenderer(
     </div>
   )
 );
+
+registerFieldRenderer("pagerduty-test-node", ({ field, config, disabled }) => (
+  <div className="space-y-2" key={field.key}>
+    <Label className="ml-1">{field.label}</Label>
+    <PagerDutyTestNodeButton
+      disabled={disabled}
+      integrationId={configString(config.integrationId) || undefined}
+      serviceId={configString(config.pagerdutyServiceId) || undefined}
+    />
+  </div>
+));
 
 registerFieldRenderer("pagerduty-preview", ({ field, config, disabled }) => (
   <div className="space-y-2" key={field.key}>
