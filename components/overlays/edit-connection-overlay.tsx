@@ -402,21 +402,7 @@ export function EditConnectionForm({
               />
               <Label htmlFor={field.id}>{field.label}</Label>
             </div>
-            {(field.helpText || field.helpLink) && (
-              <p className="text-muted-foreground text-xs">
-                {field.helpText}
-                {field.helpLink && (
-                  <a
-                    className="underline hover:text-foreground"
-                    href={field.helpLink.url}
-                    rel="noopener noreferrer"
-                    target="_blank"
-                  >
-                    {field.helpLink.text}
-                  </a>
-                )}
-              </p>
-            )}
+            {help}
           </div>
         );
       }
