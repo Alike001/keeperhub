@@ -250,8 +250,15 @@ export async function POST(
   }
 
   const suppressed = serviceSwallowsEvents(routingKey.value.serviceStatus);
+  // "unknown" is `findIncidentByKey`'s sentinel for "the search returned
+  // nothing", not a status PagerDuty reports. The read-back happens
+  // milliseconds after the resolve and the Events API indexes in its own
+  // time, so an empty search is the ordinary case - warning on it told people
+  // an alert was open, and offered a link the response did not contain.
   const stillOpen =
-    incidentStatus !== undefined && incidentStatus !== "resolved";
+    incidentStatus !== undefined &&
+    incidentStatus !== "unknown" &&
+    incidentStatus !== "resolved";
   const response: PagerDutyTestNodeResponse = {
     ok: legs.every((leg) => leg.ok),
     legs,

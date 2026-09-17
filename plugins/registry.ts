@@ -91,6 +91,18 @@ export type ActionConfigFieldBase = {
   // Example value for AI prompt generation
   example?: string;
 
+  /**
+   * For a `select`: accept a `{{template}}` in place of one of the options.
+   *
+   * Off by default, and deliberately so. A select's options are a promise to
+   * the step that the value is one of them, and several steps lean on it:
+   * robinhood's `side` treats anything that is not "buy" as a sell, tempo's
+   * `broadcastMode` turns an unrecognised value into a hold that never fires.
+   * Only set this where the step resolves an unknown value to a documented
+   * default, and say so in the field's help text.
+   */
+  allowTemplate?: boolean;
+
   // For select fields: list of options
   options?: SelectOption[];
 

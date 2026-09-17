@@ -581,10 +581,17 @@ export function isDefaultClassification(
   return classification.code === DEFAULT_SYSTEM_ERROR_CODE;
 }
 
-const SYSTEM_CAUSED_CATEGORIES: ReadonlySet<string> = new Set([
-  ErrorCategory.DATABASE,
-  ErrorCategory.AUTH,
-  ErrorCategory.INFRASTRUCTURE,
+/**
+ * The two categories that mean "no rule matched", rather than a rule that
+ * matched and said something.
+ *
+ * A USER hint re-buckets only these. DATABASE, AUTH and INFRASTRUCTURE are
+ * also system-caused, but reaching one of them means a rule in `RULES`
+ * recognised the message, and that is better evidence than a step's blanket
+ * hint: a plugin that hints USER on every non-5xx would otherwise relabel a
+ * genuine database fault as the user's configuration.
+ */
+const UNMATCHED_CATEGORIES: ReadonlySet<string> = new Set([
   ErrorCategory.WORKFLOW_ENGINE,
   ErrorCategory.UNKNOWN,
 ]);
@@ -620,14 +627,12 @@ export function applyErrorClassHint(
   }
   if (hint === ExecutionErrorType.USER) {
     return {
-      // A step saying "this one is the user's fault" contradicts a
-      // system-caused category, and the category is what the dashboards sum.
       // An unmatched message falls through to WORKFLOW_ENGINE, which is on
-      // the system side by definition, so a revoked credential or a bad
-      // field was being counted as an executor fault. The user-caused
-      // categories are left alone: a rule that reached VALIDATION or
-      // AUTHORIZATION already knows better than this fallback does.
-      errorCategory: SYSTEM_CAUSED_CATEGORIES.has(classification.errorCategory)
+      // the system side by definition, so a revoked credential or a bad field
+      // was counted as an executor fault in the dashboards that sum by
+      // category. Where a rule did match, its answer stands - it knows more
+      // than this fallback does.
+      errorCategory: UNMATCHED_CATEGORIES.has(classification.errorCategory)
         ? ErrorCategory.CONFIGURATION
         : classification.errorCategory,
       errorType: ExecutionErrorType.USER,

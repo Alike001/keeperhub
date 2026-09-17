@@ -84,3 +84,42 @@ describe("clearing a stored connection value", () => {
     expect(removeClearedKeys(config, [])).toBe(config);
   });
 });
+
+/**
+ * Cases a review found after the first pass, each of which had a caller
+ * quietly covering for the helper.
+ */
+describe("what counts as a replacement", () => {
+  it("keeps a boolean sent for a cleared key", () => {
+    expect(
+      removeClearedKeys({ euRegion: "true" }, ["euRegion"], {
+        euRegion: true as unknown as string,
+      }).euRegion
+    ).toBe("true");
+  });
+
+  it("still clears when the only value sent is empty", () => {
+    expect(
+      removeClearedKeys({ apiToken: "old" }, ["apiToken"], { apiToken: "" })
+    ).toEqual({});
+  });
+
+  it("clears a key the caller sent nothing at all for", () => {
+    expect(removeClearedKeys({ apiToken: "old" }, ["apiToken"], {})).toEqual(
+      {}
+    );
+  });
+
+  /**
+   * Deleting is the only operation, so a key that names a prototype property
+   * cannot reach a setter - and the spread makes own data properties.
+   */
+  it("cannot be steered by a prototype key name", () => {
+    const result = removeClearedKeys({ apiToken: "old" }, [
+      "__proto__",
+      "constructor",
+    ]);
+    expect(result.apiToken).toBe("old");
+    expect(({} as Record<string, unknown>).apiToken).toBeUndefined();
+  });
+});

@@ -127,7 +127,13 @@ export function removeClearedKeys(
   const result: IntegrationConfig = { ...config };
   for (const key of clearedKeys) {
     const replacement = incomingConfig[key];
-    if (typeof replacement === "string" && replacement.length > 0) {
+    // Any value supplied in the same request wins, not only a non-empty
+    // string: a checkbox sends a boolean, and deleting a key the caller had
+    // just set would be the opposite of what they asked for. An empty string
+    // is not a value - it is what an untouched field sends.
+    const supplied =
+      replacement !== undefined && replacement !== null && replacement !== "";
+    if (supplied) {
       continue;
     }
     delete result[key];

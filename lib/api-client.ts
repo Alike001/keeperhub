@@ -476,14 +476,20 @@ export const integrationApi = {
   // that are merged server-side with stored secrets before testing
   testConnection: (
     integrationId: string,
-    configOverrides?: IntegrationConfig
+    configOverrides?: IntegrationConfig,
+    clearedConfigKeys?: string[]
   ) =>
     apiCall<{ status: "success" | "error"; message: string }>(
       `/api/integrations/${integrationId}/test`,
       {
         method: "POST",
-        ...(configOverrides
-          ? { body: JSON.stringify({ configOverrides }) }
+        ...(configOverrides || clearedConfigKeys?.length
+          ? {
+              body: JSON.stringify({
+                ...(configOverrides ? { configOverrides } : {}),
+                ...(clearedConfigKeys?.length ? { clearedConfigKeys } : {}),
+              }),
+            }
           : {}),
       }
     ),

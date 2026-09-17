@@ -337,6 +337,10 @@ const pagerDutyPlugin: IntegrationPlugin = {
           label: "Severity",
           type: "select",
           defaultValue: "error",
+          // Safe to template: `normaliseSeverity` resolves anything it does
+          // not recognise to "error", so a value from an upstream step cannot
+          // produce an invalid event. Documented in the help text below.
+          allowTemplate: true,
           options: [
             { value: "critical", label: "Critical" },
             { value: "error", label: "Error" },
@@ -344,7 +348,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
             { value: "info", label: "Info" },
           ],
           helpText:
-            "How bad the condition is. On a service using dynamic urgency, critical and error page at high urgency while warning and info do not; on other services the urgency rule decides. Priority (P1, P2) cannot be set on an event at all - PagerDuty assigns it from the service's Event Orchestration rules, or use Create Incident to set one directly.",
+            "How bad the condition is. Accepts a {{template}} from an earlier step; anything that does not resolve to one of these four is sent as error. On a service using dynamic urgency, critical and error page at high urgency while warning and info do not; on other services the urgency rule decides. Priority (P1, P2) cannot be set on an event at all - PagerDuty assigns it from the service's Event Orchestration rules, or use Create Incident to set one directly.",
         },
         {
           key: "source",
@@ -713,13 +717,16 @@ const pagerDutyPlugin: IntegrationPlugin = {
           label: "Urgency",
           type: "select",
           defaultValue: "service-default",
+          // Safe to template: anything that is not "high" or "low" falls
+          // through to the service's own urgency rule, which is the default.
+          allowTemplate: true,
           options: [
             { value: "service-default", label: "Service default" },
             { value: "high", label: "High" },
             { value: "low", label: "Low" },
           ],
           helpText:
-            "High urgency notifies on-call the way the escalation policy says; low urgency does not page. Left at the service default, PagerDuty decides from the service's urgency rule.",
+            "High urgency notifies on-call the way the escalation policy says; low urgency does not page. Left at the service default, PagerDuty decides from the service's urgency rule. Accepts a {{template}}; anything that does not resolve to high or low uses the service default.",
         },
         {
           key: "pagerdutyPriorityId",

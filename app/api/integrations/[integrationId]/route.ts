@@ -211,7 +211,11 @@ export async function PUT(
       before: existing ? { name: existing.name } : undefined,
       after: {
         name: integration.name,
-        configUpdated: body.config !== undefined,
+        configUpdated: touchesConfig,
+        // Named, because removing a credential is the one update here that
+        // destroys something. Key names only - never a value - so the log can
+        // tell a rotation from a deletion, and say which credential went.
+        ...(clearedConfigKeys.length > 0 ? { clearedConfigKeys } : {}),
       },
       metadata: buildAuditMetadata(request),
     });

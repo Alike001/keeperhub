@@ -280,9 +280,15 @@ export function EditConnectionForm({
     // Always test server-side. The stored credential never leaves the server,
     // and any value the user typed is merged over it before the test runs.
     const overrides = getNonEmptyConfig();
+    const cleared = [...clearedKeys];
+    // The pending removals go with it. The server fills anything not sent
+    // from what is stored, so a test that did not know about them
+    // authenticated with the credential the save was about to delete and came
+    // back green.
     return api.integration.testConnection(
       integration.id,
-      Object.keys(overrides).length > 0 ? overrides : undefined
+      Object.keys(overrides).length > 0 ? overrides : undefined,
+      cleared.length > 0 ? cleared : undefined
     );
   };
 
@@ -295,7 +301,9 @@ export function EditConnectionForm({
       return false;
     }
     const hasNewConfig = Object.values(config).some((v) => v && v.length > 0);
-    return !hasNewConfig;
+    // A pending removal changes what the connection will authenticate with,
+    // which is exactly what the test is for.
+    return !(hasNewConfig || clearedKeys.size > 0);
   };
 
   const handleSave = async () => {
@@ -504,12 +512,20 @@ export function EditConnectionForm({
         (group) => group.firstFieldId === field.id
       );
       const locked = isFieldLocked(field, exclusive);
-      // Offered on every stored credential, because the browser is not told
-      // which ones hold a value - and asking for one that was already empty
-      // costs nothing. It is the only way to take a credential away: a blank
-      // field reads as "unchanged", so a leaked token that somebody thought
-      // they had rotated away went on authorising every run.
-      const removable = secretKeys.has(field.configKey);
+      // Only where an alternative credential exists on the same form, which
+      // is the case this is for: PagerDuty stores a token and a scoped OAuth
+      // app, prefers the token, and a blank field reads as "unchanged" - so a
+      // leaked token somebody thought they had rotated away went on
+      // authorising every run.
+      //
+      // Deliberately not offered on a connection's sole credential. Removing
+      // Discord's webhook URL, Slack's token or Telegram's bot token leaves a
+      // connection that still lists and still selects on a node and fails
+      // every run, and "delete the connection" is the honest way to do that.
+      const removable =
+        secretKeys.has(field.configKey) &&
+        Boolean(field.exclusiveGroup) &&
+        exclusive.groups.length > 1;
       const cleared = clearedKeys.has(field.configKey);
       if (!(heading || locked || removable)) {
         return rendered;

@@ -543,12 +543,39 @@ describe("applyErrorClassHint", () => {
     });
   });
 
-  it("overrides to user with no code, keeping the classifier category", () => {
+  /**
+   * A message no rule recognises lands in workflow_engine, which is a
+   * system-caused category: a step hinting "user" was therefore filing a
+   * revoked credential alongside real executor faults, where the dashboards
+   * that sum by category could not tell them apart.
+   */
+  it("overrides to user and re-buckets a category that means 'no rule matched'", () => {
     const base = classifyExecutionError("some novel provider message");
+    expect(base.errorCategory).toBe(ErrorCategory.WORKFLOW_ENGINE);
+
     const hinted = applyErrorClassHint(base, "user");
     expect(hinted.errorType).toBe("user");
     expect(hinted.code).toBeNull();
-    expect(hinted.errorCategory).toBe(base.errorCategory);
+    expect(hinted.errorCategory).toBe(ErrorCategory.CONFIGURATION);
+  });
+
+  /**
+   * Where a rule did match, it stands. A plugin that hints "user" on every
+   * non-5xx must not be able to relabel a recognised database or auth fault
+   * as somebody's configuration.
+   */
+  it("leaves a category a rule actually matched alone under a user hint", () => {
+    for (const message of [
+      "Execution timed out",
+      "HTTP request failed: fetch failed: read ECONNRESET",
+    ]) {
+      const base = classifyExecutionError(message);
+      const hinted = applyErrorClassHint(base, "user");
+      expect(hinted.errorType).toBe("user");
+      if (base.errorCategory !== ErrorCategory.WORKFLOW_ENGINE) {
+        expect(hinted.errorCategory).toBe(base.errorCategory);
+      }
+    }
   });
 
   it("keeps a system hint coded (classifier code, or the default)", () => {

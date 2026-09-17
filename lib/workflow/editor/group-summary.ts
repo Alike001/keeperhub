@@ -12,15 +12,11 @@
  * an untouched one, and counting those would put a badge on every group on
  * every node and say nothing.
  *
- * `example` counts as a default as well as `defaultValue`, because
- * `generateAIActionPrompts` seeds it into every generated node: a value equal
- * to the example cannot be told apart from one nobody touched. Without this,
- * every AI-built PagerDuty node badged its retry settings as chosen. The cost
- * is that somebody who types the example by hand gets no badge, which is the
- * right way round - the badge says this group differs from an untouched one,
- * and that node does not. `placeholder` is deliberately not included: it is a
- * hint, and From email's is a sample address rather than a value the step
- * would ever apply.
+ * An `example` that is identical to the field's `placeholder` counts as a
+ * default too, because `generateAIActionPrompts` seeds `example` into every
+ * generated node and a plugin writing the same string in both is saying that
+ * value is what the step applies anyway. An example that differs from the
+ * placeholder is a sample, not a default, and still counts as chosen.
  */
 
 import { evaluateShowWhen } from "@/lib/workflow/editor/show-when";
@@ -74,9 +70,24 @@ export function fieldIsSet(
   if (isEmpty(value)) {
     return false;
   }
-  const declaredDefault = field.defaultValue ?? field.example;
-  if (declaredDefault !== undefined) {
-    return String(value) !== String(declaredDefault);
+  if (field.defaultValue !== undefined) {
+    return String(value) !== String(field.defaultValue);
+  }
+  // A field can document its effective default without declaring one: the step
+  // applies it, and the form shows it as the placeholder. When `example`
+  // matches that placeholder exactly, the plugin is saying "this is what you
+  // get anyway", and `generateAIActionPrompts` seeds it into every generated
+  // node - so a value equal to it cannot be told apart from one nobody chose.
+  //
+  // The equality matters. math/aggregate declares `example: "2"` against
+  // `placeholder: "e.g. 2"`, where blank and 2 are genuinely different at run
+  // time; treating that example as a default hid a real setting.
+  if (
+    field.example !== undefined &&
+    field.placeholder !== undefined &&
+    field.example === field.placeholder
+  ) {
+    return String(value) !== String(field.example);
   }
   return true;
 }

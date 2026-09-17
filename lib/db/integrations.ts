@@ -509,18 +509,19 @@ export async function updateIntegration(
     updateData.name = updates.name;
   }
 
-  if (updates.config !== undefined) {
+  if (updates.config !== undefined || updates.clearedConfigKeys?.length) {
     // Clients never receive stored secrets back, so an unchanged secret
     // arrives blank. Merge for every type or the update would erase it.
+    const incoming = updates.config ?? {};
     const merged = existingIntegration
       ? mergeSecretConfig(
           existingIntegration.config,
-          updates.config,
+          incoming,
           existingIntegration.type
         )
-      : { ...updates.config };
+      : { ...incoming };
     updateData.config = encryptConfig(
-      removeClearedKeys(merged, updates.clearedConfigKeys ?? [], updates.config)
+      removeClearedKeys(merged, updates.clearedConfigKeys ?? [], incoming)
     );
   }
 

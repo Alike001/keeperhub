@@ -362,14 +362,15 @@ function validateFieldValue(
         return { valid: false, expected: "select option", received: value };
       }
       // A template resolves at run time, so its text is never one of the
-      // options and there is nothing to check here. Without this a node whose
-      // severity or urgency comes from an upstream step cannot be saved at
-      // all, though the step resolves it and the docs offer it - the
-      // protocol-* and json cases already make the same exception.
+      // options and cannot be checked here. That is only allowed where the
+      // field opted in: a select's options are a promise to the step, and
+      // waiving it for every select in the product would let a template steer
+      // fields like robinhood's buy/sell `side`, which treats anything that
+      // is not "buy" as a sell.
       if (
         field.options &&
         field.options.length > 0 &&
-        !valueContainsTemplate(value) &&
+        !(field.allowTemplate && valueContainsTemplate(value)) &&
         !field.options.some((option) => option.value === String(value))
       ) {
         return {
