@@ -10,30 +10,18 @@
  * is the exact permission every action needs: a token that cannot list
  * services cannot resolve a routing key, however valid it is.
  */
-const API_HOST = "https://api.pagerduty.com";
-const API_HOST_EU = "https://api.eu.pagerduty.com";
-const IDENTITY_TOKEN_URL = "https://identity.pagerduty.com/oauth/token";
+import {
+  isEuRegionFlag,
+  isHeaderSafeToken,
+  PAGERDUTY_ACCEPT_V2,
+  PAGERDUTY_API_HOST,
+  PAGERDUTY_API_HOST_EU,
+  PAGERDUTY_IDENTITY_TOKEN_URL,
+  PAGERDUTY_REQUEST_TIMEOUT_MS,
+  pagerDutyOAuthScope,
+} from "./event-payload";
+
 const OAUTH_SCOPES = "services.read escalation_policies.read";
-/**
- * Every request here is bounded, as every request the steps make is.
- *
- * Without it a host that accepts the connection and never answers holds Test
- * Connection open for as long as the platform allows, with a spinner and no
- * way to tell it from a slow account. The 401 path makes a second round trip
- * to probe the other service region, so the exposure is two of these, not one.
- */
-const REQUEST_TIMEOUT_MS = 10_000;
-const ACCEPT_V2 = "application/vnd.pagerduty+json;version=2";
-/** Printable ASCII only, mirroring the guard the steps apply. */
-const HEADER_SAFE_TOKEN = /^[\x21-\x7e]{1,256}$/;
-/** The region flag reaches this file as a string from a form or an env var. */
-const TRUTHY_REGION_FLAGS: ReadonlySet<string> = new Set([
-  "true",
-  "1",
-  "yes",
-  "eu",
-  "on",
-]);
 
 type TestResult = { success: boolean; error?: string };
 
@@ -48,7 +36,7 @@ async function resolveHeader(
     // sending someone to check their network over a fixable paste. The steps
     // already refuse it with this message; Test Connection is where somebody
     // is most likely to have just pasted it.
-    if (!HEADER_SAFE_TOKEN.test(token)) {
+    if (!isHeaderSafeToken(token)) {
       return {
         success: false,
         error:
@@ -69,16 +57,16 @@ async function resolveHeader(
     };
   }
 
-  const response = await fetch(IDENTITY_TOKEN_URL, {
+  const response = await fetch(PAGERDUTY_IDENTITY_TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       grant_type: "client_credentials",
       client_id: clientId,
       client_secret: clientSecret,
-      scope: `as_account-${region}.${subdomain} ${OAUTH_SCOPES}`,
+      scope: pagerDutyOAuthScope(region === "eu", subdomain, OAUTH_SCOPES),
     }).toString(),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal: AbortSignal.timeout(PAGERDUTY_REQUEST_TIMEOUT_MS),
   });
 
   if (!response.ok) {
@@ -117,8 +105,8 @@ async function listServices(
 ): Promise<Response> {
   return await fetch(`${host}/services?limit=1`, {
     method: "GET",
-    headers: { Authorization: header, Accept: ACCEPT_V2 },
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    headers: { Authorization: header, Accept: PAGERDUTY_ACCEPT_V2 },
+    signal: AbortSignal.timeout(PAGERDUTY_REQUEST_TIMEOUT_MS),
   });
 }
 
@@ -138,7 +126,7 @@ async function describeAuthFailure(
   }
 
   const otherRegion = region === "eu" ? "us" : "eu";
-  const otherHost = otherRegion === "eu" ? API_HOST_EU : API_HOST;
+  const otherHost = otherRegion === "eu" ? PAGERDUTY_API_HOST_EU : PAGERDUTY_API_HOST;
   try {
     const auth = await resolveHeader(credentials, otherRegion);
     if ("header" in auth) {
@@ -160,12 +148,10 @@ export async function testPagerDuty(
   credentials: Record<string, string>
 ): Promise<TestResult> {
   try {
-    const region = TRUTHY_REGION_FLAGS.has(
-      credentials.PAGERDUTY_EU_REGION?.trim().toLowerCase() ?? ""
-    )
+    const region = isEuRegionFlag(credentials.PAGERDUTY_EU_REGION)
       ? "eu"
       : "us";
-    const host = region === "eu" ? API_HOST_EU : API_HOST;
+    const host = region === "eu" ? PAGERDUTY_API_HOST_EU : PAGERDUTY_API_HOST;
 
     const auth = await resolveHeader(credentials, region);
     if (!("header" in auth)) {

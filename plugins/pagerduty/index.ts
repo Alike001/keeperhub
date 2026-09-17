@@ -505,6 +505,8 @@ const pagerDutyPlugin: IntegrationPlugin = {
           description:
             "Seconds this node waited before sending, when it was asked to wait",
         },
+        { field: "action", description: "acknowledge or resolve" },
+        { field: "message", description: "PagerDuty's own response message" },
       ],
       configFields: [
         serviceField,
@@ -558,6 +560,8 @@ const pagerDutyPlugin: IntegrationPlugin = {
           description:
             "Seconds this node waited before sending, when it was asked to wait",
         },
+        { field: "action", description: "acknowledge or resolve" },
+        { field: "message", description: "PagerDuty's own response message" },
       ],
       configFields: [
         serviceField,

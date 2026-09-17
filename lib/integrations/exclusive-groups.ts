@@ -47,9 +47,26 @@ function hasValue(value: unknown): boolean {
     : value !== undefined && value !== null && value !== false;
 }
 
+/**
+ * Resolve which alternative is in use.
+ *
+ * `unknownKeys` are keys whose value the caller cannot see. The edit form is
+ * the case: credential values are never sent to the browser, so a stored API
+ * token reads as blank there. Without this, typing an OAuth client id on a
+ * connection that already holds a token made the OAuth group the only filled
+ * one - the form then announced the scoped app as in use and held the token
+ * field shut, while at run time `resolveAuthHeader` still preferred the token
+ * and authorised every call with it. The screen said the opposite of what
+ * would happen, and "Use this instead" could not correct it, because an empty
+ * value is stripped before the update and never clears a stored secret.
+ *
+ * A group holding an unknown key is therefore treated as possibly filled,
+ * which makes the state ambiguous and locks nothing.
+ */
 export function resolveExclusiveGroups(
   fields: readonly ExclusiveField[],
-  config: Record<string, unknown>
+  config: Record<string, unknown>,
+  unknownKeys: ReadonlySet<string> = new Set()
 ): ExclusiveGroupState {
   const groups: ExclusiveGroup[] = [];
 
@@ -71,11 +88,20 @@ export function resolveExclusiveGroups(
     });
   }
 
+  let anyUnknown = false;
   for (const group of groups) {
-    group.filled = group.configKeys.some((key) => hasValue(config[key]));
+    const unknown = group.configKeys.some((key) => unknownKeys.has(key));
+    anyUnknown = anyUnknown || unknown;
+    group.filled =
+      unknown || group.configKeys.some((key) => hasValue(config[key]));
   }
 
   const filled = groups.filter((group) => group.filled);
+  if (anyUnknown) {
+    // Nothing can be locked and nothing can be declared in use, because the
+    // values that would decide it are not here.
+    return { groups, activeGroupId: undefined, ambiguous: false };
+  }
   return {
     groups,
     // Field order is the precedence the run time applies, so the first filled

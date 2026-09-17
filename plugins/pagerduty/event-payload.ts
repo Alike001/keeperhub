@@ -6,6 +6,72 @@
  * into a client bundle. One builder, one set of limits, one place to change
  * them.
  */
+/**
+ * Everything both the steps and the client-bundled connection test need.
+ *
+ * `test.ts` cannot import `pagerduty-core.ts`, which is server-only, and used
+ * to answer that by keeping its own copies of these. Copies are how Test
+ * Connection starts disagreeing with the steps as soon as one side moves,
+ * which is the exact class of problem that file exists to catch before a run
+ * does. This module already has the constraint in its own header - no network,
+ * no server-only imports - so it is the one definition both can read.
+ */
+export const PAGERDUTY_API_HOST = "https://api.pagerduty.com";
+export const PAGERDUTY_API_HOST_EU = "https://api.eu.pagerduty.com";
+export const PAGERDUTY_EVENTS_HOST = "https://events.pagerduty.com";
+export const PAGERDUTY_EVENTS_HOST_EU = "https://events.eu.pagerduty.com";
+export const PAGERDUTY_IDENTITY_TOKEN_URL =
+  "https://identity.pagerduty.com/oauth/token";
+export const PAGERDUTY_ACCEPT_V2 = "application/vnd.pagerduty+json;version=2";
+export const PAGERDUTY_REQUEST_TIMEOUT_MS = 10_000;
+
+/** Printable ASCII only: anything else cannot be sent as a header value. */
+const HEADER_SAFE_TOKEN = /^[\x21-\x7e]{1,256}$/;
+
+export function isHeaderSafeToken(token: string): boolean {
+  return HEADER_SAFE_TOKEN.test(token);
+}
+
+/**
+ * The region flag reaches the runtime as a string from the connection
+ * checkbox, from an environment variable on a self-hosted install, and from an
+ * MCP caller. Only the checkbox is guaranteed to write "true".
+ */
+const TRUTHY_REGION_FLAGS: ReadonlySet<string> = new Set([
+  "true",
+  "1",
+  "yes",
+  "eu",
+  "on",
+]);
+
+export function isEuRegionFlag(raw: string | undefined): boolean {
+  return TRUTHY_REGION_FLAGS.has(raw?.trim().toLowerCase() ?? "");
+}
+
+/** The scope string PagerDuty's client-credentials grant expects. */
+export function pagerDutyOAuthScope(
+  euRegion: boolean,
+  subdomain: string,
+  scopes: string
+): string {
+  return `as_account-${euRegion ? "eu" : "us"}.${subdomain} ${scopes}`;
+}
+
+/**
+ * Where a PagerDuty object lives in PagerDuty's own UI.
+ *
+ * Here rather than in the picker so the test that pins the path encoding and
+ * the region placement exercises the function the link is built from.
+ */
+export function pagerDutyServiceUrl(
+  subdomain: string,
+  euRegion: boolean | undefined,
+  serviceId: string
+): string {
+  return `https://${subdomain}${euRegion ? ".eu" : ""}.pagerduty.com/services/${encodeURIComponent(serviceId)}`;
+}
+
 export type PagerDutySeverity = "critical" | "error" | "warning" | "info";
 
 /** PagerDuty truncates a longer summary itself; doing it here keeps the alert title readable. */

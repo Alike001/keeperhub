@@ -1,4 +1,5 @@
 import "server-only";
+import { isValidDiscordWebhookUrl } from "@/lib/notifications/messaging-endpoints";
 import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { fetchCredentials } from "@/lib/credential-fetcher";
@@ -46,7 +47,6 @@ export type SendDiscordMessageInput = StepInput &
     integrationId: string;
   };
 
-const DISCORD_WEBHOOK_HOSTS = new Set(["discord.com", "discordapp.com"]);
 
 /**
  * Retry policy for transient Discord failures. Parsing, clamping, the
@@ -92,26 +92,6 @@ const LOG_LABELS = {
  * internal host. The safeFetch SSRF guard is the network-layer backstop;
  * this rejects an off-host URL before any request is attempted.
  */
-function isValidDiscordWebhookUrl(rawUrl: string): boolean {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    return false;
-  }
-  if (parsed.protocol !== "https:") {
-    return false;
-  }
-  const host = parsed.hostname.toLowerCase();
-  const hostAllowed =
-    DISCORD_WEBHOOK_HOSTS.has(host) ||
-    host.endsWith(".discord.com") ||
-    host.endsWith(".discordapp.com");
-  if (!hostAllowed) {
-    return false;
-  }
-  return parsed.pathname.startsWith("/api/webhooks/");
-}
 
 /**
  * One attempt outcome, kept separate from the step result so the retry loop

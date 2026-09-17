@@ -21,16 +21,15 @@
  * caller's business, not this file's.
  */
 import { fetchCredentials } from "@/lib/credential-fetcher";
+import {
+  isValidDiscordWebhookUrl,
+  SLACK_POST_MESSAGE_URL,
+  telegramSendMessageUrl,
+} from "@/lib/notifications/messaging-endpoints";
 import { safeFetch } from "@/lib/safe-fetch";
 import { getErrorMessage } from "@/lib/utils";
 
 const REQUEST_TIMEOUT_MS = 10_000;
-const SLACK_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage";
-const TELEGRAM_API_HOST = "https://api.telegram.org";
-const DISCORD_WEBHOOK_HOSTS: ReadonlySet<string> = new Set([
-  "discord.com",
-  "discordapp.com",
-]);
 
 export type BackupChannel = "discord" | "slack" | "telegram";
 
@@ -57,32 +56,13 @@ function detectChannel(credentials: Credentials): BackupChannel | null {
   return null;
 }
 
-/** Host check on the stored webhook, the same shape the Discord step applies. */
-function isDiscordWebhook(rawUrl: string): boolean {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    return false;
-  }
-  if (parsed.protocol !== "https:") {
-    return false;
-  }
-  const host = parsed.hostname.toLowerCase();
-  const allowed =
-    DISCORD_WEBHOOK_HOSTS.has(host) ||
-    host.endsWith(".discord.com") ||
-    host.endsWith(".discordapp.com");
-  return allowed && parsed.pathname.startsWith("/api/webhooks/");
-}
-
 async function postDiscord(
   credentials: Credentials,
   plugin: string,
   message: string
 ): Promise<BackupOutcome> {
   const webhookUrl = credentials.webhookUrl ?? "";
-  if (!isDiscordWebhook(webhookUrl)) {
+  if (!isValidDiscordWebhookUrl(webhookUrl)) {
     return {
       attempted: true,
       delivered: false,
@@ -161,7 +141,7 @@ async function postTelegram(
     };
   }
   const response = await safeFetch(
-    `${TELEGRAM_API_HOST}/bot${credentials.TELEGRAM_BOT_TOKEN}/sendMessage`,
+    telegramSendMessageUrl(credentials.TELEGRAM_BOT_TOKEN ?? ""),
     {
       plugin,
       method: "POST",

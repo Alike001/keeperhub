@@ -20,7 +20,7 @@
  * config value reaches the host, so the plugin stays `egress: "fixed-host"`
  * and a workflow can never redirect it.
  */
-import { safeFetch } from "@/lib/safe-fetch";
+import { safeFetch, SsrfBlockedError } from "@/lib/safe-fetch";
 import { getErrorMessage } from "@/lib/utils";
 import {
   isConnectionFailure,
@@ -30,6 +30,16 @@ import {
 import type { PagerDutyCredentials } from "../credentials";
 import {
   describeTrims,
+  isEuRegionFlag,
+  isHeaderSafeToken,
+  PAGERDUTY_ACCEPT_V2,
+  PAGERDUTY_API_HOST,
+  PAGERDUTY_API_HOST_EU,
+  PAGERDUTY_EVENTS_HOST,
+  PAGERDUTY_EVENTS_HOST_EU,
+  PAGERDUTY_IDENTITY_TOKEN_URL,
+  PAGERDUTY_REQUEST_TIMEOUT_MS,
+  pagerDutyOAuthScope,
   type PagerDutyEventBody,
   type Trim,
   trimToLimit,
@@ -49,19 +59,21 @@ export {
   normaliseSeverity,
   type PagerDutyEventBody,
   type PagerDutySeverity,
+  pagerDutyServiceUrl,
   parseLinks,
   truncateRunes,
 } from "../event-payload";
 
-const EVENTS_HOST = "https://events.pagerduty.com";
-const EVENTS_HOST_EU = "https://events.eu.pagerduty.com";
-const API_HOST = "https://api.pagerduty.com";
-const API_HOST_EU = "https://api.eu.pagerduty.com";
-const IDENTITY_TOKEN_URL = "https://identity.pagerduty.com/oauth/token";
+// Shared with the client-bundled connection test, so the two cannot drift.
+const EVENTS_HOST = PAGERDUTY_EVENTS_HOST;
+const EVENTS_HOST_EU = PAGERDUTY_EVENTS_HOST_EU;
+const API_HOST = PAGERDUTY_API_HOST;
+const API_HOST_EU = PAGERDUTY_API_HOST_EU;
+const IDENTITY_TOKEN_URL = PAGERDUTY_IDENTITY_TOKEN_URL;
 
-const REQUEST_TIMEOUT_MS = 10_000;
+const REQUEST_TIMEOUT_MS = PAGERDUTY_REQUEST_TIMEOUT_MS;
 const PLUGIN = "pagerduty";
-const ACCEPT_V2 = "application/vnd.pagerduty+json;version=2";
+const ACCEPT_V2 = PAGERDUTY_ACCEPT_V2;
 /**
  * The two scopes every action needs: reading services, which includes their
  * integrations and so the routing key, and reading escalation policies.
@@ -140,6 +152,18 @@ export type PagerDutyFailure = {
   retryable: boolean;
   /** Milliseconds PagerDuty asked us to wait, when it said. */
   retryAfterMs?: number;
+  /**
+   * Who can fix it, when the status cannot say.
+   *
+   * A failure with no HTTP status used to be read as a network fault, which is
+   * right for a request that got no answer and wrong for every configuration
+   * fault this plugin builds by hand - a deleted connection, a token pasted
+   * with a line break, a service with no Events API v2 integration. Those were
+   * reported as EXTERNAL, and `applyErrorClassHint` also forces the error
+   * category to EXTERNAL_SERVICE, so one misconfigured node read as PagerDuty
+   * having been down in the execution metrics.
+   */
+  fault?: "user" | "external";
 };
 
 export type PagerDutyResult<T> =
@@ -153,9 +177,6 @@ export type PagerDutyResult<T> =
  * a header at all, and gives a clear error instead of a confusing 404.
  */
 const PAGERDUTY_ID = /^[A-Za-z0-9_-]{2,64}$/;
-/** Printable ASCII only: anything else cannot be sent as a header value. */
-const HEADER_SAFE_TOKEN = /^[\x21-\x7e]{1,256}$/;
-
 export function isPagerDutyId(value: string): boolean {
   return PAGERDUTY_ID.test(value);
 }
@@ -176,6 +197,7 @@ function invalidId(kind: string, value: string): PagerDutyFailure {
   return {
     message: `"${value}" is not a valid PagerDuty ${kind} id. Pick the ${kind} again on this node rather than typing an id by hand.`,
     retryable: false,
+    fault: "user",
   };
 }
 
@@ -188,17 +210,8 @@ function invalidId(kind: string, value: string): PagerDutyFailure {
  * PAGERDUTY_EU_REGION=1 as US would send every event to the wrong region and
  * fail as a 401, which looks exactly like a bad token.
  */
-const TRUTHY_REGION_FLAGS: ReadonlySet<string> = new Set([
-  "true",
-  "1",
-  "yes",
-  "eu",
-  "on",
-]);
-
 export function isEuRegion(credentials: PagerDutyCredentials): boolean {
-  const raw = credentials.PAGERDUTY_EU_REGION?.trim().toLowerCase() ?? "";
-  return TRUTHY_REGION_FLAGS.has(raw);
+  return isEuRegionFlag(credentials.PAGERDUTY_EU_REGION);
 }
 
 export function eventsUrl(
@@ -328,8 +341,11 @@ export function oauthScopeString(
   credentials: PagerDutyCredentials,
   scopes: string
 ): string {
-  const region = isEuRegion(credentials) ? "eu" : "us";
-  return `as_account-${region}.${credentials.PAGERDUTY_SUBDOMAIN ?? ""} ${scopes}`;
+  return pagerDutyOAuthScope(
+    isEuRegion(credentials),
+    credentials.PAGERDUTY_SUBDOMAIN ?? "",
+    scopes
+  );
 }
 
 async function fetchOAuthHeader(
@@ -434,13 +450,14 @@ export async function resolveAuthHeader(
     // A token pasted with a stray newline would make undici throw on the
     // header, which the fetch catch would report as "could not reach
     // PagerDuty" - a misleading answer to a fixable mistake.
-    if (!HEADER_SAFE_TOKEN.test(token)) {
+    if (!isHeaderSafeToken(token)) {
       return {
         ok: false,
         failure: {
           message:
             "The PagerDuty API token contains characters that cannot go in a request header - it was probably pasted with a line break or a space. Re-copy it in Settings, Connections.",
           retryable: false,
+    fault: "user",
         },
       };
     }
@@ -465,6 +482,7 @@ export async function resolveAuthHeader(
         message:
           "No PagerDuty credentials are available for this node. Either the connection holds none (add a REST API token, or an OAuth client id, secret and subdomain), or it has been removed, or the person who created it has been deactivated - which freezes the connections they added. Recreating the connection under an active member fixes the last case; editing it does not, because it stays owned by its creator.",
         retryable: false,
+        fault: "user",
       },
     };
   }
@@ -535,7 +553,12 @@ async function restGet<T>(
     });
 
     if (!response.ok) {
-      if (response.status === 401) {
+      // 403 as well as 401. The fallback path caches a minimal-scope token
+      // under the key of the scope set PagerDuty refused, so a call needing
+      // more comes back 403 - and without this it would keep reading that same
+      // token until it expired, including after somebody granted the missing
+      // scope, which is exactly what the 403 message tells them to do.
+      if (response.status === 401 || response.status === 403) {
         invalidateOAuthToken(credentials);
       }
       return {
@@ -551,15 +574,17 @@ async function restGet<T>(
 
     return { ok: true, value: (await response.json()) as T };
   } catch (error) {
-    // A read is safe to repeat whatever went wrong, but only a fault that
-    // looks transient is worth repeating - a DNS failure or a refused
-    // connection will answer the same way on the next attempt within the
-    // node's retry window.
+    // `isConnectionFailure` excludes timeouts and resets on purpose: it exists
+    // so a non-idempotent POST is never repeated once the body may have gone.
+    // This is a GET. Repeating it is free, and the timeout above is the most
+    // likely transient fault on this path - classifying it as final made the
+    // node's retry setting buy nothing on a slow PagerDuty, and a slow service
+    // read failed the page outright. Only a blocked host is hopeless.
     return {
       ok: false,
       failure: {
         message: `Could not reach PagerDuty: ${getErrorMessage(error)}`,
-        retryable: isConnectionFailure(error),
+        retryable: !(error instanceof SsrfBlockedError),
       },
     };
   }
@@ -866,6 +891,7 @@ export async function resolveRoutingKey(
       failure: {
         message: `PagerDuty service ${serviceId} has no Events API v2 integration, so it cannot accept events. Add one in PagerDuty under Service, Integrations.`,
         retryable: false,
+        fault: "user",
       },
     };
   }
@@ -886,6 +912,7 @@ export async function resolveRoutingKey(
         message:
           "PagerDuty did not return the integration key for this service. The credentials may lack permission to read it.",
         retryable: false,
+        fault: "user",
       },
     };
   }
@@ -1041,8 +1068,12 @@ export async function postEventWithRetries(params: {
  * 5xx is PagerDuty's.
  */
 export function failureIsExternal(failure: PagerDutyFailure): boolean {
+  // Set at the point the failure was built, which is the only place that knows.
+  if (failure.fault) {
+    return failure.fault === "external";
+  }
   if (failure.status === undefined) {
-    // No status means the request never got an answer: a network fault.
+    // No status and nobody said otherwise: the request got no answer.
     return true;
   }
   return failure.status >= 500 || isRetryableHttpStatus(failure.status);
@@ -1121,6 +1152,7 @@ export async function createIncident(
         message:
           "The From email is not a valid email address. PagerDuty sends it as a request header, so it has to be one.",
         retryable: false,
+        fault: "user",
       },
     };
   }

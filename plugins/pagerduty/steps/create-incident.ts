@@ -14,6 +14,7 @@ import {
   describeTrims,
   failureIsExternal,
   getEscalationPolicy,
+  type PagerDutyFailure,
 } from "./pagerduty-core";
 
 /**
@@ -86,7 +87,10 @@ async function resolveEscalationPolicy(
   fallback: boolean
 ): Promise<
   | { ok: true; policyId?: string; fellBack: boolean }
-  | { ok: false; error: string }
+  // `failure` carries a read that did not complete - a rate limit, a 5xx -
+  // which is a different thing from a policy that is genuinely gone and has
+  // to be handled like any other failed call. `error` is the gone case.
+  | { ok: false; error: string; failure?: PagerDutyFailure }
 > {
   const wanted = policyId?.trim();
   if (!wanted) {
@@ -95,7 +99,12 @@ async function resolveEscalationPolicy(
 
   const policy = await getEscalationPolicy(credentials, wanted);
   if (!policy.ok) {
-    return { ok: false, error: policy.failure.message };
+    // The read failed rather than answering "no such policy". Hand the failure
+    // up so it goes through the same failOnError and fault-domain handling as
+    // the create call; returning it as a bare error meant a 429 from PagerDuty
+    // failed the run whatever the switch said, and was recorded as the
+    // author's mistake.
+    return { ok: false, error: policy.failure.message, failure: policy.failure };
   }
   if (policy.value) {
     return { ok: true, policyId: wanted, fellBack: false };
@@ -158,6 +167,27 @@ async function stepHandler(
     resolveFailOnError(input.fallbackToServicePolicy)
   );
   if (!policy.ok) {
+    if (policy.failure) {
+      // A read that did not complete: same treatment as any other failed call.
+      logUserError(
+        ErrorCategory.EXTERNAL_SERVICE,
+        "[PagerDuty] Could not read the escalation policy",
+        policy.error,
+        LOG_LABELS
+      );
+      if (!failOnError) {
+        return { success: true, delivered: false, error: policy.error };
+      }
+      return {
+        success: false,
+        error: policy.error,
+        errorClass: failureIsExternal(policy.failure)
+          ? ExecutionErrorType.EXTERNAL
+          : ExecutionErrorType.USER,
+      };
+    }
+    // The policy is gone and the fallback is off: the author's to fix, and a
+    // hard failure by their own choice.
     return {
       success: false,
       error: policy.error,

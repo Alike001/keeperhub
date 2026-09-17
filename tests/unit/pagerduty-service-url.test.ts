@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
+import { pagerDutyServiceUrl } from "@/plugins/pagerduty/event-payload";
 import { subdomainFromHtmlUrl } from "@/plugins/pagerduty/steps/pagerduty-core";
 
 /**
@@ -9,18 +10,13 @@ import { subdomainFromHtmlUrl } from "@/plugins/pagerduty/steps/pagerduty-core";
  * not from the service's own `html_url` - the case it exists for is a service
  * the account no longer lists, which therefore has no `html_url` here.
  *
+ * It imports the builder the picker uses rather than a copy of it, so a change
+ * to the path encoding or the region placement is caught here.
+ *
  * The one part that has to be right is the account, and the picker learns it
  * by parsing the url of some other object PagerDuty returned. These pin that
  * round trip: the host this builds must be the host PagerDuty itself uses.
  */
-function pagerDutyServiceUrl(
-  subdomain: string,
-  euRegion: boolean | undefined,
-  serviceId: string
-): string {
-  return `https://${subdomain}${euRegion ? ".eu" : ""}.pagerduty.com/services/${encodeURIComponent(serviceId)}`;
-}
-
 describe("the PagerDuty service link", () => {
   it("matches the shape PagerDuty returns for a US account", () => {
     const fromPagerDuty = "https://acme.pagerduty.com/services/PSKY1";

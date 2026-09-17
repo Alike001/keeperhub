@@ -439,7 +439,9 @@ export function EditConnectionForm({
 
     // Alternative credentials: hold the option that is not in use shut, so a
     // form listing four fields does not read as though it wants all four.
-    const exclusive = resolveExclusiveGroups(formFields, config);
+    // Every secret key: this form never receives their stored values, so it
+    // cannot tell a blank field from a credential that is already set.
+    const exclusive = resolveExclusiveGroups(formFields, config, secretKeys);
     const useThisInstead = (group: ExclusiveGroup) => {
       const inUse = exclusive.groups.find(
         (one) => one.id === exclusive.activeGroupId

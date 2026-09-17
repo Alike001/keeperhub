@@ -19,6 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { pagerDutyServiceUrl } from "@/plugins/pagerduty/event-payload";
 import type {
   PagerDutyEscalationPolicy,
   PagerDutyPriority,
@@ -157,22 +158,6 @@ function Notice({
       <div className="min-w-0">{children}</div>
     </div>
   );
-}
-
-/**
- * Where a service lives in PagerDuty's own UI.
- *
- * Built from the account the picker already read rather than from the
- * service's own `html_url`, because the case this is for is a service that is
- * no longer in the list and therefore has no `html_url` here. PagerDuty
- * returns exactly this shape for a service it does know.
- */
-function pagerDutyServiceUrl(
-  subdomain: string,
-  euRegion: boolean | undefined,
-  serviceId: string
-): string {
-  return `https://${subdomain}${euRegion ? ".eu" : ""}.pagerduty.com/services/${encodeURIComponent(serviceId)}`;
 }
 
 /**

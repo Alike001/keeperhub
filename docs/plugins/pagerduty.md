@@ -117,7 +117,7 @@ Close, or acknowledge, the alert carrying a given dedup key.
 
 **Inputs:** PagerDuty service, Dedup key of the alert (required), and an optional check of the incident afterwards.
 
-**Outputs:** `delivered`, `dedupKey`, `delayedSeconds` when the node was told to wait, `error` when the event was not delivered and the node was told not to fail the run, and, when the check is on, `incidentStatus`, `incidentUrl`, `incidentPriority` and `verificationError`. The status is the one observed after the event was sent; the Events API is asynchronous, so it can still show the previous state for a moment.
+**Outputs:** `delivered`, `dedupKey`, `action`, `message`, `delayedSeconds` when the node was told to wait, `error` when the event was not delivered and the node was told not to fail the run, and, when the check is on, `incidentStatus`, `incidentUrl`, `incidentPriority` and `verificationError`. The status is the one observed after the event was sent; the Events API is asynchronous, so it can still show the previous state for a moment.
 
 Both carry **Wait before sending**; see the deduplication note above for the race it exists for. What a dropped update costs differs -- a dropped resolve leaves an incident nobody closes, a dropped acknowledge leaves PagerDuty escalating an incident the workflow believes it has taken responsibility for -- but the ordering that causes both is the same one.
 

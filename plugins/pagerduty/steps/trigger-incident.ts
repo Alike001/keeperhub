@@ -412,6 +412,7 @@ async function stepHandler(
     const disabled: PagerDutyFailure = {
       message: `PagerDuty service ${serviceId} is disabled. It accepts events and creates no incident, so this page would have gone nowhere. Re-enable the service in PagerDuty, or point this node at another one.`,
       retryable: false,
+      fault: "user",
     };
     return toFailureResult(
       disabled,

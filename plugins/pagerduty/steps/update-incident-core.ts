@@ -22,6 +22,7 @@ import type { PagerDutyCredentials } from "../credentials";
 import {
   buildUpdateEvent,
   deriveDedupKey,
+  trimToLimit,
   failureIsExternal,
   findIncidentByKey,
   type IncidentLookup,
@@ -137,7 +138,13 @@ function resolveTargetDedupKey(
 ): string {
   const explicit = input.dedupKey?.trim();
   if (explicit) {
-    return explicit;
+    // Through the same trim the trigger applies. Returned raw, a key over 255
+    // runes made this node send a different key from the one the alert
+    // carries: PagerDuty answers 202 to a key it does not know and drops the
+    // event, so the incident stays open while this reports delivered. That is
+    // the invariant deriveDedupKey's own comment states - trimmed identically
+    // everywhere, so the two sides agree.
+    return trimToLimit(explicit, "Dedup key", []);
   }
   const triggerNodeId = input.dedupKeyFromNodeId?.trim();
   if (triggerNodeId) {
