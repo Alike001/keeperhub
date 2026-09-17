@@ -68,7 +68,8 @@ export type ActionConfigFieldBase = {
     | "pagerduty-test-node" // Sends one real alert through the selected service and takes it back
     | "pagerduty-backup-connection-select" // Existing Discord/Slack/Telegram connection used when a page fails
     | "pagerduty-priority-select" // Account incident priorities, read live (REST only)
-    | "pagerduty-trigger-node-select"; // A Trigger Incident node in this workflow, for the dedup key
+    | "pagerduty-trigger-node-select" // A Trigger Incident node in this workflow, for the dedup key
+    | "pagerduty-from-email-notice"; // Warns when neither the node nor its connection carries a From email
 
   // For chain-select: filter by chain type - one ("evm") or several (["evm", "solana"])
   chainTypeFilter?: string | string[];
@@ -609,7 +610,11 @@ export function flattenConfigFields(
  * node in the right place, but they have no value to seed into an example
  * config and the step never reads their key.
  */
-const DISPLAY_ONLY_FIELD_SUFFIXES = ["-preview", "-test-node"] as const;
+const DISPLAY_ONLY_FIELD_SUFFIXES = [
+  "-preview",
+  "-test-node",
+  "-notice",
+] as const;
 
 export function isDisplayOnlyField(type: string | undefined): boolean {
   return (

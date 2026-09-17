@@ -26,6 +26,12 @@ export type PagerDutyResourcesResponse = {
   euRegion?: boolean;
   /** True when the account has more than this route will page through. */
   truncated?: boolean;
+  /**
+   * Whether the connection carries a From email, which only Create Incident
+   * needs. The address itself is not returned: the node never has to show it,
+   * and the answer to "will this node run" is the boolean.
+   */
+  hasFromEmail?: boolean;
 };
 
 /**
@@ -111,6 +117,14 @@ export async function GET(
   const credentials = getCredentialMapping(plugin, integration.config);
 
   const resource = new URL(request.url).searchParams.get("resource");
+
+  // Answered from the stored connection alone: no PagerDuty call, because the
+  // question is about what KeeperHub holds, not about the account.
+  if (resource === "from-email") {
+    return NextResponse.json({
+      hasFromEmail: Boolean(credentials.PAGERDUTY_FROM_EMAIL?.trim()),
+    });
+  }
 
   if (resource === "priorities") {
     const priorities = await listPriorities(credentials);

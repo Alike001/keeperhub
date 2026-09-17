@@ -251,13 +251,13 @@ const pagerDutyPlugin: IntegrationPlugin = {
     },
     {
       id: "fromEmail",
-      label: "From email",
+      label: "From email (Optional, only for the Create Incident action)",
       type: "text",
       placeholder: "oncall-bot@acme.io",
       configKey: "fromEmail",
       envVar: "PAGERDUTY_FROM_EMAIL",
       helpText:
-        "Optional, and not a password. Only the REST Create Incident action needs it: PagerDuty attributes that incident to this user, who must exist in the account.",
+        "Not a password. PagerDuty attributes the incident it creates to this user, who must exist in the account. Trigger, Acknowledge, Resolve and Change Event never read it.",
     },
   ],
 
@@ -731,6 +731,11 @@ const pagerDutyPlugin: IntegrationPlugin = {
           placeholder: "Falls back to the connection's From email",
           helpText:
             "The PagerDuty user the incident is attributed to. Required by PagerDuty for this call.",
+        },
+        {
+          key: "pagerdutyFromEmailNotice",
+          label: "",
+          type: "pagerduty-from-email-notice",
         },
         {
           key: "failOnError",

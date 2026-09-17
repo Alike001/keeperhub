@@ -1006,3 +1006,78 @@ export function PagerDutyBackupConnectionField({
     </div>
   );
 }
+
+/**
+ * Warns when a Create Incident node has no From email to run with.
+ *
+ * PagerDuty's REST create call attributes the incident to a user and refuses
+ * without one, so the step fails at run time with a message naming both places
+ * it can be set. That message arrives on the first run, which for a scheduled
+ * workflow can be the night it was needed - the connection form marks the
+ * field optional, correctly, because only this one action reads it.
+ *
+ * This closes that gap in the editor. It asks the server whether the selected
+ * connection carries one rather than reading it from the node, because the
+ * address is stored on the connection and credential values are never sent to
+ * the browser. Only the boolean comes back.
+ */
+export function PagerDutyFromEmailNotice({
+  integrationId,
+  nodeFromEmail,
+}: {
+  integrationId: string | undefined;
+  nodeFromEmail: string | undefined;
+}) {
+  const [connectionHasOne, setConnectionHasOne] = useState<boolean | undefined>(
+    undefined
+  );
+
+  useEffect(() => {
+    if (!integrationId) {
+      setConnectionHasOne(undefined);
+      return;
+    }
+    let cancelled = false;
+    fetch(
+      `/api/integrations/${encodeURIComponent(integrationId)}/pagerduty/resources?resource=from-email`
+    )
+      .then(async (response) => {
+        const body = await response.json().catch(() => ({}));
+        if (!cancelled) {
+          // Anything other than a clear "no" leaves this quiet. A route that
+          // failed says nothing about the connection, and a warning that the
+          // From email is missing when it is not would send somebody editing a
+          // connection that was already right.
+          setConnectionHasOne(
+            typeof body?.hasFromEmail === "boolean" ? body.hasFromEmail : true
+          );
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setConnectionHasOne(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [integrationId]);
+
+  // The node's own value wins over the connection's, and a template counts as
+  // filled: what it resolves to is not knowable here, and guessing it empty
+  // would warn on every node that sets the address from an earlier step.
+  const nodeHasOne = (nodeFromEmail ?? "").trim().length > 0;
+  if (!integrationId || nodeHasOne || connectionHasOne !== false) {
+    return null;
+  }
+
+  return (
+    <Notice tone="warning">
+      Neither this node nor its connection carries a From email, and PagerDuty
+      will not create an incident without one - this node would fail on its
+      first run. Put one in the field above, or on the connection so every
+      Create Incident node inherits it. It has to be the login email of a user
+      who exists in the PagerDuty account.
+    </Notice>
+  );
+}

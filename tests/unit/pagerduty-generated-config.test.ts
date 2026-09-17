@@ -88,6 +88,7 @@ describe("what an AI-generated PagerDuty node carries", () => {
       const config = seededConfig(action.slug);
       expect(Object.keys(config)).not.toContain("pagerdutyPreview");
       expect(Object.keys(config)).not.toContain("pagerdutyTestNode");
+      expect(Object.keys(config)).not.toContain("pagerdutyFromEmailNotice");
     }
   });
 

@@ -28,6 +28,7 @@ import { PagerDutyPreviewField } from "@/components/workflow/config/pagerduty-pr
 import {
   PagerDutyBackupConnectionField,
   PagerDutyEscalationPolicyField,
+  PagerDutyFromEmailNotice,
   PagerDutyPriorityField,
   PagerDutyServiceField,
   PagerDutyTestNodeButton,
@@ -709,6 +710,13 @@ registerFieldRenderer("pagerduty-test-node", ({ field, config, disabled }) => (
       serviceId={configString(config.pagerdutyServiceId) || undefined}
     />
   </div>
+));
+
+registerFieldRenderer("pagerduty-from-email-notice", ({ config }) => (
+  <PagerDutyFromEmailNotice
+    integrationId={configString(config.integrationId) || undefined}
+    nodeFromEmail={configString(config.fromEmail) || undefined}
+  />
 ));
 
 registerFieldRenderer("pagerduty-preview", ({ field, config, disabled }) => (
