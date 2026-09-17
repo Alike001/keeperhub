@@ -53,6 +53,26 @@ const retryFields: ActionConfigFieldBase[] = [
   },
 ];
 
+/**
+ * The same delivery controls, minus the claim that a repeat is free.
+ *
+ * PagerDuty offers no dedup key for a change event, so unlike every other
+ * action here a retry after a response that was actually delivered leaves two
+ * entries on the service timeline. A duplicate deploy marker is cosmetic and a
+ * missing one is not, so the retries stay - but the help text has to say which
+ * of the two it is buying.
+ */
+const changeEventRetryFields: ActionConfigFieldBase[] = retryFields.map(
+  (field) =>
+    field.key === "retryAttempts"
+      ? {
+          ...field,
+          helpText:
+            "Extra attempts after the first, for connection failures and the statuses worth another try (408, 425, 429, 5xx). A 400 from PagerDuty is a payload problem and is never retried. A change event carries no dedup key, so one that is delivered but whose response is lost leaves a second entry on the service timeline - a duplicate deploy marker, which is worth the retry because a missing one is not. Default 2, max 5.",
+        }
+      : field
+);
+
 const dedupKeyField: ActionConfigFieldBase = {
   key: "dedupKey",
   label: "Dedup key",
@@ -95,7 +115,7 @@ function verifyField(defaultValue: "true" | "false"): ActionConfigFieldBase {
       { value: "false", label: "No" },
     ],
     helpText:
-      "PagerDuty answers 202 even when nothing matched. On, the node reads the incident back and reports its real status. Needs incidents.read, which a read-only key already has.",
+      "PagerDuty answers 202 even when nothing matched. On, the node reads the incident back and reports its real status. Needs incidents.read: a read-only API key already has it, but a scoped OAuth app only has what it was granted, and the two scopes the form asks for do not include it. Without it the node still acknowledges or resolves and reports the status as unknown.",
   };
 }
 
@@ -130,7 +150,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
       configKey: "oauthClientId",
       envVar: "PAGERDUTY_OAUTH_CLIENT_ID",
       helpText:
-        "Tighter than an API token, and PagerDuty's own recommendation. Register the app under Integrations, Developer Tools, App Registration, set Functionality to Scoped OAuth, and grant only services.read and escalation_policies.read.",
+        "Tighter than an API token, and PagerDuty's own recommendation. Register the app under Integrations, Developer Tools, App Registration, set Functionality to Scoped OAuth. Trigger, Acknowledge, Resolve and Change Event need services.read and escalation_policies.read. Three optional things need one more each: reading an incident back after an acknowledge or resolve needs incidents.read, the priority picker on Create Incident needs priorities.read, and Create Incident itself needs incidents.write. A read-only API token above covers all the reads without any of this.",
     },
     {
       id: "oauthClientSecret",
@@ -213,6 +233,11 @@ const pagerDutyPlugin: IntegrationPlugin = {
             "True when the service was in maintenance, so PagerDuty took the event and raised no incident",
         },
         { field: "detailsTruncated", description: "True when custom details were dropped for size" },
+        {
+          field: "linksDropped",
+          description:
+            "How many lines of the links field were not an https url, so were not sent",
+        },
         {
           field: "summaryFellBack",
           description:
@@ -314,7 +339,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
               placeholder:
                 "Etherscan | https://etherscan.io/tx/{{Check Vault.hash}}",
               helpText:
-                "One per line, as text | url, or just a url. They become clickable links on the incident - an explorer transaction or a dashboard is usually the first thing a responder wants.",
+                "One per line, as text | url, or just a url. The url has to be https. They become clickable links on the incident - an explorer transaction or a dashboard is usually the first thing a responder wants. A line that is not an https url is skipped rather than failing the page; the Preview below shows what will be sent, and the node's linksDropped output counts what was not.",
             },
           ],
         },
@@ -491,7 +516,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
           rows: 3,
           placeholder: '{ "commit": "{{Build.sha}}" }',
         },
-        { type: "group", label: "Delivery", fields: retryFields },
+        { type: "group", label: "Delivery", fields: changeEventRetryFields },
       ],
     },
     {
@@ -571,7 +596,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
           label: "Priority",
           type: "pagerduty-priority-select",
           helpText:
-            "The account's incident priorities (P1, P2, and so on), read from PagerDuty. A paid-plan feature: an account without it shows nothing here. Only this REST action can set a priority - an Events API alert takes its priority from the account's Event Orchestration rules instead.",
+            "The account's incident priorities (P1, P2, and so on), read from PagerDuty. A paid-plan feature: an account without it shows nothing here. A scoped OAuth connection also needs priorities.read to list them. Only this REST action can set a priority - an Events API alert takes its priority from the account's Event Orchestration rules instead.",
         },
         {
           key: "incidentKey",

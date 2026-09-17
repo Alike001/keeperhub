@@ -27,6 +27,7 @@ import {
   deriveDedupKey,
   failureIsExternal,
   type PagerDutyFailure,
+  parseLinks,
   postEventWithRetries,
   resolveRoutingKeyWithRetries,
   serviceSwallowsEvents,
@@ -85,6 +86,8 @@ type TriggerIncidentResult =
       consecutiveRuns: number;
       requiredRuns: number;
       detailsTruncated?: boolean;
+    /** Lines of the links field that were not an https url, so were not sent. */
+    linksDropped?: number;
       /** True when the summary template rendered empty and a fallback title was sent. */
       summaryFellBack?: boolean;
       /** PagerDuty's service status at send time. */
@@ -138,33 +141,6 @@ function buildCustomDetails(
   base.keeperhub_execution_id = context.executionId ?? "unknown";
   base.keeperhub_node = context.nodeName ?? "PagerDuty";
   return base;
-}
-
-const LINK_SEPARATOR = /\s*\|\s*/;
-
-/**
- * Parse the links field. A responder's first move is usually to open the
- * transaction or the dashboard, so a malformed line is skipped rather than
- * failing the page.
- */
-function parseLinks(raw: string | undefined): { href: string; text: string }[] {
-  if (!raw?.trim()) {
-    return [];
-  }
-  const links: { href: string; text: string }[] = [];
-  for (const line of raw.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      continue;
-    }
-    const [first, second] = trimmed.split(LINK_SEPARATOR);
-    const href = (second ?? first).trim();
-    if (!href.startsWith("https://")) {
-      continue;
-    }
-    links.push({ href, text: (second ? first : href).trim() });
-  }
-  return links;
 }
 
 function toFailureResult(
@@ -414,6 +390,7 @@ async function stepHandler(
     );
   }
 
+  const parsedLinks = parseLinks(input.links);
   const { body, detailsDropped } = buildTriggerEvent({
     routingKey: routingKey.value.routingKey,
     dedupKey,
@@ -435,7 +412,7 @@ async function stepHandler(
           ? { keeperhub_summary_template: input.summary ?? "" }
           : {}),
       },
-      links: parseLinks(input.links),
+      links: parsedLinks.links,
       client: CLIENT_NAME,
       clientUrl: workflowUrl,
     },
@@ -505,6 +482,7 @@ async function stepHandler(
     consecutiveRuns,
     requiredRuns,
     detailsTruncated: detailsDropped,
+    linksDropped: parsedLinks.dropped || undefined,
     summaryFellBack,
     serviceStatus: routingKey.value.serviceStatus,
     suppressedByService: suppressed,

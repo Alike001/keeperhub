@@ -63,6 +63,43 @@ export function deriveDedupKey(
   );
 }
 
+const LINK_SEPARATOR = /\s*\|\s*/;
+
+/**
+ * Parse the links field: one per line, "text | url" or a bare url.
+ *
+ * Lives here rather than in the step so the node's preview parses them the
+ * same way, which is the only place a dropped line is visible before an
+ * incident. https is required because PagerDuty renders these as clickable
+ * links on the alert and a plaintext one is a downgrade a responder cannot
+ * see coming; a line that does not qualify is skipped rather than failing the
+ * page, and the count of skipped lines is reported.
+ */
+export function parseLinks(raw: string | undefined): {
+  links: { href: string; text: string }[];
+  dropped: number;
+} {
+  if (!raw?.trim()) {
+    return { links: [], dropped: 0 };
+  }
+  const links: { href: string; text: string }[] = [];
+  let dropped = 0;
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const [first, second] = trimmed.split(LINK_SEPARATOR);
+    const href = (second ?? first).trim();
+    if (!href.startsWith("https://")) {
+      dropped += 1;
+      continue;
+    }
+    links.push({ href, text: (second ? first : href).trim() });
+  }
+  return { links, dropped };
+}
+
 export type EventPayloadInput = {
   summary: string;
   severity: unknown;

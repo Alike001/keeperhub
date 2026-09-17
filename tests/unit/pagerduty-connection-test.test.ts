@@ -41,6 +41,36 @@ describe("PagerDuty connection test", () => {
   });
 
   /**
+   * A self-hosted install sets this from an environment variable, where
+   * nothing forces the exact string the checkbox writes. Reading anything but
+   * "true" as US sends every event to the wrong region, and PagerDuty answers
+   * 401 - which reads as a bad token.
+   */
+  it.each(["1", "yes", "TRUE", " eu "])(
+    "reads %s as the EU region too",
+    async (flag) => {
+      fetchMock.mockResolvedValue(response(200, {}));
+      await testPagerDuty({
+        PAGERDUTY_API_TOKEN: "t",
+        PAGERDUTY_EU_REGION: flag,
+      });
+      expect(fetchMock.mock.calls[0][0]).toContain("api.eu.pagerduty.com");
+    }
+  );
+
+  /**
+   * fetch throws on a header holding a line break, and the catch below would
+   * report it as "could not reach PagerDuty" - sending someone to check their
+   * network over a token they pasted with a trailing newline.
+   */
+  it("names a token pasted with a line break rather than blaming the network", async () => {
+    const result = await testPagerDuty({ PAGERDUTY_API_TOKEN: "abc\ndef" });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("line break");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  /**
    * The most confusing failure this connection has: a US account with the EU
    * box ticked answers 401, which reads as a bad token.
    */

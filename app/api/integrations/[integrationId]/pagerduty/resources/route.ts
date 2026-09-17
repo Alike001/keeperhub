@@ -4,6 +4,7 @@ import { SCOPE_MCP_READ } from "@/lib/mcp/oauth-scopes";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { requireScope } from "@/lib/middleware/require-scope";
 import {
+  isEuHtmlUrl,
   listEscalationPolicies,
   listPriorities,
   listServices,
@@ -20,6 +21,8 @@ export type PagerDutyResourcesResponse = {
   priorities?: PagerDutyPriority[];
   /** Which PagerDuty account these came from, for the "who am I paging" line. */
   accountSubdomain?: string;
+  /** Which service region it lives in, so the preview names the right host. */
+  euRegion?: boolean;
   /** True when the account has more than this route will page through. */
   truncated?: boolean;
 };
@@ -122,6 +125,7 @@ export async function GET(
     services: services.value.services,
     truncated: services.value.truncated,
     accountSubdomain: firstSubdomain(services.value.services),
+    euRegion: firstRegion(services.value.services),
   });
 }
 
@@ -135,6 +139,17 @@ export async function GET(
  */
 function upstreamError(message: string): NextResponse {
   return NextResponse.json({ error: message }, { status: 502 });
+}
+
+/** The region of the first object PagerDuty gave a URL for. */
+function firstRegion(items: { htmlUrl?: string }[]): boolean | undefined {
+  for (const item of items) {
+    const eu = isEuHtmlUrl(item.htmlUrl);
+    if (eu !== undefined) {
+      return eu;
+    }
+  }
+  return;
 }
 
 function firstSubdomain(items: { htmlUrl?: string }[]): string | undefined {

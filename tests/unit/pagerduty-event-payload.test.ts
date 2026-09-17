@@ -7,6 +7,7 @@ import {
   MAX_EVENT_BYTES,
   MAX_SUMMARY_CHARS,
   normaliseSeverity,
+  parseLinks,
   truncateRunes,
 } from "@/plugins/pagerduty/event-payload";
 
@@ -142,5 +143,57 @@ describe("buildUpdateEvent", () => {
     });
     // PagerDuty ignores a payload on these actions; sending one is noise.
     expect(body.payload).toBeUndefined();
+  });
+});
+
+describe("parseLinks", () => {
+  it("takes a bare url and uses it as its own text", () => {
+    expect(parseLinks("https://etherscan.io/tx/0x1")).toEqual({
+      links: [
+        {
+          href: "https://etherscan.io/tx/0x1",
+          text: "https://etherscan.io/tx/0x1",
+        },
+      ],
+      dropped: 0,
+    });
+  });
+
+  it("takes text | url and keeps the text", () => {
+    expect(parseLinks("Etherscan | https://etherscan.io/tx/0x1").links).toEqual(
+      [{ href: "https://etherscan.io/tx/0x1", text: "Etherscan" }]
+    );
+  });
+
+  it("ignores blank lines without counting them as dropped", () => {
+    const parsed = parseLinks("https://a.example\n\n  \nhttps://b.example");
+    expect(parsed.links).toHaveLength(2);
+    expect(parsed.dropped).toBe(0);
+  });
+
+  /**
+   * A responder opening a link is the first thing that happens after a page,
+   * and a line that quietly never arrives is the worst way to find out the
+   * field wanted https. The count is what the node reports and the preview
+   * shows.
+   */
+  it("counts the lines it could not use", () => {
+    const parsed = parseLinks(
+      [
+        "https://ok.example",
+        "http://plaintext.example",
+        "Dashboard | ftp://nope.example",
+        "just some words",
+      ].join("\n")
+    );
+    expect(parsed.links).toEqual([
+      { href: "https://ok.example", text: "https://ok.example" },
+    ]);
+    expect(parsed.dropped).toBe(3);
+  });
+
+  it("has nothing to say about an empty field", () => {
+    expect(parseLinks(undefined)).toEqual({ links: [], dropped: 0 });
+    expect(parseLinks("   ")).toEqual({ links: [], dropped: 0 });
   });
 });

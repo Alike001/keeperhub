@@ -205,6 +205,33 @@ describe("listServices", () => {
   });
 });
 
+/**
+ * The flag arrives as a string from the connection checkbox, from an
+ * environment variable on a self-hosted install, and from an MCP caller. Only
+ * the checkbox is guaranteed to write "true", and reading the rest as US
+ * points every request at the wrong regional host - which comes back as a 401
+ * and reads as a bad token.
+ */
+describe("service region flag", () => {
+  it.each(["true", "TRUE", " 1 ", "yes", "eu", "on"])(
+    "reads %s as the EU region",
+    async (flag) => {
+      safeFetch.mockResolvedValue(response(200, { services: [] }));
+      await listServices({ ...TOKEN_CREDS, PAGERDUTY_EU_REGION: flag });
+      expect(lastCall()[0]).toContain("https://api.eu.pagerduty.com/");
+    }
+  );
+
+  it.each(["false", "", "0", "no", "us"])(
+    "reads %s as the US region",
+    async (flag) => {
+      safeFetch.mockResolvedValue(response(200, { services: [] }));
+      await listServices({ ...TOKEN_CREDS, PAGERDUTY_EU_REGION: flag });
+      expect(lastCall()[0]).toContain("https://api.pagerduty.com/");
+    }
+  );
+});
+
 describe("resolveRoutingKey", () => {
   it("pages through a large account instead of stopping at the first 100", async () => {
     safeFetch

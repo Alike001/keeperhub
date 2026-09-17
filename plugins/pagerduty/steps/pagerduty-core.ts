@@ -45,6 +45,7 @@ export {
   normaliseSeverity,
   type PagerDutyEventBody,
   type PagerDutySeverity,
+  parseLinks,
   truncateRunes,
 } from "../event-payload";
 
@@ -161,8 +162,26 @@ function invalidId(kind: string, value: string): PagerDutyFailure {
   };
 }
 
+/**
+ * Which service region the account lives in.
+ *
+ * The value reaches here as a string from three places - the connection
+ * checkbox, an environment variable on a self-hosted install, and an MCP
+ * caller - and only the checkbox is guaranteed to write "true". Reading
+ * PAGERDUTY_EU_REGION=1 as US would send every event to the wrong region and
+ * fail as a 401, which looks exactly like a bad token.
+ */
+const TRUTHY_REGION_FLAGS: ReadonlySet<string> = new Set([
+  "true",
+  "1",
+  "yes",
+  "eu",
+  "on",
+]);
+
 export function isEuRegion(credentials: PagerDutyCredentials): boolean {
-  return credentials.PAGERDUTY_EU_REGION === "true";
+  const raw = credentials.PAGERDUTY_EU_REGION?.trim().toLowerCase() ?? "";
+  return TRUTHY_REGION_FLAGS.has(raw);
 }
 
 export function eventsUrl(
@@ -441,10 +460,10 @@ async function restGet<T>(
 
     return { ok: true, value: (await response.json()) as T };
   } catch (error) {
-    // Deliberately stricter than the events path: an incident key that repeats
-    // is rejected rather than merged, so a retry after a lost response could
-    // create a second incident. Only a request that provably never left is
-    // safe to repeat.
+    // A read is safe to repeat whatever went wrong, but only a fault that
+    // looks transient is worth repeating - a DNS failure or a refused
+    // connection will answer the same way on the next attempt within the
+    // node's retry window.
     return {
       ok: false,
       failure: {
@@ -1111,6 +1130,29 @@ export function subdomainFromHtmlUrl(
   }
 }
 
+/**
+ * Which service region an html_url belongs to, or undefined when it cannot be
+ * told. EU accounts publish subdomain.eu.pagerduty.com.
+ *
+ * The pickers use this to show the Events API host the node will actually
+ * post to. It is read back off a URL PagerDuty returned rather than off the
+ * connection, so nothing about the credential has to cross to the browser.
+ */
+export function isEuHtmlUrl(htmlUrl: string | undefined): boolean | undefined {
+  if (!htmlUrl) {
+    return;
+  }
+  try {
+    const host = new URL(htmlUrl).hostname.toLowerCase();
+    if (!host.endsWith(PAGERDUTY_HOST_SUFFIX)) {
+      return;
+    }
+    return host.slice(0, -PAGERDUTY_HOST_SUFFIX.length).endsWith(".eu");
+  } catch {
+    return;
+  }
+}
+
 export type IncidentLookup = {
   status: "triggered" | "acknowledged" | "resolved" | "unknown";
   id?: string;
@@ -1142,6 +1184,12 @@ export async function findIncidentByKey(
   const query = new URLSearchParams({
     incident_key: params.incidentKey,
     limit: "1",
+    // Newest first. PagerDuty defaults to created_at ascending, and the
+    // default dedup key is per node - every incident that node has ever
+    // opened carries the same key - so with limit 1 the answer would be the
+    // first incident of the search window rather than the one just acted on.
+    // A resolve would read back the status of something from months ago.
+    sort_by: "created_at:desc",
     // Without a range PagerDuty searches the last month, so a long-running
     // incident would read back as "unknown". Six months is its maximum.
     since: new Date(Date.now() - SIX_MONTHS_MS).toISOString(),

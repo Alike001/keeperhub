@@ -15,6 +15,16 @@ const API_HOST_EU = "https://api.eu.pagerduty.com";
 const IDENTITY_TOKEN_URL = "https://identity.pagerduty.com/oauth/token";
 const OAUTH_SCOPES = "services.read escalation_policies.read";
 const ACCEPT_V2 = "application/vnd.pagerduty+json;version=2";
+/** Printable ASCII only, mirroring the guard the steps apply. */
+const HEADER_SAFE_TOKEN = /^[\x21-\x7e]{1,256}$/;
+/** The region flag reaches this file as a string from a form or an env var. */
+const TRUTHY_REGION_FLAGS: ReadonlySet<string> = new Set([
+  "true",
+  "1",
+  "yes",
+  "eu",
+  "on",
+]);
 
 type TestResult = { success: boolean; error?: string };
 
@@ -24,6 +34,18 @@ async function resolveHeader(
 ): Promise<{ header: string } | TestResult> {
   const token = credentials.PAGERDUTY_API_TOKEN?.trim();
   if (token) {
+    // Without this, a token pasted with a line break makes fetch throw on the
+    // header, and the catch below reports it as "could not reach PagerDuty" -
+    // sending someone to check their network over a fixable paste. The steps
+    // already refuse it with this message; Test Connection is where somebody
+    // is most likely to have just pasted it.
+    if (!HEADER_SAFE_TOKEN.test(token)) {
+      return {
+        success: false,
+        error:
+          "The API token contains characters that cannot go in a request header - it was probably pasted with a line break or a space. Re-copy it from PagerDuty.",
+      };
+    }
     return { header: `Token token=${token}` };
   }
 
@@ -127,7 +149,11 @@ export async function testPagerDuty(
   credentials: Record<string, string>
 ): Promise<TestResult> {
   try {
-    const region = credentials.PAGERDUTY_EU_REGION === "true" ? "eu" : "us";
+    const region = TRUTHY_REGION_FLAGS.has(
+      credentials.PAGERDUTY_EU_REGION?.trim().toLowerCase() ?? ""
+    )
+      ? "eu"
+      : "us";
     const host = region === "eu" ? API_HOST_EU : API_HOST;
 
     const auth = await resolveHeader(credentials, region);

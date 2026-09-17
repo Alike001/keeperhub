@@ -2,11 +2,17 @@
 
 import { Check, Copy } from "lucide-react";
 import { useState } from "react";
-import { buildTriggerEvent, normaliseSeverity } from "@/plugins/pagerduty/event-payload";
+import {
+  buildTriggerEvent,
+  normaliseSeverity,
+  parseLinks,
+} from "@/plugins/pagerduty/event-payload";
 import { usePagerDutyServices } from "./pagerduty-resource-field";
 
 const ROUTING_KEY_PLACEHOLDER = "resolved from the service at run time";
 const DEDUP_KEY_PLACEHOLDER = "keeperhub/<workflow>/<node>";
+const EVENTS_HOST = "https://events.pagerduty.com";
+const EVENTS_HOST_EU = "https://events.eu.pagerduty.com";
 
 type PreviewConfig = Record<string, unknown>;
 
@@ -64,7 +70,8 @@ export function PagerDutyPreviewField({
 
   const integrationId = text(config, "integrationId") || undefined;
   const serviceId = text(config, "pagerdutyServiceId");
-  const { items, accountSubdomain } = usePagerDutyServices(integrationId);
+  const { items, accountSubdomain, euRegion } =
+    usePagerDutyServices(integrationId);
   const service = items.find((candidate) => candidate.id === serviceId);
 
   const summary = text(config, "summary");
@@ -72,6 +79,9 @@ export function PagerDutyPreviewField({
   const severity = normaliseSeverity(text(config, "severity"));
   const source = text(config, "source") || "<node name>";
 
+  // Parsed the way the step parses them, so a line that is not an https url
+  // is missing from the payload here rather than missing from the incident.
+  const links = parseLinks(text(config, "links"));
   const { body, detailsDropped } = buildTriggerEvent({
     routingKey: ROUTING_KEY_PLACEHOLDER,
     dedupKey,
@@ -84,6 +94,7 @@ export function PagerDutyPreviewField({
       group: text(config, "group"),
       class: text(config, "class"),
       customDetails: previewDetails(text(config, "customDetails")),
+      links: links.links,
       client: "KeeperHub",
       clientUrl: "<link to this workflow>",
     },
@@ -141,7 +152,7 @@ export function PagerDutyPreviewField({
       {tab === "payload" ? (
         <div className="space-y-1">
           <p className="text-muted-foreground text-xs">
-            POST https://events.pagerduty.com/v2/enqueue
+            POST {euRegion ? EVENTS_HOST_EU : EVENTS_HOST}/v2/enqueue
           </p>
           <pre className="max-h-72 overflow-auto rounded-md border border-border bg-muted/30 p-3 font-mono text-[11px] leading-relaxed">
             {json}
@@ -167,7 +178,8 @@ export function PagerDutyPreviewField({
                 value={
                   accountSubdomain ? (
                     <span className="font-mono">
-                      {accountSubdomain}.pagerduty.com
+                      {accountSubdomain}
+                      {euRegion ? ".eu" : ""}.pagerduty.com
                     </span>
                   ) : (
                     "Read from PagerDuty once a connection is selected"
@@ -210,6 +222,9 @@ export function PagerDutyPreviewField({
         the node runs.
         {detailsDropped
           ? " Custom details are over PagerDuty's size limit and would be replaced by a note."
+          : ""}
+        {links.dropped > 0
+          ? ` ${links.dropped} ${links.dropped === 1 ? "line" : "lines"} of the links field ${links.dropped === 1 ? "is" : "are"} not an https url, so ${links.dropped === 1 ? "it is" : "they are"} not sent.`
           : ""}
       </p>
     </div>

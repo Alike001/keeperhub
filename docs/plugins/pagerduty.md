@@ -47,7 +47,7 @@ PagerDuty recommends scoped OAuth over account-wide keys, and the plugin accepts
 - `services.read`
 - `escalation_policies.read`
 
-Add `incidents.read` if you want the acknowledge and resolve actions to check the incident afterwards, and `incidents.write` if you use Create Incident. Fill in the client id, client secret and your account subdomain, and leave the API token blank.
+Add `incidents.read` if you want the acknowledge and resolve actions to check the incident afterwards, `priorities.read` if you want the priority picker on Create Incident to list your account's priorities, and `incidents.write` if you use Create Incident. Each is optional and only the feature that needs it is affected: without `incidents.read` the check reports the status as unknown, and the acknowledge or resolve itself still goes through. Fill in the client id, client secret and your account subdomain, and leave the API token blank.
 
 If the account is ever renamed, update the subdomain field: the OAuth scope string carries it. An API token is unaffected by a rename, and nothing in a workflow has to change either way, because services and escalation policies are stored by id.
 
@@ -59,9 +59,11 @@ An event reaches a service through an integration on that service. In PagerDuty,
 
 Open an alert, or update the one already open for the same dedup key.
 
-**Inputs:** PagerDuty service (picked from your account), Summary (becomes the alert title), Severity (`critical`, `error`, `warning`, `info`), Source, Dedup key, and optional Component, Group, Class and Custom details. Supports `{{NodeName.field}}` variables throughout.
+**Inputs:** PagerDuty service (picked from your account), Summary (becomes the alert title), Severity (`critical`, `error`, `warning`, `info`), Source, Dedup key, and optional Component, Group, Class, Custom details and Links. Supports `{{NodeName.field}}` variables throughout.
 
-**Outputs:** `delivered`, `dedupKey`, `status` (`triggered`, `held`, or `failed`), `consecutiveRuns`, `requiredRuns`, `error`, `summaryFellBack`, `serviceStatus`, `suppressedByService`, `detailsTruncated`, `message`, and the backup fields below.
+**Outputs:** `delivered`, `dedupKey`, `status` (`triggered`, `held`, or `failed`), `consecutiveRuns`, `requiredRuns`, `error`, `summaryFellBack`, `serviceStatus`, `suppressedByService`, `detailsTruncated`, `linksDropped`, `message`, and the backup fields below.
+
+**Links** go one per line, as `text | url` or a bare url, and become clickable links on the incident - the explorer transaction or the dashboard a responder opens first. The url has to be `https`. A line that is not an https url is skipped rather than failing the page, because a page with one missing link beats no page; the Preview on the node shows exactly which links will be sent, and `linksDropped` counts the ones that will not.
 
 **Deduplication.** Leave the dedup key blank and the node uses one key per node, so a check that keeps failing updates one alert instead of paging on every run. Put a vault address or chain id in the field to page per subject instead. Once an alert is resolved, the next trigger with the same key opens a new one.
 
@@ -107,6 +109,8 @@ Schedule (every 5 min)
 ## Send Change Event
 
 Record a deploy, a config change or a migration on the service's timeline. Change events never page anyone; they appear next to the incidents they often explain.
+
+Unlike every other action here, a change event carries no dedup key - PagerDuty offers none for them. A retry after a response that was lost in transit therefore leaves a second entry on the timeline. The retries are on by default anyway, because a duplicate deploy marker is cosmetic and a missing one is not; set **Retry attempts** to 0 if you would rather have neither.
 
 **Inputs:** PagerDuty service, Summary, Source, Custom details.
 

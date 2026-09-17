@@ -24,6 +24,8 @@ type LoadState<T> = {
   error: string | null;
   /** The account these came from, e.g. "acme" for acme.pagerduty.com. */
   accountSubdomain?: string;
+  /** Whether that account is in the EU service region, when it could be told. */
+  euRegion?: boolean;
   /** True when the account holds more than the route paged through. */
   truncated?: boolean;
 };
@@ -44,6 +46,7 @@ function usePagerDutyResources<T>(
     escalationPolicies?: PagerDutyEscalationPolicy[];
     priorities?: PagerDutyPriority[];
     accountSubdomain?: string;
+    euRegion?: boolean;
     truncated?: boolean;
   }) => T[]
 ): LoadState<T> & { reload: () => void } {
@@ -92,6 +95,8 @@ function usePagerDutyResources<T>(
             typeof body?.accountSubdomain === "string"
               ? body.accountSubdomain
               : undefined,
+          euRegion:
+            typeof body?.euRegion === "boolean" ? body.euRegion : undefined,
           truncated: body?.truncated === true,
         });
       })
@@ -182,7 +187,7 @@ export function PagerDutyServiceField({
   integrationId?: string;
   onChange: (value: string) => void;
 }) {
-  const { items, loading, error, reload, accountSubdomain, truncated } =
+  const { items, loading, error, reload, accountSubdomain, euRegion, truncated } =
     usePagerDutyResources(integrationId, "services", pickServices);
 
   const selected = items.find((service) => service.id === value);
@@ -242,7 +247,10 @@ export function PagerDutyServiceField({
       {(accountSubdomain || selected) && (
         <p className="ml-1 text-muted-foreground text-xs">
           {accountSubdomain ? (
-            <span className="font-mono">{accountSubdomain}.pagerduty.com</span>
+            <span className="font-mono">
+              {accountSubdomain}
+              {euRegion ? ".eu" : ""}.pagerduty.com
+            </span>
           ) : null}
           {accountSubdomain && selected ? " - " : null}
           {selected ? <span className="font-mono">{selected.id}</span> : null}

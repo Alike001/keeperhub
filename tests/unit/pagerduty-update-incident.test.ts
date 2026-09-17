@@ -195,6 +195,32 @@ describe("resolve incident", () => {
     });
   });
 
+  /**
+   * The default dedup key is per node, so every incident that node has ever
+   * opened carries it. PagerDuty sorts /incidents by created_at ascending, so
+   * asking for one without a sort returns the oldest in the six-month window -
+   * a resolve would read back the status of an incident from months ago.
+   */
+  it("asks PagerDuty for the newest incident carrying the key", async () => {
+    mockRoutingKey();
+    safeFetch
+      .mockResolvedValueOnce(response(202, {}))
+      .mockResolvedValueOnce(
+        response(200, { incidents: [{ id: "PINC9", status: "resolved" }] })
+      );
+
+    await resolveIncidentStep({
+      integrationId: "int-1",
+      pagerdutyServiceId: "PSKY1",
+      dedupKey: "k1",
+      verifyWithPagerDuty: true,
+      _context: CONTEXT,
+    } as never);
+
+    const url = String((safeFetch.mock.calls[3] as [string])[0]);
+    expect(url).toContain("sort_by=created_at%3Adesc");
+  });
+
   it("calls an inconclusive check unknown, and still succeeds", async () => {
     mockRoutingKey();
     safeFetch

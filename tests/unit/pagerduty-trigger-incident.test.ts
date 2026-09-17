@@ -374,6 +374,39 @@ describe("trigger incident", () => {
     });
   });
 
+  it("sends the links it could use and counts the ones it could not", async () => {
+    mockHappyPath();
+    const result = await run({
+      links: [
+        "Etherscan | https://etherscan.io/tx/0x1",
+        "http://internal-dashboard/vault",
+        "https://grafana.example/d/abc",
+      ].join("\n"),
+    });
+
+    const body = JSON.parse(
+      String(
+        (safeFetch.mock.calls[2] as [string, Record<string, unknown>])[1].body
+      )
+    );
+    expect(body.links).toEqual([
+      { href: "https://etherscan.io/tx/0x1", text: "Etherscan" },
+      {
+        href: "https://grafana.example/d/abc",
+        text: "https://grafana.example/d/abc",
+      },
+    ]);
+    // Reported rather than silent: the responder never sees the link that was
+    // dropped, so the author has to.
+    expect(result).toMatchObject({ linksDropped: 1 });
+  });
+
+  it("says nothing about dropped links when every line was usable", async () => {
+    mockHappyPath();
+    const result = await run({ links: "https://grafana.example/d/abc" });
+    expect((result as { linksDropped?: number }).linksDropped).toBeUndefined();
+  });
+
   it("sends the backup notification when the page cannot be delivered", async () => {
     safeFetch
       .mockResolvedValueOnce(response(404, {}))
