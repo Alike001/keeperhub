@@ -582,10 +582,14 @@ function splitDecimal(literal: string): DecimalOperand {
  * one is superlinear: 132 ms at 300,000 digits on the machine this was
  * measured on. Past this magnitude the operand is handed back unprinted and
  * the pair falls back to the comparison it had before this file converted
- * anything, which for a BigInt against a numeric string is JavaScript's own
- * BigInt comparison and already exact. Declining reverses nothing. The bound
- * is compared against rather than counted, so reaching it costs one BigInt
- * comparison.
+ * anything. Against a numeric string, `<`, `<=`, `>` and `>=` fall back to
+ * StringToBigInt, which is exact, so declining reverses no ordering. `===` and
+ * `!==` are not: they are type-strict across a BigInt and a string, so at or
+ * above the bound a BigInt and its own decimal spelling answer false on `<`,
+ * `===` and `>` at once. That is the all-false hole this file closes
+ * everywhere else, left open at or above 10^256 - not a regression, since it
+ * is what the pair answered before this file existed. The bound is compared
+ * against rather than counted, so reaching it costs one BigInt comparison.
  *
  * A uint256 is 78 digits, and that same value formatted with 18 decimals is 97
  * characters, so no on-chain read comes near it.
@@ -700,11 +704,11 @@ function compareDecimals(left: DecimalOperand, right: DecimalOperand): number {
 /**
  * Order two relational operands, or undefined to leave the comparison alone.
  *
- * `<`, `<=`, `>` and `>=` are documented as numeric ("Numeric less than" in
- * docs/workflows/creating.md, `category: "number"` in the operator metadata the
- * builder shows the user), but template resolution hands the evaluator its
- * values as strings, so two numbers would reach JavaScript's code-unit ordering
- * and `"9" < "10"` would be false.
+ * `<`, `<=`, `>` and `>=` are documented as comparing by magnitude
+ * (docs/workflows/creating.md, and `category: "number"` in the operator
+ * metadata the builder shows the user), but template resolution hands the
+ * evaluator its values as strings, so two numbers would reach JavaScript's
+ * code-unit ordering and `"9" < "10"` would be false.
  *
  * Both operands have to be decimals before either one moves, and the comparison
  * happens here rather than at the operator. Converting one side and letting the

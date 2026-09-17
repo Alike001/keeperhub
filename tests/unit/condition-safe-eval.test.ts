@@ -387,13 +387,28 @@ describe("safeEvaluateCondition - semantics", () => {
 
     it("hands back a BigInt too large to print, and nothing reverses", () => {
       // Printing a BigInt is superlinear - 132 ms at 300,000 digits - so past
-      // 10^256 the operand is handed back unprinted. The pair then falls back
-      // to JavaScript's own BigInt comparison, which converts the string and
-      // is exact, so declining to convert changes no answer here.
+      // 10^256 the operand is handed back unprinted. Ordering then falls back
+      // to StringToBigInt, which converts the string and is exact, so
+      // declining to convert reverses nothing.
       const beyond = BigInt(`1${"0".repeat(300)}`);
       expect(lt(beyond, "9".repeat(301))).toBe(true);
       expect(gt(beyond, "9".repeat(301))).toBe(false);
       expect(gt(beyond, "1")).toBe(true);
+
+      // Equality does not fall back the same way: === and !== are type-strict
+      // across a BigInt and a string, so at or above the bound a value and its
+      // own spelling answer false on <, === and > at once. That is the
+      // all-false hole, surviving only up there - and it is what the pair
+      // answered before this file existed, so nothing regressed. <= and >=
+      // still hold, which is what pins the inconsistency rather than leaving
+      // it implied.
+      const spelling = `1${"0".repeat(300)}`;
+      expect(lt(beyond, spelling)).toBe(false);
+      expect(gt(beyond, spelling)).toBe(false);
+      expect(cmp("===", beyond, spelling)).toBe(false);
+      expect(cmp("!==", beyond, spelling)).toBe(true);
+      expect(lte(beyond, spelling)).toBe(true);
+      expect(gte(beyond, spelling)).toBe(true);
 
       // Inside the bound it is printed and read as a decimal, so a BigInt and
       // the string spelling of the same value are one value.
