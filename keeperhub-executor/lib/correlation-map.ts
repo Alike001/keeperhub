@@ -26,9 +26,23 @@ const MAX_TRACKED = 1024;
 
 /**
  * How long a tracked entry may wait for observations before it is dropped.
- * An hour is far beyond any legitimate ingest delay (observations are posted as
- * their run finishes, and the slowest workflow here is minutes), so an entry
- * this old is one whose producer is never going to ship.
+ *
+ * An hour is deliberately far outside the range of any legitimate wait, in both
+ * directions:
+ *
+ *  - Entries that *do* ship belong to k8s-job runs, and that Job is bounded by
+ *    `activeDeadlineSeconds` (CONFIG.jobActiveDeadline, 300s by default) with the
+ *    ingest landing moments after the run ends. An hour is therefore twelve times
+ *    the longest wait the platform can produce - not a tuned threshold, but a
+ *    bound nothing legitimate can approach.
+ *  - Entries that never ship - in-process and api runs, and messages dropped
+ *    before dispatch - are the reason this bound exists at all. Reclaiming those
+ *    at an hour rather than immediately is the conservative end, and the asymmetry
+ *    decides it: being slow costs a held slot, being eager costs a real sample.
+ *
+ * One assumption, written down because it is invisible from here: if
+ * `JOB_ACTIVE_DEADLINE` is raised far above its default, this bound has to rise
+ * with it.
  */
 const MAX_TRACKED_AGE_MS = 60 * 60 * 1000;
 
