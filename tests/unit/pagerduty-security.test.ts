@@ -234,6 +234,24 @@ describe("create incident", () => {
     expect(JSON.parse(String(lastBody())).incident.priority).toBeUndefined();
   });
 
+  /**
+   * The sentinel was kept out of the request but not out of the output, so a
+   * node that left the priority to PagerDuty reported a priority of "none" to
+   * every downstream node reading the field.
+   */
+  it("reports no priority either when the sentinel was stored", async () => {
+    safeFetch.mockResolvedValue(response(201, { incident: { id: "PINC1" } }));
+    const result = await run({ pagerdutyPriorityId: "none" });
+    expect(result).toMatchObject({ success: true });
+    expect((result as { priorityId?: string }).priorityId).toBeUndefined();
+  });
+
+  it("reports the priority it was given", async () => {
+    safeFetch.mockResolvedValue(response(201, { incident: { id: "PINC1" } }));
+    const result = await run({ pagerdutyPriorityId: "PSLWBL8" });
+    expect(result).toMatchObject({ priorityId: "PSLWBL8" });
+  });
+
   it("falls back to the connection's From email", async () => {
     mockFetchCredentials.mockResolvedValue({
       PAGERDUTY_API_TOKEN: "t",

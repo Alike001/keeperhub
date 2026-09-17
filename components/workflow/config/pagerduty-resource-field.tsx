@@ -326,6 +326,13 @@ export function PagerDutyServiceField({
   );
 }
 
+/**
+ * Radix will not take an empty option value, so "no override" needs a sentinel
+ * of its own. It is mapped back to "" on the way out: the node stores a blank
+ * escalation policy, exactly as it does before anyone touches the field.
+ */
+const SERVICE_DEFAULT_POLICY = "service-default-policy";
+
 export function PagerDutyEscalationPolicyField({
   value,
   disabled,
@@ -337,11 +344,16 @@ export function PagerDutyEscalationPolicyField({
   integrationId?: string;
   onChange: (value: string) => void;
 }) {
-  const { items, loading, error, reload, accountSubdomain } =
+  const { items, loading, error, reload, accountSubdomain, truncated } =
     usePagerDutyResources(integrationId, "escalation-policies", pickPolicies);
 
   const selected = items.find((policy) => policy.id === value);
-  const missing = Boolean(value) && !loading && !error && !selected;
+  // Not claimed on a truncated list, for the same reason as the service field
+  // above: a policy on a page nobody fetched is not a deleted policy, and
+  // telling someone their escalation policy is gone during setup sends them
+  // to PagerDuty to look for something that is still there.
+  const missing =
+    Boolean(value) && !(loading || error || truncated) && !selected;
 
   if (!integrationId) {
     return (
@@ -355,7 +367,9 @@ export function PagerDutyEscalationPolicyField({
     <div className="space-y-2">
       <Select
         disabled={disabled || loading}
-        onValueChange={onChange}
+        onValueChange={(next) =>
+          onChange(next === SERVICE_DEFAULT_POLICY ? "" : next)
+        }
         value={value || undefined}
       >
         <SelectTrigger className="w-full">
@@ -366,6 +380,9 @@ export function PagerDutyEscalationPolicyField({
           />
         </SelectTrigger>
         <SelectContent>
+          <SelectItem value={SERVICE_DEFAULT_POLICY}>
+            Service default (recommended)
+          </SelectItem>
           {items.map((policy) => (
             <SelectItem key={policy.id} value={policy.id}>
               <span className="flex flex-col items-start">
@@ -401,9 +418,24 @@ export function PagerDutyEscalationPolicyField({
           will page the service's own policy instead.
         </Notice>
       )}
+
+      {truncated && (
+        <Notice tone="info">
+          This account has more escalation policies than are listed here. One
+          further down the list is not missing.
+        </Notice>
+      )}
     </div>
   );
 }
+
+/**
+ * "Leave it to PagerDuty" needs a sentinel because Radix rejects an empty
+ * option value, and it is mapped back to "" on the way out so the node stores
+ * a blank priority. The step still recognises the literal, so a node saved
+ * before this did survives.
+ */
+const NO_PRIORITY = "none";
 
 /**
  * The account's incident priorities. REST-only, and a paid-plan feature, so an
@@ -444,14 +476,14 @@ export function PagerDutyPriorityField({
     <div className="space-y-2">
       <Select
         disabled={disabled || loading}
-        onValueChange={onChange}
+        onValueChange={(next) => onChange(next === NO_PRIORITY ? "" : next)}
         value={value || undefined}
       >
         <SelectTrigger className="w-full">
           <SelectValue placeholder="Leave it to PagerDuty" />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="none">Leave it to PagerDuty</SelectItem>
+          <SelectItem value={NO_PRIORITY}>Leave it to PagerDuty</SelectItem>
           {items.map((priority) => (
             <SelectItem key={priority.id} value={priority.id}>
               <span className="flex flex-col items-start">
@@ -554,6 +586,14 @@ export function PagerDutyTriggerNodeField({
         </Notice>
       )}
 
+      {!(value || currentDedupKey?.trim()) && (
+        <Notice tone="warning">
+          Nothing is selected and no dedup key is set below, so this node has
+          no alert to close and the run will fail when it reaches it. Pick the
+          trigger node, or set the same dedup key on both nodes.
+        </Notice>
+      )}
+
       {serviceMismatch && (
         <Notice tone="warning">
           {selected?.label} pages service{" "}
@@ -582,6 +622,9 @@ const BACKUP_TYPES: ReadonlySet<string> = new Set([
   "slack",
   "telegram",
 ]);
+
+/** Same sentinel-to-blank mapping as the pickers above; Radix needs it. */
+const NO_BACKUP = "no-backup";
 
 const BACKUP_TYPE_LABEL: Record<string, string> = {
   discord: "Discord",
@@ -627,13 +670,14 @@ export function PagerDutyBackupConnectionField({
     <div className="space-y-2">
       <Select
         disabled={disabled}
-        onValueChange={onChange}
+        onValueChange={(next) => onChange(next === NO_BACKUP ? "" : next)}
         value={value || undefined}
       >
         <SelectTrigger className="w-full">
           <SelectValue placeholder="No backup - just fail the run" />
         </SelectTrigger>
         <SelectContent>
+          <SelectItem value={NO_BACKUP}>No backup - just fail the run</SelectItem>
           {usable.map((connection) => (
             <SelectItem key={connection.id} value={connection.id}>
               {connection.name}

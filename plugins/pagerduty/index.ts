@@ -213,6 +213,11 @@ const pagerDutyPlugin: IntegrationPlugin = {
             "True when the service was in maintenance, so PagerDuty took the event and raised no incident",
         },
         { field: "detailsTruncated", description: "True when custom details were dropped for size" },
+        {
+          field: "summaryFellBack",
+          description:
+            "True when the summary template rendered to nothing and the alert went out under a stand-in title",
+        },
         { field: "message", description: "PagerDuty's own response message" },
       ],
       configFields: [
@@ -380,6 +385,15 @@ const pagerDutyPlugin: IntegrationPlugin = {
           description: "The incident's priority when the check is on and it has one",
         },
         { field: "incidentUrl", description: "Link to the incident, when the check found it" },
+        {
+          field: "error",
+          description:
+            "Why the event was not delivered, when it was not and the node was told not to fail the run",
+        },
+        {
+          field: "verificationError",
+          description: "Why the check could not read the incident back, when it could not",
+        },
       ],
       configFields: [
         serviceField,
@@ -414,14 +428,24 @@ const pagerDutyPlugin: IntegrationPlugin = {
           description: "The incident's priority when the check is on and it has one",
         },
         { field: "incidentUrl", description: "Link to the incident, when the check found it" },
+        {
+          field: "error",
+          description:
+            "Why the event was not delivered, when it was not and the node was told not to fail the run",
+        },
+        {
+          field: "verificationError",
+          description: "Why the check could not read the incident back, when it could not",
+        },
       ],
       configFields: [
         serviceField,
         triggerNodeField,
         targetDedupKeyField,
-        // On by default for a resolve: an incident that quietly stays open is
-        // the failure this action exists to prevent, and the check is what
-        // turns PagerDuty's unconditional 202 into an answer.
+        // On by default here too, for the opposite reason to a resolve: an
+        // acknowledge that did not apply leaves PagerDuty escalating an
+        // incident the workflow believes it has taken responsibility for, and
+        // the 202 says nothing either way.
         verifyField("true"),
         { type: "group", label: "Delivery", fields: retryFields },
       ],
@@ -437,6 +461,12 @@ const pagerDutyPlugin: IntegrationPlugin = {
       docUrl: "https://docs.keeperhub.com/plugins/pagerduty",
       outputFields: [
         { field: "delivered", description: "Whether PagerDuty accepted the change event" },
+        {
+          field: "error",
+          description:
+            "Why the change event was not delivered, when it was not and the node was told not to fail the run",
+        },
+        { field: "message", description: "PagerDuty's own response message" },
       ],
       configFields: [
         serviceField,
@@ -481,6 +511,16 @@ const pagerDutyPlugin: IntegrationPlugin = {
         {
           field: "escalationPolicyFellBack",
           description: "True when the chosen policy was gone and the service's own was used",
+        },
+        { field: "delivered", description: "Whether PagerDuty created the incident" },
+        {
+          field: "priorityId",
+          description: "The priority the incident was created with, when one was chosen",
+        },
+        {
+          field: "error",
+          description:
+            "Why the incident was not created, when it was not and the node was told not to fail the run",
         },
       ],
       configFields: [

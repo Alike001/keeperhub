@@ -61,7 +61,7 @@ Open an alert, or update the one already open for the same dedup key.
 
 **Inputs:** PagerDuty service (picked from your account), Summary (becomes the alert title), Severity (`critical`, `error`, `warning`, `info`), Source, Dedup key, and optional Component, Group, Class and Custom details. Supports `{{NodeName.field}}` variables throughout.
 
-**Outputs:** `delivered`, `dedupKey`, `status` (`triggered`, `held`, or `failed`), `consecutiveRuns`, `requiredRuns`, `error`, `summaryFellBack`, `serviceStatus`, and the backup fields below.
+**Outputs:** `delivered`, `dedupKey`, `status` (`triggered`, `held`, or `failed`), `consecutiveRuns`, `requiredRuns`, `error`, `summaryFellBack`, `serviceStatus`, `suppressedByService`, `detailsTruncated`, `message`, and the backup fields below.
 
 **Deduplication.** Leave the dedup key blank and the node uses one key per node, so a check that keeps failing updates one alert instead of paging on every run. Put a vault address or chain id in the field to page per subject instead. Once an alert is resolved, the next trigger with the same key opens a new one.
 
@@ -87,7 +87,7 @@ Close, or acknowledge, the alert carrying a given dedup key.
 
 **Inputs:** PagerDuty service, Dedup key of the alert (required), and an optional check of the incident afterwards.
 
-**Outputs:** `delivered`, `dedupKey`, and, when the check is on, `incidentStatus`, `incidentUrl` and `incidentPriority`. The status is the one observed after the event was sent; the Events API is asynchronous, so it can still show the previous state for a moment.
+**Outputs:** `delivered`, `dedupKey`, `error` when the event was not delivered and the node was told not to fail the run, and, when the check is on, `incidentStatus`, `incidentUrl`, `incidentPriority` and `verificationError`. The status is the one observed after the event was sent; the Events API is asynchronous, so it can still show the previous state for a moment.
 
 Both actions need the dedup key of the alert they are closing. Pick the **Trigger Incident node** whose alert this closes and the same key is derived here; only set the dedup key field when that trigger uses a key of its own, in which case put the same value on both nodes.
 
@@ -110,6 +110,8 @@ Record a deploy, a config change or a migration on the service's timeline. Chang
 
 **Inputs:** PagerDuty service, Summary, Source, Custom details.
 
+**Outputs:** `delivered`, `message`, and `error` when the change event was not delivered and the node was told not to fail the run.
+
 ## Create Incident (REST)
 
 Create an incident directly rather than through an alert. This is the only action that can override the escalation policy, set urgency or set a priority, and the only one that needs a write-capable credential plus a **From email** -- the login email of a real PagerDuty user, which PagerDuty attributes the incident to.
@@ -118,7 +120,7 @@ Create an incident directly rather than through an alert. This is the only actio
 
 **Priority** is read from your account (P1, P2, and so on) and is a paid-plan feature -- an account without it shows nothing to pick. Only this action can set one: the Events API v2 payload has no priority field, so an alert raised by Trigger Incident takes its priority from your Event Orchestration rules instead. **Urgency** decides whether the incident notifies on-call at all; left at the service default, PagerDuty applies the service's urgency rule.
 
-**Outputs:** `incidentId`, `incidentNumber`, `incidentUrl`, `status`, `escalationPolicyFellBack`.
+**Outputs:** `delivered`, `incidentId`, `incidentNumber`, `incidentUrl`, `status`, `priorityId`, `escalationPolicyFellBack`, and `error` when the incident was not created and the node was told not to fail the run.
 
 Unlike the Events API dedup key, a repeated incident key is rejected by PagerDuty rather than merged, so leave it blank unless you are deliberately guarding against a double-create. If the escalation policy you chose has been deleted, the incident is still created on the service's own policy and the output says so; turn that fallback off to fail instead.
 

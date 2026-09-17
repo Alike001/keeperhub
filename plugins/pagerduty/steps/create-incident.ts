@@ -15,8 +15,18 @@ import {
   getEscalationPolicy,
 } from "./pagerduty-core";
 
-/** Sentinel for "leave it to PagerDuty"; Radix Select rejects an empty value. */
+/**
+ * Sentinel for "leave it to PagerDuty". The picker now stores a blank instead,
+ * but a node saved while it stored the literal must not start asking PagerDuty
+ * for a priority called "none", which is a 400.
+ */
 const NO_PRIORITY = "none";
+
+/** The configured priority, or nothing when the author left it to PagerDuty. */
+function chosenPriorityId(raw: string | undefined): string | undefined {
+  const trimmed = raw?.trim();
+  return trimmed && trimmed !== NO_PRIORITY ? trimmed : undefined;
+}
 
 const LOG_LABELS = {
   plugin_name: "pagerduty",
@@ -168,11 +178,7 @@ async function stepHandler(
     urgency,
     incidentKey: input.incidentKey,
     escalationPolicyId: policy.policyId,
-    priorityId:
-      input.pagerdutyPriorityId?.trim() &&
-      input.pagerdutyPriorityId !== NO_PRIORITY
-        ? input.pagerdutyPriorityId.trim()
-        : undefined,
+    priorityId: chosenPriorityId(input.pagerdutyPriorityId),
   });
 
   if (result.ok) {
@@ -183,7 +189,7 @@ async function stepHandler(
       incidentNumber: result.value.number,
       incidentUrl: result.value.htmlUrl,
       status: result.value.status,
-      priorityId: input.pagerdutyPriorityId?.trim() || undefined,
+      priorityId: chosenPriorityId(input.pagerdutyPriorityId),
       escalationPolicyFellBack: policy.fellBack,
     };
   }
