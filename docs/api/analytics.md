@@ -30,7 +30,7 @@ Returns aggregated analytics for the organization including run counts, success 
 | `range` | string | Time range: `1h`, `24h`, `7d`, `30d`, `custom` (default: `24h`). An unrecognised value is not rejected: `?range=90d` falls through to the `24h` offset |
 | `customStart` | string | ISO timestamp for custom range start |
 | `customEnd` | string | ISO timestamp for custom range end |
-| `projectId` | string | Restrict the figures to one workflow project. It also removes direct executions from the response entirely, so `totalRuns`, both gas totals and every network row lose their direct half |
+| `projectId` | string | Restrict the figures to one workflow project. It also removes direct executions from the response entirely, so `totalRuns` and both gas totals lose their direct half |
 
 ### Response
 
@@ -68,11 +68,11 @@ Returns aggregated analytics for the organization including run counts, success 
 | `errorCount` | number | Runs that failed |
 | `cancelledCount` | number | Workflow runs that were cancelled |
 | `skippedCount` | number | Workflow runs with status `skipped`, which is a run the platform refused before it started: over the plan limit, a gated action, or an unpaid pay-as-you-go charge |
-| `successRate` | number | Fraction of runs that succeeded, `0` to `1`, not a percentage. The dashboard renders it as a percentage by multiplying by 100 (`components/analytics/kpi-cards.tsx`), so a consumer that wants one has to do the same |
+| `successRate` | number | Fraction of runs that succeeded, `0` to `1`, not a percentage. The dashboard renders it by multiplying by 100, so a consumer that wants a percentage has to do the same |
 | `avgDurationMs` | number or null | Mean duration in milliseconds, or `null` when the window holds no completed run to average |
 | `totalGasWei` | string | Every wei the runs burned over the range, sponsored gas included. A decimal string, because the figure overflows a JavaScript number |
 | `sponsoredGasWei` | string | The sponsored portion of `totalGasWei`, read from the gas-credit ledger. A subset rather than a second figure: adding the two double counts, and the wallet-paid share is the subtraction |
-| `activeRuns` | number | Runs in flight at the moment of the request, counted for the organization rather than the window |
+| `activeRuns` | number | Runs in flight at the moment of the request, counted for the organization rather than the window. Under `projectId` it is scoped to that project and covers workflow runs only, because the direct-execution count is skipped when the parameter is set |
 | `previousPeriod` | object | The same counts over the window immediately before this one, so a caller can render deltas. It carries `totalRuns`, `successCount`, `errorCount`, `cancelledCount`, `skippedCount`, `avgDurationMs`, `totalGasWei` and `sponsoredGasWei`, and deliberately not `successRate` or `activeRuns`: derive the previous rate from its own `successCount / totalRuns` |
 
 ## Get Time Series Data
@@ -174,7 +174,7 @@ Returns a unified list of both workflow executions and direct executions with pa
 | `limit` | number | Results per page (default: 50, capped at 100: a larger value is clamped rather than rejected) |
 | `cursor` | string | Pagination cursor from previous response |
 | `page` | number | One-based page number, an alternative to `cursor`. Values below 1 are clamped to 1 |
-| `projectId` | string | Restrict the listing to one workflow project. Direct executions are excluded rather than filtered |
+| `projectId` | string | Restrict the listing to one workflow project. Direct executions are excluded rather than filtered, so every network row loses its direct half |
 
 ### Response
 
