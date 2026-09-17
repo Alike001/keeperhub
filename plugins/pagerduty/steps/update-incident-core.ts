@@ -32,6 +32,35 @@ import {
 const RETRY_ATTEMPT_LIMITS = { defaultAttempts: 2, maxAttempts: 5 };
 const RETRY_DELAY_LIMITS = { defaultDelaySeconds: 1, maxDelaySeconds: 15 };
 
+/**
+ * How long a resolve may be held back before it is sent.
+ *
+ * Capped low on purpose. This exists to lose a race by a second or two, not to
+ * schedule anything: the step is occupying a worker while it waits, and a
+ * resolve that needs longer than this is not racing a trigger, it is waiting
+ * on something that should be a separate node.
+ */
+export const MAX_SEND_DELAY_SECONDS = 5;
+
+/**
+ * Seconds to wait before sending, from a field that may arrive as a string
+ * from the editor or a number from an MCP caller.
+ *
+ * Anything unparseable means no delay rather than an error. Nothing about a
+ * stale or malformed config should be able to hold a resolve indefinitely -
+ * the failure mode of this whole node is an incident that stays open.
+ */
+export function resolveSendDelayMs(raw: unknown): number {
+  if (raw === undefined || raw === null || raw === "") {
+    return 0;
+  }
+  const value = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+  return Math.min(value, MAX_SEND_DELAY_SECONDS) * 1000;
+}
+
 export type UpdateIncidentCoreInput = {
   pagerdutyServiceId: string;
   dedupKey?: string;
@@ -39,6 +68,8 @@ export type UpdateIncidentCoreInput = {
   dedupKeyFromNodeId?: string;
   /** Read the incident back afterwards to report what state it is actually in. */
   verifyWithPagerDuty?: boolean | string;
+  /** Seconds to hold the event back, to lose a race against its own trigger. */
+  sendDelaySeconds?: number | string;
   retryAttempts?: number | string;
   retryDelay?: number | string;
   failOnError?: boolean | string;
@@ -65,6 +96,8 @@ export type UpdateIncidentResult =
       incidentPriority?: string;
       /** Why verification could not answer, when it could not. Never fails the step. */
       verificationError?: string;
+      /** Seconds this node waited before sending, when it was asked to wait. */
+      delayedSeconds?: number;
       error?: string;
       message?: string;
     }
@@ -236,6 +269,16 @@ export async function runUpdateIncident(params: {
     wait: sleep,
     onRetry,
   });
+
+  // Held back here rather than at the top of the step, so a run that cannot
+  // resolve its routing key fails immediately instead of waiting first, and so
+  // the wait sits as close to the send as it can - which is what the race
+  // needs. See the field's help text for what the race is.
+  const sendDelayMs = resolveSendDelayMs(input.sendDelaySeconds);
+  if (routingKey.ok && sendDelayMs > 0) {
+    await sleep(sendDelayMs);
+  }
+
   const result = routingKey.ok
     ? await postEventWithRetries({
         credentials,
@@ -265,6 +308,7 @@ export async function runUpdateIncident(params: {
       dedupKey,
       action,
       message: result.value.message,
+      delayedSeconds: sendDelayMs > 0 ? sendDelayMs / 1000 : undefined,
       ...verification,
     };
   }

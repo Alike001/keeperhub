@@ -85,7 +85,9 @@ Open an alert, or update the one already open for the same dedup key.
 
 That merging is also what makes concurrency safe here. Two runs of the same workflow overlapping, or the same node firing twice before the first run finishes, send two events carrying one key and PagerDuty folds them into a single alert -- one page, not two. The flip side is that two *different* Trigger Incident nodes given the same explicit key share one alert between them, and a Resolve on either closes it for both; the Preview warns when it sees that on a canvas, because nothing at run time will.
 
-The one ordering that does lose is a Resolve arriving before the Trigger it was meant to close -- possible when two runs overlap and the healthy one finishes first. PagerDuty drops an update whose key matches no open alert, so the Trigger then opens an alert nobody closes. No node can reorder two runs, but the read-back catches it: it is on by default and reports `incidentStatus: unknown`, which is the only signal there is.
+The one ordering that does lose is a Resolve arriving before the Trigger it was meant to close -- possible when two runs overlap and the healthy one finishes first. PagerDuty drops an update whose key matches no open alert, so the Trigger then opens an alert nobody closes.
+
+Two things address it. The read-back catches it after the fact: it is on by default and reports `incidentStatus: unknown`. And **Wait before sending** on the Resolve action avoids it in the first place -- set it to a second or two and the Resolve holds back long enough for the Trigger to land, so it closes a real alert instead of being dropped. The wait happens after the routing key is resolved and immediately before the event is sent, so it sits as close to the send as it can and a Resolve that cannot reach PagerDuty at all fails immediately rather than waiting first. It costs that much time on every run of that node, so leave it at 0 unless runs of the workflow can actually overlap. Maximum 5 seconds: this is for losing a race by a moment, not for scheduling, and the step occupies a worker while it waits. The node reports `delayedSeconds` when it waited.
 
 **Paging only after several failures.** Set **Consecutive runs before paging** to hold a flapping check. With 3, the first two runs that reach the node are held and the third pages. A run that finishes successfully without reaching the node resets the count, so one healthy check clears it. A run that failed, was cancelled, or was refused before it started does not reset it and does not advance it - it never got far enough to say whether the condition cleared, and during the outage this node exists to page for those are most of the runs. Held runs are recorded in the output, not silently dropped.
 
@@ -109,7 +111,9 @@ Close, or acknowledge, the alert carrying a given dedup key.
 
 **Inputs:** PagerDuty service, Dedup key of the alert (required), and an optional check of the incident afterwards.
 
-**Outputs:** `delivered`, `dedupKey`, `error` when the event was not delivered and the node was told not to fail the run, and, when the check is on, `incidentStatus`, `incidentUrl`, `incidentPriority` and `verificationError`. The status is the one observed after the event was sent; the Events API is asynchronous, so it can still show the previous state for a moment.
+**Outputs:** `delivered`, `dedupKey`, `delayedSeconds` when the Resolve was told to wait, `error` when the event was not delivered and the node was told not to fail the run, and, when the check is on, `incidentStatus`, `incidentUrl`, `incidentPriority` and `verificationError`. The status is the one observed after the event was sent; the Events API is asynchronous, so it can still show the previous state for a moment.
+
+Only Resolve carries **Wait before sending**; see the deduplication note above for the race it exists for. Acknowledge can hit the same ordering, but an acknowledge that is dropped leaves PagerDuty escalating normally, which is the safe direction -- a dropped resolve leaves an incident open.
 
 Both actions need the dedup key of the alert they are closing. Pick the **Trigger Incident node** whose alert this closes and the same key is derived here; only set the dedup key field when that trigger uses a key of its own, in which case put the same value on both nodes.
 

@@ -44,7 +44,10 @@ const { mockFetchCredentials } = vi.hoisted(() => ({
 vi.mock("@/lib/credential-fetcher", () => ({
   fetchCredentials: (...args: unknown[]) => mockFetchCredentials(...args),
 }));
-vi.mock("@/lib/sleep", () => ({ sleep: vi.fn().mockResolvedValue(undefined) }));
+const { mockSleep } = vi.hoisted(() => ({
+  mockSleep: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@/lib/sleep", () => ({ sleep: mockSleep }));
 
 /**
  * A workflow's run history, standing in for the two tables the streak query
@@ -249,6 +252,8 @@ beforeEach(() => {
   history.length = 0;
   clock = Date.parse("2026-03-01T00:00:00Z");
   safeFetch.mockReset();
+  mockSleep.mockReset();
+  mockSleep.mockResolvedValue(undefined);
   mockFetchCredentials.mockReset();
   mockFetchCredentials.mockResolvedValue({ PAGERDUTY_API_TOKEN: "tok" });
   clearOAuthTokenCache();
@@ -871,5 +876,80 @@ describe("simulation: two nodes fire at once", () => {
     expect(resolved.delivered).toBe(true);
     // The read-back is the part that does say something.
     expect(resolved.incidentStatus).toBe("unknown");
+  });
+
+  /**
+   * The same race with the delay field set. The resolve holds back before
+   * sending, the trigger lands in the meantime, and the resolve then closes a
+   * real alert instead of being dropped.
+   */
+  it("loses that race deliberately when the resolve is told to wait", async () => {
+    const arrived: string[] = [];
+    let triggerHasLanded = false;
+
+    mockSleep.mockImplementation(() => {
+      // What the wait is for: the trigger's event reaching PagerDuty first.
+      triggerHasLanded = true;
+      arrived.push("trigger");
+      return Promise.resolve(undefined);
+    });
+
+    safeFetch.mockReset();
+    safeFetch.mockImplementation((url: string) => {
+      const target = String(url);
+      if (target.includes("/integrations/")) {
+        return Promise.resolve(
+          response(200, { integration: { integration_key: "R1" } })
+        );
+      }
+      if (target.includes("/services/")) {
+        return Promise.resolve(
+          response(200, {
+            service: {
+              status: "active",
+              integrations: [
+                { id: "PI1", type: "events_api_v2_inbound_integration" },
+              ],
+            },
+          })
+        );
+      }
+      if (target.includes("/incidents")) {
+        // PagerDuty has the alert only because the trigger got there first.
+        return Promise.resolve(
+          response(200, {
+            incidents: triggerHasLanded
+              ? [{ id: "PINC1", status: "resolved" }]
+              : [],
+          })
+        );
+      }
+      arrived.push("resolve");
+      return Promise.resolve(response(202, { status: "success" }));
+    });
+
+    const resolved = (await resolveIncidentStep({
+      integrationId: "int-pd",
+      ...configureAsEditor("resolve-incident", {
+        pagerdutyServiceId: "PSKY1",
+        dedupKeyFromNodeId: TRIGGER_NODE,
+        sendDelaySeconds: 2,
+      }),
+      _context: {
+        nodeId: RESOLVE_NODE,
+        nodeName: "Close",
+        nodeType: "pagerduty/resolve-incident",
+        workflowId: WORKFLOW_ID,
+        organizationId: "org-1",
+      },
+    } as never)) as Record<string, unknown>;
+
+    expect(mockSleep).toHaveBeenCalledWith(2000);
+    expect(arrived).toEqual(["trigger", "resolve"]);
+    expect(resolved).toMatchObject({
+      delivered: true,
+      delayedSeconds: 2,
+      incidentStatus: "resolved",
+    });
   });
 });

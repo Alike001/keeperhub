@@ -29,7 +29,10 @@ const { mockFetchCredentials } = vi.hoisted(() => ({
 vi.mock("@/lib/credential-fetcher", () => ({
   fetchCredentials: (...args: unknown[]) => mockFetchCredentials(...args),
 }));
-vi.mock("@/lib/sleep", () => ({ sleep: vi.fn().mockResolvedValue(undefined) }));
+const { mockSleep } = vi.hoisted(() => ({
+  mockSleep: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@/lib/sleep", () => ({ sleep: mockSleep }));
 
 import { acknowledgeIncidentStep } from "@/plugins/pagerduty/steps/acknowledge-incident";
 import {
@@ -37,6 +40,10 @@ import {
   clearRoutingKeyCache,
 } from "@/plugins/pagerduty/steps/pagerduty-core";
 import { resolveIncidentStep } from "@/plugins/pagerduty/steps/resolve-incident";
+import {
+  MAX_SEND_DELAY_SECONDS,
+  resolveSendDelayMs,
+} from "@/plugins/pagerduty/steps/update-incident-core";
 
 const CONTEXT = {
   nodeId: "node-9",
@@ -77,6 +84,47 @@ beforeEach(() => {
   mockFetchCredentials.mockResolvedValue({ PAGERDUTY_API_TOKEN: "t" });
   clearOAuthTokenCache();
   clearRoutingKeyCache();
+  mockSleep.mockClear();
+});
+
+/**
+ * One ordering loses an incident: a resolve reaching PagerDuty before the
+ * trigger it was meant to close. PagerDuty drops an update matching no open
+ * alert, answering 202, and the trigger then opens an alert nobody closes.
+ * This field buys the trigger a head start.
+ */
+describe("resolveSendDelayMs", () => {
+  it("waits for nothing by default", () => {
+    expect(resolveSendDelayMs(undefined)).toBe(0);
+    expect(resolveSendDelayMs("")).toBe(0);
+    expect(resolveSendDelayMs(null)).toBe(0);
+    expect(resolveSendDelayMs(0)).toBe(0);
+  });
+
+  it("accepts the editor's strings and an MCP caller's numbers alike", () => {
+    expect(resolveSendDelayMs("2")).toBe(2000);
+    expect(resolveSendDelayMs(2)).toBe(2000);
+    expect(resolveSendDelayMs(1.5)).toBe(1500);
+  });
+
+  it("caps at the documented maximum rather than rejecting", () => {
+    expect(resolveSendDelayMs(60)).toBe(MAX_SEND_DELAY_SECONDS * 1000);
+    expect(resolveSendDelayMs("999")).toBe(MAX_SEND_DELAY_SECONDS * 1000);
+  });
+
+  /**
+   * The failure mode of this whole node is an incident that stays open, so no
+   * malformed or hostile value may hold a resolve back at all.
+   */
+  it("waits for nothing on a value it cannot read", () => {
+    expect(resolveSendDelayMs("soon")).toBe(0);
+    expect(resolveSendDelayMs(Number.NaN)).toBe(0);
+    // Infinity is not a long wait, it is an unreadable value - so it waits for
+    // nothing rather than being capped.
+    expect(resolveSendDelayMs(Number.POSITIVE_INFINITY)).toBe(0);
+    expect(resolveSendDelayMs(-5)).toBe(0);
+    expect(resolveSendDelayMs({})).toBe(0);
+  });
 });
 
 describe("resolve incident", () => {
@@ -324,5 +372,119 @@ describe("acknowledge incident", () => {
     } as never);
 
     expect(result).toMatchObject({ incidentStatus: "acknowledged" });
+  });
+
+  describe("waiting before the resolve is sent", () => {
+    it("does not wait at all when the field is left alone", async () => {
+      mockRoutingKey();
+      safeFetch.mockResolvedValue(response(202, {}));
+
+      const result = await resolveIncidentStep({
+        integrationId: "int-1",
+        pagerdutyServiceId: "PSKY1",
+        dedupKey: "k1",
+        verifyWithPagerDuty: false,
+        _context: CONTEXT,
+      } as never);
+
+      expect(mockSleep).not.toHaveBeenCalled();
+      expect(
+        (result as { delayedSeconds?: number }).delayedSeconds
+      ).toBeUndefined();
+    });
+
+    it("waits the configured seconds and reports that it did", async () => {
+      mockRoutingKey();
+      safeFetch.mockResolvedValue(response(202, {}));
+
+      const result = await resolveIncidentStep({
+        integrationId: "int-1",
+        pagerdutyServiceId: "PSKY1",
+        dedupKey: "k1",
+        sendDelaySeconds: 2,
+        verifyWithPagerDuty: false,
+        _context: CONTEXT,
+      } as never);
+
+      expect(mockSleep).toHaveBeenCalledWith(2000);
+      expect(result).toMatchObject({ delivered: true, delayedSeconds: 2 });
+    });
+
+    /**
+     * The wait sits between resolving the routing key and sending, so it is as
+     * close to the send as it can be - which is what the race needs - and a run
+     * that cannot resolve its routing key fails immediately instead of waiting
+     * first for no reason.
+     */
+    it("waits after the routing key is resolved, not before", async () => {
+      const order: string[] = [];
+      mockSleep.mockImplementation(() => {
+        order.push("slept");
+        return Promise.resolve(undefined);
+      });
+      safeFetch.mockImplementation((url: string) => {
+        order.push(String(url).includes("/v2/enqueue") ? "sent" : "read");
+        if (String(url).includes("/integrations/")) {
+          return Promise.resolve(
+            response(200, { integration: { integration_key: "R1" } })
+          );
+        }
+        if (String(url).includes("/services/")) {
+          return Promise.resolve(
+            response(200, {
+              service: {
+                integrations: [
+                  { id: "PI1", type: "events_api_v2_inbound_integration" },
+                ],
+              },
+            })
+          );
+        }
+        return Promise.resolve(response(202, {}));
+      });
+
+      await resolveIncidentStep({
+        integrationId: "int-1",
+        pagerdutyServiceId: "PSKY1",
+        dedupKey: "k1",
+        sendDelaySeconds: 3,
+        verifyWithPagerDuty: false,
+        _context: CONTEXT,
+      } as never);
+
+      expect(order).toEqual(["read", "read", "slept", "sent"]);
+    });
+
+    it("does not wait when the routing key could not be resolved", async () => {
+      safeFetch.mockResolvedValueOnce(response(404, {}));
+
+      const result = await resolveIncidentStep({
+        integrationId: "int-1",
+        pagerdutyServiceId: "PSKY1",
+        dedupKey: "k1",
+        sendDelaySeconds: 5,
+        failOnError: false,
+        _context: CONTEXT,
+      } as never);
+
+      expect(mockSleep).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ delivered: false });
+    });
+
+    it("never waits longer than the documented maximum", async () => {
+      mockRoutingKey();
+      safeFetch.mockResolvedValue(response(202, {}));
+
+      await resolveIncidentStep({
+        integrationId: "int-1",
+        pagerdutyServiceId: "PSKY1",
+        dedupKey: "k1",
+        sendDelaySeconds: "600",
+        verifyWithPagerDuty: false,
+        _context: CONTEXT,
+      } as never);
+
+      expect(mockSleep).toHaveBeenCalledWith(MAX_SEND_DELAY_SECONDS * 1000);
+    });
   });
 });

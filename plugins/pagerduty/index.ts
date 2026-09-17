@@ -120,6 +120,33 @@ const targetDedupKeyField: ActionConfigFieldBase = {
     "Only needed when the trigger sets its own dedup key: put the same value here. PagerDuty requires a key for acknowledge and resolve, and drops an event whose key matches no open alert - with a 202, so it looks exactly like success. The service must be the same one the trigger used, too.",
 };
 
+/**
+ * Hold the resolve back for a moment before sending it.
+ *
+ * For one ordering that genuinely loses an incident. When two runs of a
+ * workflow overlap and the healthy one finishes first, the resolve can reach
+ * PagerDuty before the trigger it was meant to close. PagerDuty drops an
+ * update whose key matches no open alert - answering 202, so nothing complains
+ * - and the trigger then opens an alert nobody ever closes.
+ *
+ * No node can reorder two runs, and the read-back reports it afterwards, but
+ * reporting an incident that stayed open is worse than not leaving one. A
+ * second or two of delay is enough to lose the race deliberately, and it costs
+ * nothing on the common path where there is no race: the alert is already open
+ * and a slightly later resolve closes it just the same.
+ */
+const sendDelayField: ActionConfigFieldBase = {
+  key: "sendDelaySeconds",
+  label: "Wait before sending (seconds)",
+  type: "number",
+  min: 0,
+  max: 5,
+  placeholder: "0",
+  example: "2",
+  helpText:
+    "Holds the resolve back before sending it. For the case where two runs of this workflow overlap and the healthy one finishes first: the resolve can then reach PagerDuty before the trigger it is closing, and PagerDuty drops an update matching no open alert - with a 202, so it looks like success - leaving an incident nobody closes. A second or two loses that race on purpose. It costs exactly that much time on every run, so leave it at 0 unless runs of this workflow can overlap. Default 0, max 5.",
+};
+
 function verifyField(defaultValue: "true" | "false"): ActionConfigFieldBase {
   return {
     key: "verifyWithPagerDuty",
@@ -444,6 +471,11 @@ const pagerDutyPlugin: IntegrationPlugin = {
           field: "verificationError",
           description: "Why the check could not read the incident back, when it could not",
         },
+        {
+          field: "delayedSeconds",
+          description:
+            "Seconds this node waited before sending, when it was asked to wait",
+        },
       ],
       configFields: [
         serviceField,
@@ -453,7 +485,11 @@ const pagerDutyPlugin: IntegrationPlugin = {
         // the failure this action exists to prevent, and the check is what
         // turns PagerDuty's unconditional 202 into an answer.
         verifyField("true"),
-        { type: "group", label: "Delivery", fields: retryFields },
+        {
+          type: "group",
+          label: "Delivery",
+          fields: [sendDelayField, ...retryFields],
+        },
         testNodeField,
       ],
     },
