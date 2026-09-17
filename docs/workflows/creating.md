@@ -133,12 +133,16 @@ Combine multiple rules with **AND** / **OR** logic toggles, and nest groups for 
 **What counts as a number:** an operand is compared by magnitude only when it is a
 plain decimal - an optional sign, digits, and at most one point, such as `42`, `-0.50` or
 `1000000000000000000`. A JavaScript number is read through the shortest decimal that prints it
-back, so one large or small enough to print in exponent form is not one. Hex, exponent form and
-anything carrying whitespace are outside the grammar, which matches the visual builder: it quotes
-such a value rather than emitting a bare number.
+back, so one large or small enough to print in exponent form is not one. Hex and exponent form are
+outside the grammar, and the visual builder agrees: it quotes such a value rather than emitting a
+bare number. Whitespace is outside the grammar too, but the builder trims what you type before it
+decides, so `  42  ` still emits a bare `42`. An operand that keeps its spaces reaches a comparison
+through template resolution or a hand-written expression, not through the builder.
 
 **Outside that grammar the comparison is JavaScript's own, which is not numeric.** Two strings are
-then ordered character by character, and that still produces an answer - the wrong one. A pair of
+then ordered character by character. For text meant to be read that way - a word, an ISO date -
+that is the answer you want. For a number written in a form the grammar does not cover it is an
+answer about spelling, which can disagree with magnitude, and it still runs a branch. A pair of
 different types usually produces no answer at all: `<`, `===` and `>` are false at once, so a
 Condition branching on all three takes no branch.
 
@@ -148,10 +152,18 @@ Condition branching on all three takes no branch.
 "0x10" vs 16                          <  false   ===  false    >  false
 1e21   vs "1000000000000000000000"    <  false   ===  false    >  false
 " 1"   vs 1                           <  false   ===  false    >  false
+""     vs 0                           <  false   ===  false    >  false
 ```
 
-`"0x10" < "16"` is true because `"0"` sorts before `"6"`, and `"1e18" > "1000000000000000000"` is
+`"0x10" < "16"` is true because `"0"` sorts before `"1"`, and `"1e18" > "1000000000000000000"` is
 true because `"e"` sorts after `"0"`. Write the value as a plain decimal and both go away.
+
+The last row is the one to watch, because a template that resolves to blank produces it without
+anyone writing an odd literal. `""` is not a decimal, so the pair falls to JavaScript, which reads
+a blank string as `0`: against `0` that is the all-false case, and against any other number the
+comparison answers as though the field held zero. Guard the field with `isNotEmpty` in an earlier
+clause rather than letting the comparison decide - `exists` will not catch it, since a blank string
+is neither null nor undefined.
 
 **When to use `doesNotExist` vs `isNull` / `isUndefined`:** `exists` and `doesNotExist` treat null and undefined the same, which is the right choice for most checks (for example, a node output field that may or may not be present). Reach for `isNull`, `isNotNull`, `isUndefined`, or `isNotUndefined` only when you need to tell null and undefined apart, since these match one but not the other.
 
