@@ -9,6 +9,7 @@ vi.mock("@/lib/safe-fetch", () => ({
 }));
 
 import {
+  cacheSizesForTest,
   clearOAuthTokenCache,
   clearRoutingKeyCache,
   createIncident,
@@ -291,6 +292,94 @@ describe("OAuth scope requests", () => {
     expect(retried).toBe(
       "as_account-us.acme services.read escalation_policies.read"
     );
+  });
+});
+
+/**
+ * Both caches are keyed by the credential, so a rotation mints keys the old
+ * entries can never be reached by again, and the routing key cache adds a
+ * dimension per service. `expiresAt` only decides whether an entry may be
+ * used - on its own it evicts nothing, so a worker that stays up for weeks
+ * and serves every organisation grew these maps forever.
+ */
+describe("the in-process caches do not grow without bound", () => {
+  it("drops an expired entry rather than carrying it", async () => {
+    safeFetch.mockResolvedValue(
+      response(200, {
+        service: {
+          integrations: [
+            { id: "PI1", type: "events_api_v2_inbound_integration" },
+          ],
+        },
+      })
+    );
+    safeFetch.mockResolvedValue(
+      response(200, { integration: { integration_key: "R1" } })
+    );
+
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now");
+    try {
+      clock.mockReturnValue(now);
+      safeFetch
+        .mockResolvedValueOnce(
+          response(200, {
+            service: {
+              integrations: [
+                { id: "PI1", type: "events_api_v2_inbound_integration" },
+              ],
+            },
+          })
+        )
+        .mockResolvedValueOnce(
+          response(200, { integration: { integration_key: "R1" } })
+        );
+      await resolveRoutingKey(TOKEN_CREDS, "PSKY1");
+      expect(cacheSizesForTest().routingKeys).toBe(1);
+
+      // Past the five-minute TTL, writing any other entry sweeps the dead one.
+      clock.mockReturnValue(now + 6 * 60 * 1000);
+      safeFetch
+        .mockResolvedValueOnce(
+          response(200, {
+            service: {
+              integrations: [
+                { id: "PI2", type: "events_api_v2_inbound_integration" },
+              ],
+            },
+          })
+        )
+        .mockResolvedValueOnce(
+          response(200, { integration: { integration_key: "R2" } })
+        );
+      await resolveRoutingKey(TOKEN_CREDS, "PSKY2");
+      expect(cacheSizesForTest().routingKeys).toBe(1);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("keeps an entry that is still live", async () => {
+    for (const [service, key] of [
+      ["PSKY1", "R1"],
+      ["PSKY2", "R2"],
+    ]) {
+      safeFetch
+        .mockResolvedValueOnce(
+          response(200, {
+            service: {
+              integrations: [
+                { id: "PI1", type: "events_api_v2_inbound_integration" },
+              ],
+            },
+          })
+        )
+        .mockResolvedValueOnce(
+          response(200, { integration: { integration_key: key } })
+        );
+      await resolveRoutingKey(TOKEN_CREDS, service);
+    }
+    expect(cacheSizesForTest().routingKeys).toBe(2);
   });
 });
 

@@ -225,9 +225,48 @@ const oauthTokens = new Map<
   { header: string; expiresAt: number; credentialKey: string }
 >();
 
+/**
+ * How many entries either in-process cache may hold.
+ *
+ * Both are keyed by the credential, so every rotation mints keys that the old
+ * ones can never be reached by again, and the routing key cache adds a
+ * dimension per service. `expiresAt` decides whether an entry may be *used*;
+ * on its own it evicts nothing, so in a worker that stays up for weeks and
+ * serves every organisation the maps only ever grow. The cap is generous
+ * enough that a busy process never reaches it in normal use, and losing a live
+ * entry costs one REST read or one token exchange - both paths the code
+ * already takes on a miss.
+ */
+const MAX_CACHE_ENTRIES = 500;
+
+function pruneCache<V extends { expiresAt: number }>(
+  cache: Map<string, V>
+): void {
+  const now = Date.now();
+  for (const [key, entry] of cache) {
+    if (entry.expiresAt <= now) {
+      cache.delete(key);
+    }
+  }
+  // A Map iterates in insertion order, so this drops the least recently
+  // written first.
+  while (cache.size >= MAX_CACHE_ENTRIES) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) {
+      break;
+    }
+    cache.delete(oldest);
+  }
+}
+
 /** Exported for tests, which need a clean cache between cases. */
 export function clearOAuthTokenCache(): void {
   oauthTokens.clear();
+}
+
+/** Exported for tests: how many entries a cache is currently holding. */
+export function cacheSizesForTest(): { oauth: number; routingKeys: number } {
+  return { oauth: oauthTokens.size, routingKeys: routingKeys.size };
 }
 
 /**
@@ -362,6 +401,7 @@ async function fetchOAuthHeader(
     const header = `Bearer ${parsed.access_token}`;
     const lifetimeMs = (parsed.expires_in ?? 0) * 1000;
     if (lifetimeMs > OAUTH_EXPIRY_SKEW_MS) {
+      pruneCache(oauthTokens);
       oauthTokens.set(oauthCacheKey(credentials, scopes), {
         header,
         expiresAt: Date.now() + lifetimeMs - OAUTH_EXPIRY_SKEW_MS,
@@ -850,6 +890,7 @@ export async function resolveRoutingKey(
     };
   }
   const serviceStatus = service.value.service?.status;
+  pruneCache(routingKeys);
   routingKeys.set(cacheKey, {
     key,
     serviceStatus,
