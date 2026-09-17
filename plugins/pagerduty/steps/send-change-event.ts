@@ -15,12 +15,13 @@ import {
 } from "@/lib/workflow/retry-policy";
 import type { PagerDutyCredentials } from "../credentials";
 import {
+  describeTrims,
   failureIsExternal,
   MAX_EVENT_BYTES,
-  MAX_SUMMARY_CHARS,
   postEventWithRetries,
   resolveRoutingKeyWithRetries,
-  truncateRunes,
+  type Trim,
+  trimToLimit,
 } from "./pagerduty-core";
 
 const RETRY_ATTEMPT_LIMITS = { defaultAttempts: 2, maxAttempts: 5 };
@@ -49,7 +50,14 @@ export type SendChangeEventInput = StepInput &
   };
 
 type SendChangeEventResult =
-  | { success: true; delivered: boolean; error?: string; message?: string }
+  | {
+      success: true;
+      delivered: boolean;
+      error?: string;
+      message?: string;
+      /** Fields PagerDuty's ceilings forced shorter, named and measured. */
+      fieldsTrimmed?: string;
+    }
   | { success: false; error: string; errorClass?: ExecutionErrorType };
 
 function parseDetails(
@@ -84,13 +92,14 @@ function buildChangeEventBody(params: {
   summary: string;
   source: string;
   details?: Record<string, unknown>;
+  trims: Trim[];
 }): Record<string, unknown> {
   const body: Record<string, unknown> = {
     routing_key: params.routingKey,
     payload: {
-      summary: truncateRunes(params.summary, MAX_SUMMARY_CHARS),
+      summary: trimToLimit(params.summary, "Summary", params.trims),
       timestamp: new Date().toISOString(),
-      source: truncateRunes(params.source, MAX_SUMMARY_CHARS),
+      source: trimToLimit(params.source, "Source", params.trims),
       custom_details: params.details,
     },
   };
@@ -142,12 +151,14 @@ async function stepHandler(
     wait: sleep,
   });
 
+  const trims: Trim[] = [];
   const body = routingKey.ok
     ? buildChangeEventBody({
         routingKey: routingKey.value.routingKey,
         summary,
         source: input.source?.trim() || input._context?.nodeName || "KeeperHub",
         details: parseDetails(input.customDetails),
+        trims,
       })
     : undefined;
 
@@ -168,6 +179,7 @@ async function stepHandler(
       success: true,
       delivered: true,
       message: "message" in result.value ? result.value.message : undefined,
+      fieldsTrimmed: describeTrims(trims),
     };
   }
 

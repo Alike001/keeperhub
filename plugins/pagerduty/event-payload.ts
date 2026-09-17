@@ -36,6 +36,65 @@ export function truncateRunes(value: string, max: number): string {
   return runes.length <= max ? value : runes.slice(0, max).join("");
 }
 
+/**
+ * The documented ceiling for each field, by the name a user sees on the node.
+ *
+ * Only the first two are PagerDuty's own: it documents 1024 characters for an
+ * alert summary and 255 for a dedup key, and rejects an event over 512 KB
+ * whole. The rest carry the summary's ceiling as a house rule, because
+ * PagerDuty documents none and an unbounded templated value is how an event
+ * reaches the size limit with nothing left to drop.
+ */
+export const FIELD_LIMITS: Readonly<Record<string, number>> = {
+  Summary: MAX_SUMMARY_CHARS,
+  "Dedup key": MAX_DEDUP_KEY_CHARS,
+  Source: MAX_SUMMARY_CHARS,
+  Component: MAX_SUMMARY_CHARS,
+  Group: MAX_SUMMARY_CHARS,
+  Class: MAX_SUMMARY_CHARS,
+  Title: MAX_SUMMARY_CHARS,
+  "Incident key": MAX_DEDUP_KEY_CHARS,
+};
+
+/** What a value was shortened from, for the node to report and the preview to warn about. */
+export type Trim = { field: string; from: number; to: number };
+
+/**
+ * Trim to the field's limit and record it if anything was lost.
+ *
+ * Trimming rather than rejecting is deliberate - an alert with a shortened
+ * title still wakes the right person, and refusing to page over a long
+ * template would be the worse failure. But it is never silent: every caller
+ * collects these and reports them, because a title cut in half is something
+ * the author has to know about, and they will not be reading the incident.
+ */
+export function trimToLimit(
+  value: string,
+  field: string,
+  into: Trim[]
+): string {
+  const max = FIELD_LIMITS[field] ?? MAX_SUMMARY_CHARS;
+  const length = [...value].length;
+  if (length <= max) {
+    return value;
+  }
+  into.push({ field, from: length, to: max });
+  return truncateRunes(value, max);
+}
+
+/** One sentence naming what was shortened, for a log line or a node output. */
+export function describeTrims(trims: Trim[]): string | undefined {
+  if (trims.length === 0) {
+    return;
+  }
+  return trims
+    .map(
+      (trim) =>
+        `${trim.field} was ${trim.from} characters and PagerDuty takes ${trim.to}, so it was shortened`
+    )
+    .join("; ");
+}
+
 export function normaliseSeverity(raw: unknown): PagerDutySeverity {
   const value = typeof raw === "string" ? raw.trim().toLowerCase() : "";
   return SEVERITIES.has(value) ? (value as PagerDutySeverity) : "error";
@@ -49,11 +108,17 @@ export function normaliseSeverity(raw: unknown): PagerDutySeverity {
  */
 export function deriveDedupKey(
   configured: string | undefined,
-  context: { workflowId?: string; nodeId?: string }
+  context: { workflowId?: string; nodeId?: string },
+  trims: Trim[] = []
 ): string {
   const explicit = configured?.trim();
   if (explicit) {
-    return truncateRunes(explicit, MAX_DEDUP_KEY_CHARS);
+    // Worth reporting rather than trimming quietly: a key over the limit is
+    // trimmed identically everywhere, so the trigger and the resolve still
+    // agree - but an author who set two keys differing only after character
+    // 255 has two nodes that now share one alert, and nothing else would say
+    // so.
+    return trimToLimit(explicit, "Dedup key", trims);
   }
   const workflowId = context.workflowId ?? "workflow";
   const nodeId = context.nodeId ?? "node";
@@ -153,8 +218,9 @@ export function buildTriggerEvent(params: {
   dedupKey: string;
   timestamp: string;
   input: EventPayloadInput;
-}): { body: PagerDutyEventBody; detailsDropped: boolean } {
+}): { body: PagerDutyEventBody; detailsDropped: boolean; trims: Trim[] } {
   const { input } = params;
+  const trims: Trim[] = [];
   const body: PagerDutyEventBody = {
     routing_key: params.routingKey,
     event_action: "trigger",
@@ -163,27 +229,27 @@ export function buildTriggerEvent(params: {
     client_url: omitEmpty(input.clientUrl),
     links: input.links?.length ? input.links : undefined,
     payload: {
-      summary: truncateRunes(input.summary, MAX_SUMMARY_CHARS),
+      summary: trimToLimit(input.summary, "Summary", trims),
       severity: normaliseSeverity(input.severity),
       // PagerDuty documents no limit on source, but an unbounded templated
       // value is how an event ends up over the size limit with nothing left
       // to drop.
-      source: truncateRunes(input.source, MAX_SUMMARY_CHARS),
+      source: trimToLimit(input.source, "Source", trims),
       timestamp: params.timestamp,
       // Bounded for the same reason as source. These three were the last
       // templated fields with no ceiling, and the size guard below can only
       // drop custom details and links - so a component that rendered to
       // something enormous produced a 400 nothing could mitigate, and the
       // page was lost to a field nobody thinks of as risky.
-      component: omitEmpty(truncateRunes(input.component ?? "", MAX_SUMMARY_CHARS)),
-      group: omitEmpty(truncateRunes(input.group ?? "", MAX_SUMMARY_CHARS)),
-      class: omitEmpty(truncateRunes(input.class ?? "", MAX_SUMMARY_CHARS)),
+      component: omitEmpty(trimToLimit(input.component ?? "", "Component", trims)),
+      group: omitEmpty(trimToLimit(input.group ?? "", "Group", trims)),
+      class: omitEmpty(trimToLimit(input.class ?? "", "Class", trims)),
       custom_details: input.customDetails,
     },
   };
 
   if (byteLength(JSON.stringify(body)) <= MAX_EVENT_BYTES) {
-    return { body, detailsDropped: false };
+    return { body, detailsDropped: false, trims };
   }
 
   if (body.payload) {
@@ -197,7 +263,7 @@ export function buildTriggerEvent(params: {
   if (byteLength(JSON.stringify(body)) > MAX_EVENT_BYTES) {
     body.links = undefined;
   }
-  return { body, detailsDropped: true };
+  return { body, detailsDropped: true, trims };
 }
 
 export function buildUpdateEvent(params: {

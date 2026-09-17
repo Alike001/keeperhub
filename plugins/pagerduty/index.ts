@@ -79,7 +79,7 @@ const dedupKeyField: ActionConfigFieldBase = {
   type: "template-input",
   placeholder: "Leave blank for one alert per node",
   helpText:
-    "PagerDuty groups events that share this key. Blank means one open alert per node, so a check that keeps failing updates that alert instead of paging again. Put a vault or chain id in here to page per subject. Trimmed to 255 characters.",
+    "PagerDuty groups events that share this key. Blank means one open alert per node, so a check that keeps failing updates that alert instead of paging again. Put a vault or chain id in here to page per subject. PagerDuty's limit is 255 characters and a longer one is shortened - which matters here more than elsewhere, because two keys that differ only after character 255 become one alert.",
 };
 
 /**
@@ -239,6 +239,11 @@ const pagerDutyPlugin: IntegrationPlugin = {
             "How many lines of the links field were not an https url, so were not sent",
         },
         {
+          field: "fieldsTrimmed",
+          description:
+            "Which fields were over PagerDuty's limit and were shortened, with their lengths",
+        },
+        {
           field: "summaryFellBack",
           description:
             "True when the summary template rendered to nothing and the alert went out under a stand-in title",
@@ -255,7 +260,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
           example: "Keeper stalled on Ethereum",
           required: true,
           helpText:
-            "Becomes the alert title. Trimmed to PagerDuty's 1024-character limit.",
+            "Becomes the alert title. PagerDuty's limit is 1024 characters; anything longer is shortened rather than rejected, because an alert with a cut title still wakes the right person. The Preview below says when a value is over, and the node's `fieldsTrimmed` output says so after a run, since a template can only be measured once it has rendered.",
         },
         {
           key: "severity",
@@ -277,7 +282,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
           type: "template-input",
           placeholder: "The system the event is about",
           helpText:
-            "PagerDuty requires a source. Defaults to this node's name.",
+            "PagerDuty requires a source. Defaults to this node's name. Shortened past 1024 characters, and the node says when it did.",
         },
         dedupKeyField,
         {
@@ -306,21 +311,24 @@ const pagerDutyPlugin: IntegrationPlugin = {
               label: "Component",
               type: "template-input",
               placeholder: "vault-monitor",
-              helpText: "The part of the source the event is about.",
+              helpText:
+                "The part of the source the event is about. Shortened past 1024 characters, and the node says when it did.",
             },
             {
               key: "group",
               label: "Group",
               type: "template-input",
               placeholder: "sky-keepers",
-              helpText: "A logical grouping of components.",
+              helpText:
+                "A logical grouping of components. Shortened past 1024 characters, and the node says when it did.",
             },
             {
               key: "class",
               label: "Class",
               type: "template-input",
               placeholder: "liquidation",
-              helpText: "The type of event, used by PagerDuty event rules.",
+              helpText:
+                "The type of event, used by PagerDuty event rules. Shortened past 1024 characters, and the node says when it did.",
             },
             {
               key: "customDetails",
@@ -329,7 +337,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
               rows: 4,
               placeholder: '{ "vault": "{{Check Vault.id}}" }',
               helpText:
-                "JSON object shown on the incident. The workflow, run and node ids are added automatically. Dropped with a note if the event would exceed PagerDuty's 512 KB limit.",
+                "JSON object shown on the incident. The workflow, run and node ids are added automatically. PagerDuty rejects an event over 512 KB outright, so if the whole event would exceed it these are dropped and replaced by a note rather than losing the page; the node's `detailsTruncated` output says when that happened.",
             },
             {
               key: "links",
@@ -487,6 +495,11 @@ const pagerDutyPlugin: IntegrationPlugin = {
       outputFields: [
         { field: "delivered", description: "Whether PagerDuty accepted the change event" },
         {
+          field: "fieldsTrimmed",
+          description:
+            "Which fields were over PagerDuty's limit and were shortened, with their lengths",
+        },
+        {
           field: "error",
           description:
             "Why the change event was not delivered, when it was not and the node was told not to fail the run",
@@ -539,6 +552,11 @@ const pagerDutyPlugin: IntegrationPlugin = {
         },
         { field: "delivered", description: "Whether PagerDuty created the incident" },
         {
+          field: "fieldsTrimmed",
+          description:
+            "Which fields were over PagerDuty's limit and were shortened, with their lengths",
+        },
+        {
           field: "priorityId",
           description: "The priority the incident was created with, when one was chosen",
         },
@@ -556,6 +574,8 @@ const pagerDutyPlugin: IntegrationPlugin = {
           type: "template-input",
           placeholder: "Keeper stalled: {{Check Vault.message}}",
           required: true,
+          helpText:
+            "Shortened past 1024 characters, the same ceiling an alert summary carries, and the node's `fieldsTrimmed` output says when it was.",
         },
         {
           key: "details",
@@ -604,7 +624,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
           type: "template-input",
           placeholder: "Optional",
           helpText:
-            "PagerDuty rejects a repeat of an open incident's key rather than merging it, unlike the Events API dedup key. Leave blank unless you are deliberately guarding against a double-create.",
+            "PagerDuty rejects a repeat of an open incident's key rather than merging it, unlike the Events API dedup key. Leave blank unless you are deliberately guarding against a double-create. Shortened past 255 characters.",
         },
         {
           key: "fromEmail",

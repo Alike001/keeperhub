@@ -25,12 +25,14 @@ import {
 import {
   buildTriggerEvent,
   deriveDedupKey,
+  describeTrims,
   failureIsExternal,
   type PagerDutyFailure,
   parseLinks,
   postEventWithRetries,
   resolveRoutingKeyWithRetries,
   serviceSwallowsEvents,
+  type Trim,
 } from "./pagerduty-core";
 
 const RETRY_ATTEMPT_LIMITS = { defaultAttempts: 2, maxAttempts: 5 };
@@ -93,6 +95,12 @@ type TriggerIncidentResult =
       detailsTruncated?: boolean;
     /** Lines of the links field that were not an https url, so were not sent. */
     linksDropped?: number;
+    /**
+     * Fields PagerDuty's ceilings forced shorter, named and measured. Present
+     * only when something was actually shortened, so a Condition can branch on
+     * it and a person reading the run can see what the responder did not.
+     */
+    fieldsTrimmed?: string;
       /** True when the summary template rendered empty and a fallback title was sent. */
       summaryFellBack?: boolean;
       /** PagerDuty's service status at send time. */
@@ -272,10 +280,12 @@ async function stepHandler(
 ): Promise<TriggerIncidentResult> {
   const failOnError = resolveFailOnError(input.failOnError);
   const context = input._context ?? { nodeId: "", nodeName: "", nodeType: "" };
-  const dedupKey = deriveDedupKey(input.dedupKey, {
-    workflowId: context.workflowId,
-    nodeId: context.nodeId,
-  });
+  const trims: Trim[] = [];
+  const dedupKey = deriveDedupKey(
+    input.dedupKey,
+    { workflowId: context.workflowId, nodeId: context.nodeId },
+    trims
+  );
   const requiredRuns = resolveConsecutiveRuns(input.consecutiveRuns);
 
   const serviceId = input.pagerdutyServiceId?.trim();
@@ -396,7 +406,11 @@ async function stepHandler(
   }
 
   const parsedLinks = parseLinks(input.links);
-  const { body, detailsDropped } = buildTriggerEvent({
+  const {
+    body,
+    detailsDropped,
+    trims: payloadTrims,
+  } = buildTriggerEvent({
     routingKey: routingKey.value.routingKey,
     dedupKey,
     timestamp: new Date().toISOString(),
@@ -422,6 +436,20 @@ async function stepHandler(
       clientUrl: workflowUrl,
     },
   });
+
+  trims.push(...payloadTrims);
+  const fieldsTrimmed = describeTrims(trims);
+  if (fieldsTrimmed) {
+    // The author is the only person who can fix this, and they will not be
+    // reading the incident - the responder will, and they have no way to know
+    // a title was cut. So it is said here, and carried in the output.
+    logUserError(
+      ErrorCategory.VALIDATION,
+      "[PagerDuty] Field over PagerDuty's limit, shortened before sending",
+      fieldsTrimmed,
+      LOG_LABELS
+    );
+  }
 
   const result = await postEventWithRetries({
     credentials,
@@ -488,6 +516,7 @@ async function stepHandler(
     requiredRuns,
     detailsTruncated: detailsDropped,
     linksDropped: parsedLinks.dropped || undefined,
+    fieldsTrimmed,
     summaryFellBack,
     serviceStatus: routingKey.value.serviceStatus,
     suppressedByService: suppressed,

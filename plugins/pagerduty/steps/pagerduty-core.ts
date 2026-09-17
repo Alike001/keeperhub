@@ -29,16 +29,20 @@ import {
 } from "@/lib/workflow/retry-policy";
 import type { PagerDutyCredentials } from "../credentials";
 import {
-  MAX_DEDUP_KEY_CHARS,
-  MAX_SUMMARY_CHARS,
+  describeTrims,
   type PagerDutyEventBody,
-  truncateRunes,
+  type Trim,
+  trimToLimit,
 } from "../event-payload";
 
 export {
   buildTriggerEvent,
   buildUpdateEvent,
   deriveDedupKey,
+  describeTrims,
+  FIELD_LIMITS,
+  type Trim,
+  trimToLimit,
   MAX_DEDUP_KEY_CHARS,
   MAX_EVENT_BYTES,
   MAX_SUMMARY_CHARS,
@@ -1018,6 +1022,8 @@ export type CreatedIncident = {
   number?: number;
   htmlUrl?: string;
   status?: string;
+  /** Fields PagerDuty's ceilings forced shorter, for the node to report. */
+  trims?: Trim[];
 };
 
 /**
@@ -1048,9 +1054,10 @@ export async function createIncident(
     return auth;
   }
 
+  const trims: Trim[] = [];
   const incident: Record<string, unknown> = {
     type: "incident",
-    title: truncateRunes(params.title, MAX_SUMMARY_CHARS),
+    title: trimToLimit(params.title, "Title", trims),
     service: { id: params.serviceId, type: "service_reference" },
   };
   if (params.details?.trim()) {
@@ -1060,9 +1067,10 @@ export async function createIncident(
     incident.urgency = params.urgency;
   }
   if (params.incidentKey?.trim()) {
-    incident.incident_key = truncateRunes(
+    incident.incident_key = trimToLimit(
       params.incidentKey.trim(),
-      MAX_DEDUP_KEY_CHARS
+      "Incident key",
+      trims
     );
   }
   if (params.escalationPolicyId) {
@@ -1146,6 +1154,7 @@ export async function createIncident(
         number: created.incident_number,
         htmlUrl: created.html_url,
         status: created.status,
+        trims: trims.length > 0 ? trims : undefined,
       },
     };
   } catch (error) {

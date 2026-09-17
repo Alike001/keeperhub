@@ -3,6 +3,8 @@ import {
   buildTriggerEvent,
   buildUpdateEvent,
   deriveDedupKey,
+  describeTrims,
+  FIELD_LIMITS,
   MAX_DEDUP_KEY_CHARS,
   MAX_EVENT_BYTES,
   MAX_SUMMARY_CHARS,
@@ -239,5 +241,68 @@ describe("parseLinks", () => {
   it("has nothing to say about an empty field", () => {
     expect(parseLinks(undefined)).toEqual({ links: [], dropped: 0 });
     expect(parseLinks("   ")).toEqual({ links: [], dropped: 0 });
+  });
+});
+
+/**
+ * PagerDuty documents 1024 characters for an alert summary, 255 for a dedup
+ * key, and rejects an event over 512 KB whole. Trimming rather than refusing
+ * is the right trade for an alerting node - a shortened title still wakes the
+ * right person - but the author is the only one who can fix it and they will
+ * not be reading the incident, so nothing may be trimmed in silence.
+ */
+describe("field limits are enforced and reported", () => {
+  function build(input: Record<string, unknown>) {
+    return buildTriggerEvent({
+      routingKey: "R1",
+      dedupKey: "k1",
+      timestamp: "2026-01-01T00:00:00Z",
+      input: {
+        summary: "s",
+        severity: "error",
+        source: "src",
+        ...input,
+      } as never,
+    });
+  }
+
+  it("matches PagerDuty's documented ceilings", () => {
+    expect(FIELD_LIMITS.Summary).toBe(1024);
+    expect(FIELD_LIMITS["Dedup key"]).toBe(255);
+  });
+
+  it("says nothing when everything fits", () => {
+    const { trims } = build({});
+    expect(trims).toEqual([]);
+    expect(describeTrims(trims)).toBeUndefined();
+  });
+
+  it("names the field, its real length and the limit", () => {
+    const { body, trims } = build({ summary: "x".repeat(2000) });
+    expect(body.payload?.summary).toHaveLength(1024);
+    expect(trims).toEqual([{ field: "Summary", from: 2000, to: 1024 }]);
+    expect(describeTrims(trims)).toBe(
+      "Summary was 2000 characters and PagerDuty takes 1024, so it was shortened"
+    );
+  });
+
+  it("reports every field it had to shorten, not just the first", () => {
+    const { trims } = build({
+      summary: "x".repeat(1100),
+      source: "y".repeat(1100),
+      component: "z".repeat(1100),
+    });
+    expect(trims.map((t) => t.field)).toEqual([
+      "Summary",
+      "Source",
+      "Component",
+    ]);
+  });
+
+  /** Counted in characters, so a multi-byte summary is not cut mid-character. */
+  it("counts runes rather than code units", () => {
+    const { body, trims } = build({ summary: "\u{1F525}".repeat(1100) });
+    expect([...(body.payload?.summary ?? "")]).toHaveLength(1024);
+    expect(trims[0]).toMatchObject({ from: 1100, to: 1024 });
   });
 });

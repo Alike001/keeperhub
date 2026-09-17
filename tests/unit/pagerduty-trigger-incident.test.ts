@@ -418,6 +418,52 @@ describe("trigger incident", () => {
     expect(safeFetch).toHaveBeenCalledTimes(3);
   });
 
+  /**
+   * A template renders at run time, so an over-limit value is invisible in the
+   * editor. The responder sees a cut title and cannot know it was cut; the
+   * author can fix it and will not be looking at the incident. So the run says.
+   */
+  it("reports a summary it had to shorten", async () => {
+    mockHappyPath();
+    const result = await run({ summary: "x".repeat(1500) });
+
+    const trimmed = (result as { fieldsTrimmed?: string }).fieldsTrimmed;
+    expect(String(trimmed)).toContain("Summary was 1500");
+    expect(String(trimmed)).toContain("1024");
+    const body = JSON.parse(
+      String(
+        (safeFetch.mock.calls[2] as [string, Record<string, unknown>])[1].body
+      )
+    );
+    expect(body.payload.summary).toHaveLength(1024);
+    // The page still went out. A shortened title beats no page.
+    expect(result).toMatchObject({ delivered: true, status: "triggered" });
+  });
+
+  it("reports an over-long dedup key, which quietly merges two alerts into one", async () => {
+    mockHappyPath();
+    const result = await run({ dedupKey: "k".repeat(300) });
+    expect(
+      String((result as { fieldsTrimmed?: string }).fieldsTrimmed)
+    ).toContain("Dedup key was 300");
+    // The key that actually went to PagerDuty. The output reports the key
+    // PagerDuty echoed back, which is the one that identifies the alert.
+    const body = JSON.parse(
+      String(
+        (safeFetch.mock.calls[2] as [string, Record<string, unknown>])[1].body
+      )
+    );
+    expect(body.dedup_key).toHaveLength(255);
+  });
+
+  it("says nothing about trimming when everything fits", async () => {
+    mockHappyPath();
+    const result = await run();
+    expect(
+      (result as { fieldsTrimmed?: string }).fieldsTrimmed
+    ).toBeUndefined();
+  });
+
   it("sends the links it could use and counts the ones it could not", async () => {
     mockHappyPath();
     const result = await run({

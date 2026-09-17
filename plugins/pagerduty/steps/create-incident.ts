@@ -11,6 +11,7 @@ import {
 import type { PagerDutyCredentials } from "../credentials";
 import {
   createIncident,
+  describeTrims,
   failureIsExternal,
   getEscalationPolicy,
 } from "./pagerduty-core";
@@ -63,6 +64,8 @@ type CreateIncidentStepResult =
       incidentUrl?: string;
       status?: string;
       priorityId?: string;
+      /** Fields PagerDuty's ceilings forced shorter, named and measured. */
+      fieldsTrimmed?: string;
       /** True when a configured escalation policy was gone and the service's own was used. */
       escalationPolicyFellBack?: boolean;
       error?: string;
@@ -190,6 +193,7 @@ async function stepHandler(
       incidentUrl: result.value.htmlUrl,
       status: result.value.status,
       priorityId: chosenPriorityId(input.pagerdutyPriorityId),
+      fieldsTrimmed: describeTrims(result.value.trims ?? []),
       escalationPolicyFellBack: policy.fellBack,
     };
   }

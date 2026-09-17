@@ -61,7 +61,7 @@ Open an alert, or update the one already open for the same dedup key.
 
 **Inputs:** PagerDuty service (picked from your account), Summary (becomes the alert title), Severity (`critical`, `error`, `warning`, `info`), Source, Dedup key, and optional Component, Group, Class, Custom details and Links. Supports `{{NodeName.field}}` variables throughout.
 
-**Outputs:** `delivered`, `dedupKey`, `status` (`triggered`, `suppressed`, `held`, or `failed`), `consecutiveRuns`, `requiredRuns`, `error`, `summaryFellBack`, `serviceStatus`, `suppressedByService`, `detailsTruncated`, `linksDropped`, `message`, and the backup fields below.
+**Outputs:** `delivered`, `dedupKey`, `status` (`triggered`, `suppressed`, `held`, or `failed`), `consecutiveRuns`, `requiredRuns`, `error`, `summaryFellBack`, `serviceStatus`, `suppressedByService`, `detailsTruncated`, `linksDropped`, `fieldsTrimmed`, `message`, and the backup fields below.
 
 **Links** go one per line, as `text | url` or a bare url - the url is the last field, so a label may contain `|` of its own - and become clickable links on the incident - the explorer transaction or the dashboard a responder opens first. The url has to be `https`. A line that is not an https url is skipped rather than failing the page, because a page with one missing link beats no page; the Preview on the node shows exactly which links will be sent, and `linksDropped` counts the ones that will not.
 
@@ -114,7 +114,7 @@ Unlike every other action here, a change event carries no dedup key - PagerDuty 
 
 **Inputs:** PagerDuty service, Summary, Source, Custom details.
 
-**Outputs:** `delivered`, `message`, and `error` when the change event was not delivered and the node was told not to fail the run.
+**Outputs:** `delivered`, `message`, `fieldsTrimmed`, and `error` when the change event was not delivered and the node was told not to fail the run.
 
 ## Create Incident (REST)
 
@@ -124,7 +124,7 @@ Create an incident directly rather than through an alert. This is the only actio
 
 **Priority** is read from your account (P1, P2, and so on) and is a paid-plan feature -- an account without it shows nothing to pick. Only this action can set one: the Events API v2 payload has no priority field, so an alert raised by Trigger Incident takes its priority from your Event Orchestration rules instead. **Urgency** decides whether the incident notifies on-call at all; left at the service default, PagerDuty applies the service's urgency rule.
 
-**Outputs:** `delivered`, `incidentId`, `incidentNumber`, `incidentUrl`, `status`, `priorityId`, `escalationPolicyFellBack`, and `error` when the incident was not created and the node was told not to fail the run.
+**Outputs:** `delivered`, `incidentId`, `incidentNumber`, `incidentUrl`, `status`, `priorityId`, `fieldsTrimmed`, `escalationPolicyFellBack`, and `error` when the incident was not created and the node was told not to fail the run.
 
 Unlike the Events API dedup key, a repeated incident key is rejected by PagerDuty rather than merged, so leave it blank unless you are deliberately guarding against a double-create. If the escalation policy you chose has been deleted, the incident is still created on the service's own policy and the output says so; turn that fallback off to fail instead.
 
@@ -144,6 +144,27 @@ Every failure names the object it is about, and the ones that cannot succeed on 
 | Payload rejected (`400`) | Fails immediately, quoting PagerDuty's own error. An empty summary is not the cause - that is handled with a fallback title - and every templated field is bounded, so this is rare |
 
 Because the trigger action reads the routing key from PagerDuty before it sends anything, a dead account or a dead credential fails on that read rather than firing an event nobody receives. The resolved key is cached for five minutes so a REST blip cannot stop a page, so a credential revoked in the last few minutes may still page from cache - deliberately, because a page sent on a stale key is better than one not sent at all. A service that is disabled or in a maintenance window is never read from cache, so re-enabling one takes effect on the next run.
+
+### Field limits
+
+PagerDuty enforces three limits, and this node applies them before it sends anything:
+
+| Field | Limit | Source |
+|-------|-------|--------|
+| Summary, and Create Incident's Title | 1024 characters | PagerDuty's documented maximum for an alert summary |
+| Dedup key, and Create Incident's Incident key | 255 characters | PagerDuty's documented maximum |
+| The whole event | 512 KB | PagerDuty rejects a larger one outright |
+| Source, Component, Group, Class | 1024 characters | No PagerDuty limit is documented; this node applies the summary's ceiling so one templated value cannot push the event over 512 KB |
+
+An over-limit value is **shortened, not rejected**: an alert with a cut title still wakes the right person, and refusing to page over a long template would be the worse failure. It is never silent, though:
+
+- The **Preview** on the node warns while you are configuring, naming the field and both lengths, for any value it can already measure.
+- The node's **`fieldsTrimmed`** output names every field it shortened and by how much, which is the only way to see it for a value that arrives through a template - a template is short in the editor and long once a variable fills it in.
+- The run log carries the same line.
+
+If the whole event is still over 512 KB, the custom details are dropped and replaced by a note, then the links; `detailsTruncated` says when that happened. The summary, severity and routing are never sacrificed.
+
+A shortened **dedup key** deserves a second look. Two keys that differ only after character 255 become the same key, so two nodes that should own separate alerts end up updating one. That is the case `fieldsTrimmed` exists to surface.
 
 ### Backup notification
 

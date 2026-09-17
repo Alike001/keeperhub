@@ -1,9 +1,10 @@
 "use client";
 
-import { Check, Copy } from "lucide-react";
+import { AlertTriangle, Check, Copy } from "lucide-react";
 import { useState } from "react";
 import {
   buildTriggerEvent,
+  FIELD_LIMITS,
   normaliseSeverity,
   parseLinks,
 } from "@/plugins/pagerduty/event-payload";
@@ -82,7 +83,7 @@ export function PagerDutyPreviewField({
   // Parsed the way the step parses them, so a line that is not an https url
   // is missing from the payload here rather than missing from the incident.
   const links = parseLinks(text(config, "links"));
-  const { body, detailsDropped } = buildTriggerEvent({
+  const { body, detailsDropped, trims } = buildTriggerEvent({
     routingKey: ROUTING_KEY_PLACEHOLDER,
     dedupKey,
     timestamp: "<sent at run time>",
@@ -149,6 +150,22 @@ export function PagerDutyPreviewField({
         )}
       </div>
 
+      {trims.length > 0 && (
+        <div className="flex items-start gap-2 rounded-md border border-yellow-500/40 bg-yellow-500/5 p-2 text-xs text-yellow-700 dark:text-yellow-300">
+          <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+          <div className="min-w-0">
+            {trims.map((trim) => (
+              <p key={trim.field}>
+                <span className="font-medium">{trim.field}</span> is{" "}
+                {trim.from.toLocaleString()} characters. PagerDuty takes{" "}
+                {trim.to.toLocaleString()}, so the rest will not reach the
+                incident.
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
+
       {tab === "payload" ? (
         <div className="space-y-1">
           <p className="text-muted-foreground text-xs">
@@ -209,7 +226,19 @@ export function PagerDutyPreviewField({
                 }
               />
               <Row label="Source" value={source} />
-              <Row label="Dedup key" value={dedupKey} />
+              <Row
+                label="Dedup key"
+                value={
+                  <>
+                    {dedupKey}
+                    {[...dedupKey].length > FIELD_LIMITS["Dedup key"] ? (
+                      <span className="ml-1 text-yellow-700 dark:text-yellow-300">
+                        (over {FIELD_LIMITS["Dedup key"]} characters)
+                      </span>
+                    ) : null}
+                  </>
+                }
+              />
               <Row label="Created by" value="KeeperHub" />
             </div>
           </div>
@@ -217,9 +246,11 @@ export function PagerDutyPreviewField({
       )}
 
       <p className="text-muted-foreground text-xs">
-        Templates render when the node runs. The routing key is never shown
-        here or stored in the workflow: it is read from the service each time
-        the node runs.
+        Templates render when the node runs, so a field that is short here can
+        still be over the limit once a variable fills it in - the node reports
+        that in its `fieldsTrimmed` output when it happens. The routing key is
+        never shown here or stored in the workflow: it is read from the service
+        each time the node runs.
         {detailsDropped
           ? " Custom details are over PagerDuty's size limit and would be replaced by a note."
           : ""}
