@@ -4,6 +4,7 @@ import {
 } from "@/lib/protocol-encode-transforms";
 import { solidityTypeToFieldType } from "@/lib/solidity-type-fields";
 import type { IntegrationType } from "@/lib/types/integration";
+import { getReadContractOutputFields } from "@/lib/workflow/editor/action-output-fields";
 
 import {
   createProtocolIconComponent,
@@ -512,47 +513,48 @@ function resolveAbiOutputs(
 /**
  * Template paths for a read action's return value.
  *
- * These have to mirror structureAbiOutputs (plugins/web3/steps/
- * structure-abi-result.ts), which is what actually shapes `result` at
- * runtime: a single named output is keyed by its ABI name, a single unnamed
- * one is the bare value, and several are keyed by name or unnamedOutput<i>.
+ * Delegates to getReadContractOutputFields, the same function the generic
+ * Read Contract action uses, so the two surfaces cannot drift: it already
+ * mirrors structureAbiOutputs (a single named output keyed by its ABI name,
+ * a single unnamed one as the bare value, several keyed by name or
+ * unnamedOutput<i>) and expands tuple components to the same depth the
+ * editor offers. Deriving the paths here a second time is what let tuple
+ * reads suggest `result` while the value was a struct that rendered as
+ * [object Object].
  *
- * The declared `outputs` overrides supply labels only. Using an override's
- * name as the path is what this function used to do, and it produced a
- * suggestion that resolved to undefined whenever the ABI named nothing --
- * the workflow saved, ran, and read empty. The on-chain ABI is the authority
- * on the shape; the override is the authority on the wording.
+ * The declared `outputs` overrides supply wording only. Their name used to be
+ * the path, which suggested a field that resolved to undefined whenever the
+ * ABI named nothing; the on-chain ABI is the authority on shape.
  */
 function buildReadOutputPaths(
   def: ProtocolDefinition,
   action: ProtocolAction
 ): Array<{ field: string; description: string }> {
+  const contract = def.contracts?.[action.contract];
+  const valueFields = getReadContractOutputFields(
+    contract?.abi,
+    action.function
+  ).filter((f) => f.field === "result" || f.field.startsWith("result."));
+
+  // Map each top-level output's path to its declared label, by position.
+  const abiOutputs = resolveAbiOutputs(def, action) ?? [];
   const declared = action.outputs ?? [];
-  const labelAt = (index: number, fallback: string): string =>
-    declared[index]?.label ?? fallback;
+  const topLevelPaths =
+    abiOutputs.length === 1
+      ? [
+          abiOutputs[0].name?.trim()
+            ? `result.${abiOutputs[0].name.trim()}`
+            : "result",
+        ]
+      : abiOutputs.map(
+          (output, index) =>
+            `result.${output.name?.trim() || `unnamedOutput${index}`}`
+        );
 
-  const abiOutputs = resolveAbiOutputs(def, action);
-  if (!abiOutputs || abiOutputs.length === 0) {
-    // Nothing to key by: readContractCore returns the raw decoded values.
-    return [{ field: "result", description: labelAt(0, "Result") }];
-  }
-
-  if (abiOutputs.length === 1) {
-    const name = abiOutputs[0].name?.trim();
-    return [
-      {
-        field: name ? `result.${name}` : "result",
-        description: labelAt(0, name ?? "Result"),
-      },
-    ];
-  }
-
-  return abiOutputs.map((output, index) => {
-    const name = output.name?.trim() || `unnamedOutput${index}`;
-    return {
-      field: `result.${name}`,
-      description: labelAt(index, name),
-    };
+  return valueFields.map((field) => {
+    const index = topLevelPaths.indexOf(field.field);
+    const label = index >= 0 ? declared[index]?.label : undefined;
+    return label ? { field: field.field, description: label } : field;
   });
 }
 

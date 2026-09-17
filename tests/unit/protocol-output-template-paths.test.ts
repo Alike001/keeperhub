@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import "@/protocols";
 import {
   getRegisteredProtocols,
+  type ProtocolAction,
+  type ProtocolDefinition,
   protocolActionToPluginAction,
 } from "@/lib/protocol-registry";
 import { structureAbiOutputs } from "@/plugins/web3/steps/structure-abi-result";
@@ -13,21 +15,28 @@ import { structureAbiOutputs } from "@/plugins/web3/steps/structure-abi-result";
  * The instance this was written for: an action declaring an `outputs`
  * override on a function whose ABI output is unnamed used to suggest
  * `{{steps.X.<overrideName>}}`, while the value sits at `{{steps.X.result}}`.
- * The suggestion resolved to undefined and the workflow saved, ran and read
- * empty. Asserting the class rather than the instance is what stops the next
- * one: the suggestions are built from the ABI here, and the value is built
- * from the same ABI by the same function the step calls.
+ * Asserting the class rather than the instance is what stops the next one:
+ * the suggestions come from the ABI, and the value is built from the same
+ * ABI by the same function the step calls.
+ *
+ * The path is resolved strictly. The executor is more forgiving -- it retries
+ * a failed path under `.data` and `.result` when `result` is an object -- so a
+ * failure here is not always a suggestion that reads empty at runtime. The
+ * strict path is the stronger invariant and the one worth holding.
  */
 
 type AbiOutput = { name?: string; type: string; components?: AbiOutput[] };
 
 /** A decoded value of roughly the right shape for an ABI output type. */
 function sampleValue(output: AbiOutput): unknown {
-  if (output.type.endsWith("[]")) {
-    return [];
-  }
+  // Tuple before array: a `tuple[]` is both, and sampling it as an empty
+  // array would leave structureAbiValue's element branch unexercised.
   if (output.type.startsWith("tuple")) {
-    return (output.components ?? []).map((component) => sampleValue(component));
+    const element = (output.components ?? []).map((c) => sampleValue(c));
+    return output.type.endsWith("]") ? [element] : element;
+  }
+  if (output.type.endsWith("]")) {
+    return [];
   }
   if (output.type === "bool") {
     return true;
@@ -42,155 +51,142 @@ function sampleValue(output: AbiOutput): unknown {
 }
 
 /** Walk a dotted path, treating every missing hop as a failure. */
-function resolvePath(root: unknown, path: string): { ok: boolean } {
+function resolves(root: unknown, path: string): boolean {
   let current = root;
   for (const segment of path.split(".")) {
-    if (current === null || current === undefined) {
-      return { ok: false };
-    }
-    if (typeof current !== "object") {
-      return { ok: false };
+    if (current === null || typeof current !== "object") {
+      return false;
     }
     if (!(segment in (current as Record<string, unknown>))) {
-      return { ok: false };
+      return false;
     }
     current = (current as Record<string, unknown>)[segment];
   }
-  return { ok: current !== undefined };
+  return current !== undefined;
 }
 
-function abiOutputsFor(
-  abi: string,
-  functionName: string
+function abiOutputsOf(
+  def: ProtocolDefinition,
+  action: ProtocolAction
 ): AbiOutput[] | undefined {
-  const parsed = JSON.parse(abi) as Array<{
-    type?: string;
-    name?: string;
-    outputs?: AbiOutput[];
-  }>;
-  return parsed.find(
-    (entry) => entry.type === "function" && entry.name === functionName
-  )?.outputs;
+  const abi = def.contracts?.[action.contract]?.abi;
+  if (!abi) {
+    return;
+  }
+  const fn = (JSON.parse(abi) as Array<Record<string, unknown>>).find(
+    (entry) => entry.type === "function" && entry.name === action.function
+  ) as { outputs?: AbiOutput[] } | undefined;
+  return fn?.outputs;
 }
+
+function valuePaths(def: ProtocolDefinition, action: ProtocolAction): string[] {
+  return (protocolActionToPluginAction(def, action).outputFields ?? [])
+    .map((field) => field.field)
+    .filter((field) => field === "result" || field.startsWith("result."));
+}
+
+function findRead(slug: string): {
+  def: ProtocolDefinition;
+  action: ProtocolAction;
+} {
+  const [protocolSlug, actionSlug] = slug.split("/");
+  const def = getRegisteredProtocols().find((p) => p.slug === protocolSlug);
+  const action = def?.actions.find((a) => a.slug === actionSlug);
+  if (!(def && action)) {
+    throw new Error(`${slug} is not a registered read`);
+  }
+  return { def, action };
+}
+
+const reads = getRegisteredProtocols().flatMap((def) =>
+  def.actions
+    .filter((action) => action.type === "read")
+    .map((action) => ({ def, action }))
+);
 
 describe("protocol read output template paths", () => {
-  const protocols = getRegisteredProtocols();
-
-  it("covers every registered protocol", () => {
-    expect(protocols.length).toBeGreaterThan(0);
+  it("finds registered reads to check", () => {
+    expect(reads.length).toBeGreaterThan(0);
   });
 
-  for (const def of protocols) {
-    const reads = def.actions.filter((action) => action.type === "read");
-    for (const action of reads) {
-      it(`${def.slug}/${action.slug} suggests paths that exist in its result`, () => {
-        const contract = def.contracts?.[action.contract];
-        if (!contract?.abi) {
-          return;
-        }
-        const abiOutputs = abiOutputsFor(contract.abi, action.function);
-        if (!abiOutputs || abiOutputs.length === 0) {
-          return;
-        }
+  it("resolves an ABI and a function for every registered read", () => {
+    // A read with no ABI reaches the fallback that suggests bare `result`,
+    // and that is the one suggestion that can be wrong at runtime: the step
+    // still resolves an ABI through resolveAbi, so `result` can come back as
+    // an object. Nothing is registered that way today; this fails the day
+    // something is, instead of the per-action test below quietly skipping it.
+    const unresolved = reads
+      .filter(({ def, action }) => abiOutputsOf(def, action) === undefined)
+      .map(({ def, action }) => `${def.slug}/${action.slug}`);
+    expect(unresolved).toEqual([]);
+  });
 
-        // The value the step returns, built by the same function it calls.
-        const values = abiOutputs.map((output) => sampleValue(output));
-        const result = structureAbiOutputs(values, abiOutputs as never);
-        const stepOutput = { success: true, result };
+  for (const { def, action } of reads) {
+    it(`${def.slug}/${action.slug} suggests paths that exist in its result`, () => {
+      const outputs = abiOutputsOf(def, action) ?? [];
+      const result = structureAbiOutputs(
+        outputs.map((output) => sampleValue(output)),
+        outputs as never
+      );
+      const stepOutput = { success: true, result };
 
-        // Only the value paths are under test. success, error and the
-        // write-only transaction fields belong to the step envelope and are
-        // always present regardless of the ABI.
-        const suggested = (
-          protocolActionToPluginAction(def, action).outputFields ?? []
-        )
-          .map((field) => field.field)
-          .filter((field) => field === "result" || field.startsWith("result."));
-
+      const suggested = valuePaths(def, action);
+      expect(suggested.length).toBeGreaterThan(0);
+      for (const path of suggested) {
         expect(
-          suggested.length,
-          "a read should suggest something"
-        ).toBeGreaterThan(0);
-        for (const path of suggested) {
-          expect(
-            resolvePath(stepOutput, path).ok,
-            `${def.slug}/${action.slug}: '${path}' does not resolve against the returned value`
-          ).toBe(true);
-        }
-      });
-    }
+          resolves(stepOutput, path),
+          `${def.slug}/${action.slug}: '${path}' does not resolve`
+        ).toBe(true);
+      }
+    });
   }
 });
 
-describe("the instances named in the report", () => {
-  // LayerZero's OFT reads declare an outputs override on functions whose
-  // ABI names nothing, which is the exact shape that used to suggest a
-  // path resolving to undefined.
-  const layerzero = getRegisteredProtocols().find(
-    (def) => def.slug === "layerzero"
-  );
-
-  for (const slug of [
-    "oft-token",
-    "oft-shared-decimals",
-    "oft-approval-required",
-  ]) {
-    it(`${slug} suggests result, not its override name`, () => {
-      expect(layerzero, "layerzero protocol is registered").toBeDefined();
-      const action = layerzero?.actions.find((a) => a.slug === slug);
-      expect(action, `${slug} exists`).toBeDefined();
-      if (!(layerzero && action)) {
-        return;
-      }
-
-      const valuePaths = (
-        protocolActionToPluginAction(layerzero, action).outputFields ?? []
-      )
-        .map((field) => field.field)
-        .filter((field) => field === "result" || field.startsWith("result."));
-
-      expect(valuePaths).toEqual(["result"]);
-
+describe("the shapes named in review", () => {
+  it("suggests result, not the override name, for a single unnamed scalar", () => {
+    for (const slug of [
+      "layerzero/oft-token",
+      "layerzero/oft-shared-decimals",
+      "layerzero/oft-approval-required",
+    ]) {
+      const { def, action } = findRead(slug);
+      expect(valuePaths(def, action), slug).toEqual(["result"]);
       // The override still supplies the wording, which is why it exists.
       const described = (
-        protocolActionToPluginAction(layerzero, action).outputFields ?? []
+        protocolActionToPluginAction(def, action).outputFields ?? []
       ).find((field) => field.field === "result");
-      expect(described?.description).toBe(action.outputs?.[0]?.label);
-    });
-  }
-
-  it("keeps the ABI name when the ABI supplies one", () => {
-    // A counter-case, so the fix is not just "always result": a named
-    // single output is keyed by its ABI name at runtime and the suggestion
-    // has to follow it.
-    const named = getRegisteredProtocols()
-      .flatMap((def) => def.actions.map((action) => ({ def, action })))
-      .find(({ def, action }) => {
-        if (action.type !== "read") {
-          return false;
-        }
-        const abi = def.contracts?.[action.contract]?.abi;
-        if (!abi) {
-          return false;
-        }
-        const outputs = abiOutputsFor(abi, action.function);
-        return outputs?.length === 1 && Boolean(outputs[0].name?.trim());
-      });
-
-    expect(
-      named,
-      "a named single-output read exists to compare against"
-    ).toBeDefined();
-    if (!named) {
-      return;
+      expect(described?.description, slug).toBe(action.outputs?.[0]?.label);
     }
-    const namedAbi = named.def.contracts?.[named.action.contract]?.abi ?? "[]";
-    const abiName = abiOutputsFor(namedAbi, named.action.function)?.[0]?.name;
-    const valuePaths = (
-      protocolActionToPluginAction(named.def, named.action).outputFields ?? []
-    )
-      .map((field) => field.field)
-      .filter((field) => field === "result" || field.startsWith("result."));
-    expect(valuePaths).toEqual([`result.${abiName}`]);
+  });
+
+  it("keys a single named output by its ABI name", () => {
+    // Named explicitly rather than found by registration order, so an edit
+    // to an unrelated ABI cannot silently change what this asserts.
+    const { def, action } = findRead("aerodrome/get-pool-for-pair");
+    expect(abiOutputsOf(def, action)?.[0]?.name?.trim()).toBe("pool");
+    expect(valuePaths(def, action)).toContain("result.pool");
+  });
+
+  it("keys unnamed multi-outputs positionally, not by override name", () => {
+    // Declares result0 -> drawnDebt over two unnamed uint256 outputs, so it
+    // used to suggest `drawnDebt` while the value sits at unnamedOutput0.
+    const { def, action } = findRead("aave-v4/get-user-debt");
+    const paths = valuePaths(def, action);
+    expect(paths).toContain("result.unnamedOutput0");
+    expect(paths).toContain("result.unnamedOutput1");
+    expect(paths).not.toContain("drawnDebt");
+  });
+
+  it("expands a single unnamed tuple into its components", () => {
+    // Its own description tells the user to type result.healthFactor; the
+    // suggestion used to stop at `result`, a struct that renders as
+    // [object Object] in a string field.
+    const { def, action } = findRead("aave-v4/get-user-account-data");
+    expect(valuePaths(def, action)).toContain("result.healthFactor");
+  });
+
+  it("expands a named tuple output into its components", () => {
+    const { def, action } = findRead("layerzero/oft-quote-send");
+    expect(valuePaths(def, action)).toContain("result.fee.nativeFee");
   });
 });
