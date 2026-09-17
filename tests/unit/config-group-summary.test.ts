@@ -168,9 +168,11 @@ describe("the PagerDuty node's own groups", () => {
   );
 
   /**
-   * Retry attempts declares no `defaultValue` - its documented default of 2 is
-   * applied by the step, and the field shows it as a placeholder. A stored "2"
-   * is therefore something somebody typed, and counting it is right.
+   * Retry attempts and Retry delay declare no `defaultValue`; their documented
+   * defaults are applied by the step and declared here only as `example`.
+   * `generateAIActionPrompts` seeds `example` into every generated node, so
+   * counting those made every AI-built node badge "2 set" on a group nobody
+   * had touched.
    */
   it("counts what somebody actually entered in Advanced", () => {
     const action = pagerDutyPlugin.actions.find(
@@ -188,8 +190,14 @@ describe("the PagerDuty node's own groups", () => {
         retryAttempts: "2",
       })
     ).toEqual({
-      count: 2,
-      labels: ["Consecutive runs before paging", "Retry attempts"],
+      count: 1,
+      labels: ["Consecutive runs before paging"],
+    });
+
+    // Changed away from the documented default, it is a choice again.
+    expect(summariseGroup(advanced.fields, { retryAttempts: "5" })).toEqual({
+      count: 1,
+      labels: ["Retry attempts"],
     });
 
     // The switch at its declared default stays uncounted even here.

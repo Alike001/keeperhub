@@ -712,9 +712,10 @@ registerFieldRenderer("pagerduty-test-node", ({ field, config, disabled }) => (
   </div>
 ));
 
-registerFieldRenderer("pagerduty-from-email-notice", ({ config }) => (
+registerFieldRenderer("pagerduty-from-email-notice", ({ field, config }) => (
   <PagerDutyFromEmailNotice
     integrationId={configString(config.integrationId) || undefined}
+    key={field.key}
     nodeFromEmail={configString(config.fromEmail) || undefined}
   />
 ));

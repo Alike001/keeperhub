@@ -510,18 +510,24 @@ function restFailure(
   }
   if (status === 403) {
     return {
-      message: `PagerDuty refused the request (403). The credentials are valid but lack the access this call needs (${requiredScope}). A read-only API key covers every read; a write needs one that is not read-only, so a node that creates incidents needs its own connection holding a full-access key.`,
+      // The remedy differs by credential and by call, and naming the wrong one
+      // sends somebody to mint a full-access API key when a scope was missing
+      // from an OAuth app, or to look at Create Incident when the call that
+      // failed was a read.
+      message: `PagerDuty refused the request (403). The credentials are valid but lack the access this call needs (${requiredScope}). On a scoped OAuth app, grant that scope and try again. On an API key, a read-only one covers every read, and only creating an incident needs a key that is not read-only.`,
       status,
       retryable: false,
     };
   }
   // 402 is PagerDuty's documented "account does not have the abilities to
-  // perform the action": a lapsed subscription, or a plan that no longer
-  // covers this. Retrying cannot fix it and the account owner has to act.
+  // perform the action". That is usually a plan which simply never included
+  // the feature - incident priorities are the common one - and only sometimes
+  // a lapsed subscription, so it is worded as the former. Retrying cannot fix
+  // either.
   if (status === 402) {
     return {
       message:
-        "PagerDuty answered 402: this account's plan does not allow the request. Check the PagerDuty subscription - a lapsed or downgraded account stops serving the API.",
+        "PagerDuty answered 402: this account's plan does not include what the request needs. Incident priorities, for one, are not on every plan. Nothing is wrong with the connection; if you expected the account to have it, check the PagerDuty subscription.",
       status,
       retryable: false,
     };
@@ -1015,11 +1021,19 @@ export async function postEvent(
     // stricter, because a reply whose response was lost would post twice; an
     // event carries a dedup key, so a duplicate merges into the same alert.
     // A dropped connection mid-flight is exactly when a page must still land.
+    //
+    // A blocked host is the exception, as it is for `restGet`: the guard
+    // refused to make the request at all and will refuse identically every
+    // time, so retrying spends the whole backoff ladder - up to five attempts
+    // and the sleeps between them - on a request that cannot go out. It is
+    // also the user's own configuration rather than PagerDuty being down.
+    const blocked = error instanceof SsrfBlockedError;
     return {
       ok: false,
       failure: {
         message: `Could not reach PagerDuty: ${getErrorMessage(error)}. The event was not confirmed.`,
-        retryable: true,
+        retryable: !blocked,
+        ...(blocked ? { fault: "user" as const } : {}),
       },
     };
   }

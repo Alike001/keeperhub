@@ -515,6 +515,10 @@ async function stepHandler(
     const swallowed: PagerDutyFailure = {
       message: `PagerDuty accepted the event, but service ${serviceId} is in ${routingKey.value.serviceStatus} and raises no incident from it, so nobody was paged.`,
       retryable: false,
+      // PagerDuty took the event and answered 202. The maintenance window is
+      // the customer's own, so without this the run is filed as PagerDuty
+      // having been down - which is what the fault field exists to prevent.
+      fault: "user",
     };
     return toFailureResult(
       swallowed,

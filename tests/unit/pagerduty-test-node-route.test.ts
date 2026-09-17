@@ -115,7 +115,7 @@ describe("POST /api/integrations/[integrationId]/pagerduty/test-node", () => {
     pagerDutyAccepts();
     safeFetch.mockResolvedValue(response(202, { status: "success" }));
 
-    const res = await POST(request({ serviceId: "PSKY1" }), { params });
+    const res = await POST(request({ serviceId: "PSVC1" }), { params });
     const body = await res.json();
 
     expect(res.status).toBe(200);
@@ -147,7 +147,7 @@ describe("POST /api/integrations/[integrationId]/pagerduty/test-node", () => {
     safeFetch.mockResolvedValue(response(202, { status: "success" }));
 
     const body = await (
-      await POST(request({ serviceId: "PSKY1" }), { params })
+      await POST(request({ serviceId: "PSVC1" }), { params })
     ).json();
 
     expect(body.dedupKey).toMatch(/^keeperhub\/test\//);
@@ -166,7 +166,7 @@ describe("POST /api/integrations/[integrationId]/pagerduty/test-node", () => {
     );
 
     const body = await (
-      await POST(request({ serviceId: "PSKY1" }), { params })
+      await POST(request({ serviceId: "PSVC1" }), { params })
     ).json();
 
     expect(body.ok).toBe(false);
@@ -184,7 +184,7 @@ describe("POST /api/integrations/[integrationId]/pagerduty/test-node", () => {
       response(200, { service: { status: "active", integrations: [] } })
     );
 
-    const res = await POST(request({ serviceId: "PSKY1" }), { params });
+    const res = await POST(request({ serviceId: "PSVC1" }), { params });
     const body = await res.json();
 
     expect(res.status).toBe(502);
@@ -196,7 +196,7 @@ describe("POST /api/integrations/[integrationId]/pagerduty/test-node", () => {
     safeFetch.mockResolvedValue(response(202, { status: "success" }));
 
     const body = await (
-      await POST(request({ serviceId: "PSKY1" }), { params })
+      await POST(request({ serviceId: "PSVC1" }), { params })
     ).json();
 
     expect(body.ok).toBe(true);
@@ -213,7 +213,7 @@ describe("POST /api/integrations/[integrationId]/pagerduty/test-node", () => {
 
   it("refuses a connection belonging to another organisation", async () => {
     mockGetIntegrationFromDb.mockResolvedValue(null);
-    const res = await POST(request({ serviceId: "PSKY1" }), { params });
+    const res = await POST(request({ serviceId: "PSVC1" }), { params });
     expect(res.status).toBe(404);
     expect(safeFetch).not.toHaveBeenCalled();
   });
@@ -224,7 +224,7 @@ describe("POST /api/integrations/[integrationId]/pagerduty/test-node", () => {
       type: "slack",
       config: {},
     });
-    const res = await POST(request({ serviceId: "PSKY1" }), { params });
+    const res = await POST(request({ serviceId: "PSVC1" }), { params });
     expect(res.status).toBe(400);
     expect(safeFetch).not.toHaveBeenCalled();
   });
@@ -236,7 +236,7 @@ describe("POST /api/integrations/[integrationId]/pagerduty/test-node", () => {
         status: 403,
       })
     );
-    const res = await POST(request({ serviceId: "PSKY1" }), { params });
+    const res = await POST(request({ serviceId: "PSVC1" }), { params });
     expect(res.status).toBe(403);
     expect(safeFetch).not.toHaveBeenCalled();
   });
@@ -249,9 +249,86 @@ describe("POST /api/integrations/[integrationId]/pagerduty/test-node", () => {
    */
   it("refuses a connection whose creator has been deactivated", async () => {
     mockCreatorDeactivated.mockResolvedValue(true);
-    const res = await POST(request({ serviceId: "PSKY1" }), { params });
+    const res = await POST(request({ serviceId: "PSVC1" }), { params });
     expect(res.status).toBe(403);
     expect((await res.json()).error).toContain("deactivated");
     expect(safeFetch).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The three events are each answered 202, which says they were accepted and
+ * nothing about what PagerDuty did with them - the reason Resolve carries a
+ * send delay at all. Claiming the test "leaves nothing open" off those three
+ * would be the one thing this route asserts without checking.
+ */
+describe("what the test says about the alert afterwards", () => {
+  /**
+   * Service read, integration read, the three events, then the read-back.
+   * The events have to be queued explicitly: `pagerDutyAccepts`'s catch-all
+   * only serves calls the queue has run out for, so a read-back queued behind
+   * it would have been eaten by the trigger.
+   */
+  function acceptsThenReadsBack(incidents: unknown) {
+    safeFetch
+      .mockResolvedValueOnce(
+        response(200, {
+          service: {
+            status: "active",
+            integrations: [
+              { id: "PI1", type: "events_api_v2_inbound_integration" },
+            ],
+          },
+        })
+      )
+      .mockResolvedValueOnce(
+        response(200, { integration: { integration_key: "R1" } })
+      )
+      .mockResolvedValueOnce(response(202, { status: "success" }))
+      .mockResolvedValueOnce(response(202, { status: "success" }))
+      .mockResolvedValueOnce(response(202, { status: "success" }))
+      .mockResolvedValueOnce(response(200, incidents));
+  }
+
+  it("warns when the alert is still open a moment later", async () => {
+    acceptsThenReadsBack({
+      incidents: [
+        {
+          id: "PINC1",
+          status: "triggered",
+          html_url: "https://acme.pagerduty.com/incidents/PINC1",
+        },
+      ],
+    });
+
+    const body = await (
+      await POST(request({ serviceId: "PABC123" }), {
+        params,
+      })
+    ).json();
+
+    expect(body.incidentStatus).toBe("triggered");
+    expect(body.warning).toContain("still triggered");
+  });
+
+  it("says nothing extra when it really did close", async () => {
+    acceptsThenReadsBack({
+      incidents: [
+        {
+          id: "PINC1",
+          status: "resolved",
+          html_url: "https://acme.pagerduty.com/incidents/PINC1",
+        },
+      ],
+    });
+
+    const body = await (
+      await POST(request({ serviceId: "PABC123" }), {
+        params,
+      })
+    ).json();
+
+    expect(body.incidentStatus).toBe("resolved");
+    expect(body.warning).toBeUndefined();
   });
 });

@@ -92,6 +92,7 @@ const testNodeField: ActionConfigFieldBase = {
 
 const dedupKeyField: ActionConfigFieldBase = {
   key: "dedupKey",
+  example: "",
   label: "Dedup key",
   type: "template-input",
   placeholder: "Leave blank for one alert per node",
@@ -106,6 +107,7 @@ const dedupKeyField: ActionConfigFieldBase = {
  */
 const triggerNodeField: ActionConfigFieldBase = {
   key: "dedupKeyFromNodeId",
+  example: "",
   label: "Trigger Incident node this closes",
   type: "pagerduty-trigger-node-select",
   helpText:
@@ -114,6 +116,7 @@ const triggerNodeField: ActionConfigFieldBase = {
 
 const targetDedupKeyField: ActionConfigFieldBase = {
   key: "dedupKey",
+  example: "",
   label: "Dedup key of the alert",
   type: "template-input",
   placeholder: "Leave blank to use the key of the node above",
@@ -358,6 +361,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
           fields: [
             {
               key: "component",
+              example: "",
               label: "Component",
               type: "template-input",
               placeholder: "vault-monitor",
@@ -366,14 +370,16 @@ const pagerDutyPlugin: IntegrationPlugin = {
             },
             {
               key: "group",
+              example: "",
               label: "Group",
               type: "template-input",
-              placeholder: "sky-keepers",
+              placeholder: "keeper-bots",
               helpText:
                 "A logical grouping of components. Shortened past 1024 characters, and the node says when it did.",
             },
             {
               key: "class",
+              example: "",
               label: "Class",
               type: "template-input",
               placeholder: "liquidation",
@@ -382,6 +388,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
             },
             {
               key: "customDetails",
+              example: "",
               label: "Custom details",
               type: "template-textarea",
               rows: 4,
@@ -391,6 +398,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
             },
             {
               key: "links",
+              example: "",
               label: "Links",
               type: "template-textarea",
               rows: 3,
@@ -407,6 +415,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
           fields: [
             {
               key: "backupIntegrationId",
+              example: "",
               label: "Backup connection",
               type: "pagerduty-backup-connection-select",
               helpText:
@@ -414,6 +423,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
             },
             {
               key: "backupDestination",
+              example: "",
               label: "Backup channel or chat id",
               type: "template-input",
               placeholder: "#alerts, or a Telegram chat id",
@@ -566,6 +576,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
         },
         {
           key: "customDetails",
+          example: "",
           label: "Custom details",
           type: "template-textarea",
           rows: 3,
@@ -683,6 +694,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
         },
         {
           key: "pagerdutyEscalationPolicyId",
+          example: "",
           label: "Escalation policy",
           type: "pagerduty-escalation-policy-select",
           helpText:
@@ -711,6 +723,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
         },
         {
           key: "pagerdutyPriorityId",
+          example: "",
           label: "Priority",
           type: "pagerduty-priority-select",
           helpText:
@@ -718,6 +731,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
         },
         {
           key: "incidentKey",
+          example: "",
           label: "Incident key",
           type: "template-input",
           placeholder: "Optional",
@@ -726,6 +740,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
         },
         {
           key: "fromEmail",
+          example: "",
           label: "From email",
           type: "template-input",
           placeholder: "Falls back to the connection's From email",

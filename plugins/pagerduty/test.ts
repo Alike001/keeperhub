@@ -70,12 +70,29 @@ async function resolveHeader(
   });
 
   if (!response.ok) {
+    if (response.status === 400 || response.status === 401) {
+      // The region is inside the scope string, not the host, so a scoped app
+      // on the wrong region is rejected here rather than at /services - which
+      // is where the region probe lives. Without this the EU checkbox's own
+      // promise ("Test Connection checks the other region for you") held only
+      // for API tokens, and an EU customer with a correct app was told their
+      // client id and secret were wrong.
+      const otherIsRight = await oauthTokenIssues(
+        clientId,
+        clientSecret,
+        subdomain,
+        region === "eu" ? "us" : "eu"
+      );
+      return {
+        success: false,
+        error: otherIsRight
+          ? `PagerDuty rejected these credentials for the ${region === "eu" ? "EU" : "US"} region but accepted them for the ${region === "eu" ? "US" : "EU"} one. ${region === "eu" ? "Untick" : "Tick"} the EU service region checkbox.`
+          : "PagerDuty rejected the OAuth client credentials. Check the client id, secret and subdomain, and that the app has services.read and escalation_policies.read.",
+      };
+    }
     return {
       success: false,
-      error:
-        response.status === 400 || response.status === 401
-          ? "PagerDuty rejected the OAuth client credentials. Check the client id, secret and subdomain."
-          : `PagerDuty could not issue an OAuth token (HTTP ${response.status}).`,
+      error: `PagerDuty could not issue an OAuth token (HTTP ${response.status}).`,
     };
   }
 
@@ -84,6 +101,37 @@ async function resolveHeader(
     return { success: false, error: "PagerDuty returned no access token." };
   }
   return { header: `Bearer ${parsed.access_token}` };
+}
+
+/**
+ * Whether these client credentials issue a token for the other region.
+ *
+ * One request, and only reached on a rejection, so it costs nothing in the
+ * normal case. Any failure here is reported as "no", because the question is
+ * only ever asked to sharpen an error message that is already going out.
+ */
+async function oauthTokenIssues(
+  clientId: string,
+  clientSecret: string,
+  subdomain: string,
+  region: "us" | "eu"
+): Promise<boolean> {
+  try {
+    const probe = await fetch(PAGERDUTY_IDENTITY_TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: clientId,
+        client_secret: clientSecret,
+        scope: pagerDutyOAuthScope(region === "eu", subdomain, OAUTH_SCOPES),
+      }).toString(),
+      signal: AbortSignal.timeout(PAGERDUTY_REQUEST_TIMEOUT_MS),
+    });
+    return probe.ok;
+  } catch {
+    return false;
+  }
 }
 
 function describeStatus(status: number): string {

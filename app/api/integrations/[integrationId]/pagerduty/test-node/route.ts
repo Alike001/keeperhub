@@ -39,11 +39,38 @@ type Leg = {
   error?: string;
 };
 
+/**
+ * What, if anything, qualifies "the test passed".
+ *
+ * A service in maintenance takes every event and pages nobody; and each event
+ * is answered 202 whether or not PagerDuty acted on it, so the only evidence
+ * the alert actually closed is reading it back.
+ */
+function describeWarning(state: {
+  serviceStatus?: string;
+  suppressed: boolean;
+  stillOpen: boolean;
+  incidentStatus?: string;
+}): string | undefined {
+  if (state.suppressed) {
+    return `PagerDuty accepted every event, but this service is ${state.serviceStatus} and raises no incident from them - so this test proves the routing works and proves nothing about anybody being paged.`;
+  }
+  if (state.stillOpen) {
+    return `PagerDuty accepted every event, but the test alert is still ${state.incidentStatus} a moment later rather than resolved. The Events API applies events in its own time, so this usually settles on its own - open it below and close it by hand if it does not.`;
+  }
+  return;
+}
+
 export type PagerDutyTestNodeResponse = {
   ok: boolean;
   legs: Leg[];
   /** The alert this test opened and closed, when PagerDuty would say. */
   incidentUrl?: string;
+  /**
+   * What PagerDuty says that alert is now, when the credential can read it.
+   * The three 202s above prove only that the events were accepted.
+   */
+  incidentStatus?: string;
   /** Set when the service takes events and raises no incident from them. */
   warning?: string;
   dedupKey: string;
@@ -201,7 +228,16 @@ export async function POST(
 
   // Best effort, and never the reason the test fails: it needs incidents.read,
   // which a scoped OAuth app only has if it was granted.
+  //
+  // It is also the only thing here that can say the alert actually closed.
+  // Every event above is answered 202 whether or not PagerDuty did anything
+  // with it, which is the whole reason Resolve offers a send delay - and the
+  // Events API is asynchronous, so a resolve processed before its own trigger
+  // is dropped and leaves a real alert open on a real service. Reporting
+  // "nothing left open" off three 202s would be the one claim this code makes
+  // that it has not checked.
   let incidentUrl: string | undefined;
+  let incidentStatus: string | undefined;
   if (triggered.ok) {
     const lookup = await findIncidentByKey(credentials, {
       serviceId,
@@ -209,18 +245,25 @@ export async function POST(
     });
     if (lookup.ok) {
       incidentUrl = lookup.value.htmlUrl;
+      incidentStatus = lookup.value.status;
     }
   }
 
   const suppressed = serviceSwallowsEvents(routingKey.value.serviceStatus);
+  const stillOpen =
+    incidentStatus !== undefined && incidentStatus !== "resolved";
   const response: PagerDutyTestNodeResponse = {
     ok: legs.every((leg) => leg.ok),
     legs,
     incidentUrl,
+    incidentStatus,
     dedupKey,
-    warning: suppressed
-      ? `PagerDuty accepted every event, but this service is ${routingKey.value.serviceStatus} and raises no incident from them - so this test proves the routing works and proves nothing about anybody being paged.`
-      : undefined,
+    warning: describeWarning({
+      serviceStatus: routingKey.value.serviceStatus,
+      suppressed,
+      stillOpen,
+      incidentStatus,
+    }),
   };
   return NextResponse.json(response);
 }

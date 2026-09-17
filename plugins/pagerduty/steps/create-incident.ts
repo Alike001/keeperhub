@@ -153,10 +153,12 @@ async function stepHandler(
     };
   }
   if (!fromEmail) {
+    const hadTemplate = (input.fromEmail ?? "").trim().length > 0;
     return {
       success: false,
-      error:
-        "Creating an incident over the REST API needs the login email of a PagerDuty user. Set From email on the connection, or on this node.",
+      error: hadTemplate
+        ? "Creating an incident over the REST API needs the login email of a PagerDuty user. This node's From email is set, but it resolved to nothing on this run - check the step it reads from, or put a fixed address on the connection."
+        : "Creating an incident over the REST API needs the login email of a PagerDuty user. Set From email on the connection, or on this node.",
       errorClass: ExecutionErrorType.USER,
     };
   }

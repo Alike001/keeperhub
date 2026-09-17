@@ -8,9 +8,19 @@
  * is not opening them and missing a setting that is doing something.
  *
  * "Filled in" here means somebody chose it, not merely that the field has a
- * value: a group whose fields all sit at their declared defaults is the same
- * group as an untouched one, and counting those would put a badge on every
- * group on every node and say nothing.
+ * value: a group whose fields all sit at their defaults is the same group as
+ * an untouched one, and counting those would put a badge on every group on
+ * every node and say nothing.
+ *
+ * `example` counts as a default as well as `defaultValue`, because
+ * `generateAIActionPrompts` seeds it into every generated node: a value equal
+ * to the example cannot be told apart from one nobody touched. Without this,
+ * every AI-built PagerDuty node badged its retry settings as chosen. The cost
+ * is that somebody who types the example by hand gets no badge, which is the
+ * right way round - the badge says this group differs from an untouched one,
+ * and that node does not. `placeholder` is deliberately not included: it is a
+ * hint, and From email's is a sample address rather than a value the step
+ * would ever apply.
  */
 
 import { evaluateShowWhen } from "@/lib/workflow/editor/show-when";
@@ -54,15 +64,19 @@ export function fieldIsSet(
   }
   // A field the form is not showing is not something somebody filled in, even
   // when a stored value survives from before its condition stopped holding.
-  if (!evaluateShowWhen(field.showWhen, config)) {
+  // `hidden` is checked for the same reason `showWhen` is - `renderField`
+  // honours both - so that a group holding one cannot badge permanently with
+  // a label nobody can see.
+  if (field.hidden || !evaluateShowWhen(field.showWhen, config)) {
     return false;
   }
   const value = storedValue(config, field.key);
   if (isEmpty(value)) {
     return false;
   }
-  if (field.defaultValue !== undefined) {
-    return String(value) !== String(field.defaultValue);
+  const declaredDefault = field.defaultValue ?? field.example;
+  if (declaredDefault !== undefined) {
+    return String(value) !== String(declaredDefault);
   }
   return true;
 }

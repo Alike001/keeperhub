@@ -645,6 +645,19 @@ export function PagerDutyPriorityField({
           </div>
         </Notice>
       )}
+      {/* The service and escalation-policy pickers both say when the id on the
+          node is not in the account; this one only said so when the account
+          had no priorities at all. An imported workflow carries the exporting
+          organisation's priority id, which is exactly this case, and the node
+          failed on its first fire instead. */}
+      {!(loading || error) && value && !selected && items.length > 0 && (
+        <Notice tone="warning">
+          Priority <code className="font-mono">{value}</code> is not in this
+          account. It most often means the workflow was imported from another
+          PagerDuty account, whose priority ids do not carry over. Pick one
+          above, or leave it to PagerDuty.
+        </Notice>
+      )}
     </div>
   );
 }
@@ -831,10 +844,10 @@ function PagerDutyTestNotReady({
   if (reason === "no-services") {
     return (
       <Notice tone="warning">
-        This connection reached PagerDuty and can see no services. A read-only
-        token sees every service in the account, so an empty list usually means
-        a scoped OAuth app without <code>services.read</code>, or an account
-        that has none yet.
+        This connection reached PagerDuty and the account has no services yet.
+        Create one in PagerDuty, then reload the list above. A missing
+        <code>services.read</code> scope does not land here - that fails the
+        credential outright and is reported as such.
       </Notice>
     );
   }
@@ -867,7 +880,7 @@ export function PagerDutyTestNodeButton({
     items: services,
     loading: servicesLoading,
     error: servicesError,
-  } = usePagerDutyServices(integrationId);
+  } = usePagerDutyServices(serviceId ? undefined : integrationId);
 
   const reason = pagerDutyNodeTestReadiness({
     hasConnection: Boolean(integrationId),
@@ -943,8 +956,8 @@ export function PagerDutyTestNodeButton({
       <p className="ml-1 text-muted-foreground text-xs">
         Opens a real alert on this service at the lowest severity, acknowledges
         it and resolves it, in about a second. It uses a dedup key of its own,
-        so it cannot touch an alert a workflow opened, and it leaves nothing
-        open. If the service notifies on info-severity events, on-call may see
+        so it cannot touch an alert a workflow opened, and it reads the alert
+        back afterwards to say whether it really closed. If the service notifies on info-severity events, on-call may see
         it briefly.
       </p>
 

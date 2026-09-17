@@ -962,7 +962,15 @@ function FieldGroup({
         {summary && summary.count > 0 && (
           <Tooltip>
             <TooltipTrigger asChild>
-              <span className="ml-0.5 rounded-full bg-primary/15 px-1.5 py-0.5 font-medium text-[0.625rem] text-primary leading-none">
+              <span
+                aria-label={`${summary.count} set: ${summary.labels.join(", ")}`}
+                className="ml-0.5 rounded-full bg-primary/15 px-1.5 py-0.5 font-medium text-[0.625rem] text-primary leading-none"
+                // Radix puts focus handlers on whatever it is given, and a
+                // span cannot take focus on its own. Without this the names
+                // are mouse-only, and they are the only place they appear
+                // while the group is shut.
+                tabIndex={0}
+              >
                 {summary.count} set
               </span>
             </TooltipTrigger>

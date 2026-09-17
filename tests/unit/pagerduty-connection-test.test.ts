@@ -171,3 +171,42 @@ describe("PagerDuty connection test", () => {
     );
   });
 });
+
+/**
+ * The EU checkbox's help text promises Test Connection will work out which
+ * way it should be set. That held for API tokens only: a scoped OAuth app
+ * carries the region inside its scope string, so the wrong one is rejected at
+ * the token exchange, before the /services call the region probe hangs off.
+ * An EU customer with a perfectly good app was told their client id and
+ * secret were wrong.
+ */
+describe("region diagnosis on a scoped OAuth connection", () => {
+  const oauthCredentials = {
+    PAGERDUTY_OAUTH_CLIENT_ID: "PDABC12.oauth.pagerduty.com",
+    PAGERDUTY_OAUTH_CLIENT_SECRET: "shh",
+    PAGERDUTY_SUBDOMAIN: "acme",
+  };
+
+  it("names the region when the other one issues a token", async () => {
+    // First exchange (US, as configured) is refused; the probe (EU) succeeds.
+    fetchMock
+      .mockResolvedValueOnce(response(400, {}))
+      .mockResolvedValueOnce(response(200, { access_token: "tok" }));
+
+    const result = await testPagerDuty(oauthCredentials);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("EU service region");
+    expect(result.error).toContain("Tick");
+  });
+
+  it("still blames the credentials when neither region works", async () => {
+    fetchMock
+      .mockResolvedValueOnce(response(400, {}))
+      .mockResolvedValueOnce(response(400, {}));
+
+    const result = await testPagerDuty(oauthCredentials);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("client id");
+    expect(result.error).not.toContain("EU service region");
+  });
+});

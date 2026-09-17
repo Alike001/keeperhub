@@ -93,6 +93,40 @@ describe("what an AI-generated PagerDuty node carries", () => {
   });
 
   /**
+   * Nothing that identifies something may be seeded with prose.
+   *
+   * A field with no `example` and no `defaultValue` falls through to
+   * `Your <label>`, which for a free-text field is a harmless hint the model
+   * replaces. For an id or a key it is a value that looks filled in and is
+   * wrong, and the dedup keys were the dangerous case: the trigger seeded
+   * "Your dedup key" and the resolve "Your dedup key of the alert", so every
+   * generated workflow's resolve addressed a key no alert carried. PagerDuty
+   * answers 202 to that, the node reported `delivered`, and the incident
+   * stayed open for as long as the workflow ran.
+   */
+  it.each([
+    ["trigger-incident", "dedupKey"],
+    ["resolve-incident", "dedupKey"],
+    ["resolve-incident", "dedupKeyFromNodeId"],
+    ["acknowledge-incident", "dedupKey"],
+    ["acknowledge-incident", "dedupKeyFromNodeId"],
+    ["trigger-incident", "backupIntegrationId"],
+    ["create-incident", "incidentKey"],
+    ["create-incident", "fromEmail"],
+    ["create-incident", "pagerdutyEscalationPolicyId"],
+    ["create-incident", "pagerdutyPriorityId"],
+  ])("seeds %s.%s blank rather than with prose", (slug, key) => {
+    expect(seededConfig(slug)[key]).toBe("");
+  });
+
+  /** The two dedup keys have to agree, and blank is how they agree. */
+  it("never seeds a resolve that addresses a different alert", () => {
+    const trigger = seededConfig("trigger-incident");
+    const resolve = seededConfig("resolve-incident");
+    expect(resolve.dedupKey).toBe(trigger.dedupKey);
+  });
+
+  /**
    * Every value the model is handed has to be one the step would accept. A
    * seeded value that the runtime rejects is a generated workflow that fails
    * on its first run.
