@@ -483,8 +483,9 @@ describe("trigger incident", () => {
       serviceStatus: "hibernating",
       suppressedByService: false,
     });
-    expect(String(result.message)).toContain("does not recognise");
-    expect(String(result.message)).toContain("hibernating");
+    const note = (result as { message?: string }).message;
+    expect(String(note)).toContain("does not recognise");
+    expect(String(note)).toContain("hibernating");
   });
 
   it.each(["active", "warning", "critical"])(
@@ -493,7 +494,9 @@ describe("trigger incident", () => {
       mockHappyPath(202, status);
       const result = await run();
       expect(result).toMatchObject({ delivered: true, status: "triggered" });
-      expect(String(result.message ?? "")).not.toContain("does not recognise");
+      expect(
+        String((result as { message?: string }).message ?? "")
+      ).not.toContain("does not recognise");
     }
   );
 
