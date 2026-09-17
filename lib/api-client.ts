@@ -453,7 +453,14 @@ export const integrationApi = {
     }),
 
   // Update integration
-  update: (id: string, data: { name?: string; config?: IntegrationConfig }) =>
+  update: (
+    id: string,
+    data: {
+      name?: string;
+      config?: IntegrationConfig;
+      clearedConfigKeys?: string[];
+    }
+  ) =>
     apiCall<IntegrationWithConfig>(`/api/integrations/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),

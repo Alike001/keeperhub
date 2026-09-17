@@ -101,3 +101,36 @@ export function mergeSecretConfig(
   }
   return merged;
 }
+
+/**
+ * Remove the keys a caller explicitly asked to clear.
+ *
+ * `mergeSecretConfig` above cannot express this. A blank secret has to mean
+ * "unchanged" there, because the stored value is never sent to the browser
+ * and so cannot be sent back - which left a stored credential with no way to
+ * be taken away short of deleting the connection. That is not academic: a
+ * leaked API token could be replaced in the form and blanked, the save would
+ * report success, and the leaked token went on authorising every run because
+ * it was still stored and still won over the new credential.
+ *
+ * A key that also carries a new value in the same request is left alone, so
+ * clearing and re-entering in one go keeps what was typed.
+ */
+export function removeClearedKeys(
+  config: IntegrationConfig,
+  clearedKeys: readonly string[],
+  incomingConfig: IntegrationConfig = {}
+): IntegrationConfig {
+  if (clearedKeys.length === 0) {
+    return config;
+  }
+  const result: IntegrationConfig = { ...config };
+  for (const key of clearedKeys) {
+    const replacement = incomingConfig[key];
+    if (typeof replacement === "string" && replacement.length > 0) {
+      continue;
+    }
+    delete result[key];
+  }
+  return result;
+}

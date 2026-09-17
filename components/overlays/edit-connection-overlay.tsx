@@ -168,8 +168,33 @@ export function EditConnectionForm({
     integrationWithConfig.config,
   ]);
 
+  /**
+   * Stored credentials the user has asked to remove.
+   *
+   * A blank secret field means "unchanged", because the stored value is never
+   * sent to the browser and so cannot be resent - which left no way to take a
+   * credential away. Removing is therefore its own act rather than an empty
+   * field, and typing a replacement cancels it.
+   */
+  const [clearedKeys, setClearedKeys] = useState<Set<string>>(new Set());
+
   const updateConfig = (key: string, value: string) => {
     setConfig((prev) => ({ ...prev, [key]: value }));
+    if (value.length > 0) {
+      setClearedKeys((prev) => {
+        if (!prev.has(key)) {
+          return prev;
+        }
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    }
+  };
+
+  const markCleared = (key: string) => {
+    setConfig((prev) => ({ ...prev, [key]: "" }));
+    setClearedKeys((prev) => new Set(prev).add(key));
   };
 
   // Credential values are never sent to the client, so a secret field starts
@@ -195,6 +220,26 @@ export function EditConnectionForm({
   };
 
   /**
+   * What to store.
+   *
+   * A blank secret is dropped, because the client is never given the stored
+   * one and a blank field means it was left alone. Everything else is sent as
+   * the form shows it, blank included - those values did come down to the
+   * browser, so a field the user emptied was emptied on purpose, and dropping
+   * it here made From email and Account subdomain impossible to clear.
+   */
+  const getConfigForSave = (): Record<string, string> => {
+    const result: Record<string, string> = {};
+    for (const [key, value] of Object.entries(config)) {
+      const isSecret = secretKeys.has(key);
+      if (isSecret ? value && value.length > 0 : !clearedKeys.has(key)) {
+        result[key] = value ?? "";
+      }
+    }
+    return result;
+  };
+
+  /**
    * Build non-empty config for sending as overrides to the server-side test.
    */
   const getNonEmptyConfig = (): Record<string, string> => {
@@ -210,11 +255,13 @@ export function EditConnectionForm({
   const doSave = async () => {
     try {
       setSaving(true);
-      const nonEmptyConfig = getNonEmptyConfig();
-      const hasNewConfig = Object.keys(nonEmptyConfig).length > 0;
+      const configForSave = getConfigForSave();
+      const cleared = [...clearedKeys];
+      const hasNewConfig = Object.keys(configForSave).length > 0;
       await api.integration.update(integration.id, {
         name: name.trim(),
-        ...(hasNewConfig ? { config: nonEmptyConfig } : {}),
+        ...(hasNewConfig ? { config: configForSave } : {}),
+        ...(cleared.length > 0 ? { clearedConfigKeys: cleared } : {}),
       });
       toast.success("Connection updated");
       onSuccess?.();
@@ -457,7 +504,14 @@ export function EditConnectionForm({
         (group) => group.firstFieldId === field.id
       );
       const locked = isFieldLocked(field, exclusive);
-      if (!(heading || locked)) {
+      // Offered on every stored credential, because the browser is not told
+      // which ones hold a value - and asking for one that was already empty
+      // costs nothing. It is the only way to take a credential away: a blank
+      // field reads as "unchanged", so a leaked token that somebody thought
+      // they had rotated away went on authorising every run.
+      const removable = secretKeys.has(field.configKey);
+      const cleared = clearedKeys.has(field.configKey);
+      if (!(heading || locked || removable)) {
         return rendered;
       }
       return (
@@ -474,6 +528,24 @@ export function EditConnectionForm({
             className={locked ? "pointer-events-none opacity-45" : undefined}
           >
             {rendered}
+            {removable && !locked && (
+              <div className="mt-1 ml-1">
+                {cleared ? (
+                  <span className="text-muted-foreground text-xs">
+                    Will be removed when you save. Type a new value to keep
+                    this credential instead.
+                  </span>
+                ) : (
+                  <button
+                    className="text-muted-foreground text-xs underline hover:text-foreground"
+                    onClick={() => markCleared(field.configKey)}
+                    type="button"
+                  >
+                    Remove the stored value
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </div>
       );

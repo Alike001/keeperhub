@@ -20,6 +20,7 @@ import {
   flattenConfigFields,
   getAllIntegrations,
   type IntegrationPlugin,
+  isDisplayOnlyField,
   type PluginAction,
 } from "@/plugins/registry";
 
@@ -151,6 +152,13 @@ export function transformPluginAction(
   const optionalFields: Record<string, string> = {};
 
   for (const field of flatFields) {
+    // A field that renders rather than collects has no value to publish. The
+    // AI prompt and the MCP pin schema both drop these; this surface did not,
+    // so an agent reading `optionalFields` would set a key the pin schema
+    // rejects under `additionalProperties: false` and no step ever reads.
+    if (isDisplayOnlyField(field.type)) {
+      continue;
+    }
     const fieldDesc = `${mapFieldType(field)}${field.placeholder ? ` - ${field.placeholder}` : ""}`;
     if (field.required) {
       requiredFields[field.key] = fieldDesc;

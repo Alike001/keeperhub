@@ -29,6 +29,8 @@ export type GetIntegrationResponse = {
 export type UpdateIntegrationRequest = {
   name?: string;
   config?: IntegrationConfig;
+  /** Config keys to remove. See `updateIntegration` for why this is needed. */
+  clearedConfigKeys?: string[];
 };
 
 /**
@@ -150,14 +152,22 @@ export async function PUT(
 
     const body: UpdateIntegrationRequest = await request.json();
 
+    // Whatever arrived, this reaches the database as a list of strings.
+    const clearedConfigKeys = Array.isArray(body.clearedConfigKeys)
+      ? body.clearedConfigKeys.filter(
+          (key): key is string => typeof key === "string" && key.length > 0
+        )
+      : [];
+
     // Fetch existing integration so updateIntegration can merge database
     // secrets without an extra DB round-trip.
-    const existing =
-      body.config === undefined
-        ? null
-        : await getIntegration(integrationId, userId ?? "", organizationId);
+    const touchesConfig =
+      body.config !== undefined || clearedConfigKeys.length > 0;
+    const existing = touchesConfig
+      ? await getIntegration(integrationId, userId ?? "", organizationId)
+      : null;
 
-    if (body.config !== undefined && !existing) {
+    if (touchesConfig && !existing) {
       return NextResponse.json(
         { error: "Integration not found" },
         { status: 404 }
@@ -167,7 +177,15 @@ export async function PUT(
     const integration = await updateIntegration(
       integrationId,
       userId ?? "",
-      body,
+      // A clear with no other change still has to reach the merge, so the
+      // config defaults to what is stored rather than staying undefined.
+      {
+        ...body,
+        clearedConfigKeys,
+        ...(body.config === undefined && clearedConfigKeys.length > 0
+          ? { config: {} }
+          : {}),
+      },
       organizationId,
       existing
     );

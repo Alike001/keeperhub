@@ -581,6 +581,14 @@ export function isDefaultClassification(
   return classification.code === DEFAULT_SYSTEM_ERROR_CODE;
 }
 
+const SYSTEM_CAUSED_CATEGORIES: ReadonlySet<string> = new Set([
+  ErrorCategory.DATABASE,
+  ErrorCategory.AUTH,
+  ErrorCategory.INFRASTRUCTURE,
+  ErrorCategory.WORKFLOW_ENGINE,
+  ErrorCategory.UNKNOWN,
+]);
+
 /**
  * Override a string-derived classification with an authoritative `errorType`
  * declared at the failure site (a step that knows it failed against a
@@ -612,7 +620,16 @@ export function applyErrorClassHint(
   }
   if (hint === ExecutionErrorType.USER) {
     return {
-      errorCategory: classification.errorCategory,
+      // A step saying "this one is the user's fault" contradicts a
+      // system-caused category, and the category is what the dashboards sum.
+      // An unmatched message falls through to WORKFLOW_ENGINE, which is on
+      // the system side by definition, so a revoked credential or a bad
+      // field was being counted as an executor fault. The user-caused
+      // categories are left alone: a rule that reached VALIDATION or
+      // AUTHORIZATION already knows better than this fallback does.
+      errorCategory: SYSTEM_CAUSED_CATEGORIES.has(classification.errorCategory)
+        ? ErrorCategory.CONFIGURATION
+        : classification.errorCategory,
       errorType: ExecutionErrorType.USER,
       code: null,
     };

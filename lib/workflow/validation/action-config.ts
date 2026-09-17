@@ -6,6 +6,7 @@ import {
   type ActionConfigFieldBase,
   findActionById,
   getAllActions,
+  isDisplayOnlyField,
 } from "@/plugins/registry";
 
 // Built from the shared union so this validator, the executor dispatch table,
@@ -360,9 +361,15 @@ function validateFieldValue(
       if (!validateStringLike(value)) {
         return { valid: false, expected: "select option", received: value };
       }
+      // A template resolves at run time, so its text is never one of the
+      // options and there is nothing to check here. Without this a node whose
+      // severity or urgency comes from an upstream step cannot be saved at
+      // all, though the step resolves it and the docs offer it - the
+      // protocol-* and json cases already make the same exception.
       if (
         field.options &&
         field.options.length > 0 &&
+        !valueContainsTemplate(value) &&
         !field.options.some((option) => option.value === String(value))
       ) {
         return {
@@ -560,6 +567,14 @@ export function validateWorkflowActionConfigs(
     }
 
     for (const field of fields) {
+      // A field that renders rather than collects has no value to validate,
+      // and cannot be required. Nothing writes under these keys today, so
+      // this is not a live fault - but the AI-prompt and pin-schema paths both
+      // had to learn the same exception, and a display panel that ever
+      // persisted anything would otherwise start blocking saves.
+      if (isDisplayOnlyField(field.type)) {
+        continue;
+      }
       if (!evaluateShowWhen(field.showWhen, config)) {
         continue;
       }
