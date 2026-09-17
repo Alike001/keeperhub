@@ -43,6 +43,18 @@ beforeEach(() => {
 });
 
 describe("failExecution Safe receipt handling", () => {
+  it("keeps a hash without chain context unconfirmed", async () => {
+    const outcome = await failExecution("exec_1", "chain context missing", {
+      transactionHash: "0xunknown",
+    });
+
+    expect(outcome).toEqual({ status: "unconfirmed" });
+    expect(mocks.verifyExecutionReceipts).not.toHaveBeenCalled();
+    expect(mocks.set).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "unconfirmed", completedAt: null })
+    );
+  });
+
   it("keeps safe_inner_failure unconfirmed because the outer Safe transaction consumed its nonce", async () => {
     const outcome = await failExecution("exec_1", "inner call reverted", {
       transactionHash: "0xsafe",

@@ -764,6 +764,11 @@ async function writeContractCoreImpl(
           chain_id: String(chainId),
         }
       );
+      // Deliberately classify only against the contract's declared interface.
+      // `errorAbis` is caller-supplied and is used only for human-readable error
+      // formatting below; feeding it into classifyRevert could turn an arbitrary
+      // post-broadcast error into `rejection`, stamp broadcastAttempted=false, and
+      // make a live transaction look safe to retry.
       const rejection = classifyRevert(error, contractInterface);
       const broadcastHash =
         broadcastTransactionHash(error) ?? receivedTransactionHash;
@@ -810,7 +815,12 @@ async function writeContractCoreImpl(
   });
 }
 
-/** Explicitly marks every hashless early return as pre-broadcast evidence. */
+/**
+ * Explicitly marks every hashless early return as pre-broadcast evidence. This
+ * intentionally overrides the disposition layer's fail-closed missing-evidence
+ * default, so every future return after a send begins must set a hash or
+ * broadcastAttempted itself rather than falling through this wrapper.
+ */
 export async function writeContractCore(
   input: WriteContractCoreInput
 ): Promise<WriteContractResult> {

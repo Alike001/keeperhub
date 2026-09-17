@@ -187,15 +187,11 @@ export async function failExecution(
 ): Promise<{ status: "failed" | "unconfirmed" }> {
   let receipts: DirectExecutionReceiptEntry[] = [];
 
-  // A hash without a `chainId` cannot be verified, so it would fall through and
-  // be adjudicated as a definite failure on the strength of the missing field
-  // alone -- the same shape that makes the `unconfirmed` return in
-  // `completeExecution` load-bearing. It is not guarded symmetrically here
-  // because no producer of that shape reaches this function: every hash-bearing
-  // failure return across the four chain-write routes and `plugins/*/steps/*.ts`
-  // pairs the hash with a numeric `chainId` in the same ternary. That is a
-  // convention, not a type -- `FailParams` permits the pair to come apart, and
-  // the first caller that separates them would be adjudicated on absence.
+  // A hash without a `chainId` cannot be verified. Fail closed here as well as
+  // at route disposition call sites: `FailParams` permits the pair to come apart,
+  // and missing verification data must never be treated as proof of a conclusive
+  // failure. Such a row remains unconfirmed until reconciliation can adjudicate
+  // it with enough chain context.
   if (params.transactionHash && params.chainId !== undefined) {
     const { results } = await verifyExecutionReceipts([
       { hash: params.transactionHash, chainId: params.chainId },
@@ -241,8 +237,11 @@ export async function failExecution(
 
   const hashlessAttemptStillInFlight =
     params.broadcastAttempted === true && !params.transactionHash;
+  const hashWithoutChainContext =
+    Boolean(params.transactionHash) && params.chainId === undefined;
   const status =
     hashlessAttemptStillInFlight ||
+    hashWithoutChainContext ||
     (receipts.length > 0 &&
       (isInconclusive(receipts) || landedSuccessfully || spentASafeNonce))
       ? "unconfirmed"

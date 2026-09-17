@@ -269,19 +269,24 @@ async function handleResult(
         : undefined;
     const chainId =
       output && typeof output.chainId === "number" ? output.chainId : undefined;
+    const broadcastAttempted =
+      output && typeof output.broadcastAttempted === "boolean"
+        ? output.broadcastAttempted
+        : undefined;
     const settled = await failExecution(executionId, errorMsg, {
       transactionHash,
       chainId,
+      broadcastAttempted,
     });
-    // Only a hash lets failExecution adjudicate anything: with one, its verdict
-    // decides the key (conclusive failure releases, unreadable holds). Without
-    // one it answers "failed" from the mere absence of a hash, and on this route
-    // that is not evidence -- unlike the chain-write routes, an arbitrary step
-    // here may have had a side effect (a message sent, a webhook delivered)
-    // before it reported failure. Hold the key in that case.
-    const disposition = transactionHash
-      ? dispositionForExecutionOutcome(settled.status, { transactionHash })
-      : "failed";
+    // A hash is only adjudicable together with its numeric chain id. Without
+    // that pair, failExecution cannot verify a receipt and this arbitrary node
+    // may already have produced a side effect, so the idempotency key stays
+    // held. broadcastAttempted is still forwarded above so a hashless attempted
+    // chain send becomes unconfirmed/reconcilable instead of terminal.
+    const disposition =
+      transactionHash && chainId !== undefined
+        ? dispositionForExecutionOutcome(settled.status, { transactionHash })
+        : "failed";
     return recordIdempotentResponse(
       idem,
       NextResponse.json(
@@ -322,15 +327,16 @@ async function handleResult(
   // assert an outcome we do not have. It is non-terminal, so the caller polls
   // the status endpoint and the reconciler settles the row.
   if (outcome.status !== "completed") {
-    // Mirror the failure branch above: a non-completed verification outcome is
-    // only safe to map through the shared rule when a transaction hash existed
-    // to adjudicate. This invariant currently follows from isTransactionResult,
-    // but keeping the guard here makes the safety boundary local and pinned.
-    const disposition = completeParams.transactionHash
-      ? dispositionForExecutionOutcome(outcome.status, {
-          transactionHash: completeParams.transactionHash,
-        })
-      : "failed";
+    // Mirror the failure branch above: only a hash+chain pair could have been
+    // independently verified by completeExecution. A hash without a numeric
+    // chain id is evidence of a possible send, not evidence of a conclusive
+    // failure, so keep the key held.
+    const disposition =
+      completeParams.transactionHash && completeParams.chainId !== undefined
+        ? dispositionForExecutionOutcome(outcome.status, {
+            transactionHash: completeParams.transactionHash,
+          })
+        : "failed";
     return recordIdempotentResponse(
       idem,
       NextResponse.json(
