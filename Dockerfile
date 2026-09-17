@@ -16,7 +16,7 @@ RUN apk add --no-cache libc6-compat && \
 WORKDIR /app
 
 # Install pnpm
-RUN npm install -g pnpm@9
+RUN npm install -g pnpm@10
 
 # Copy package files
 COPY package.json pnpm-lock.yaml* ./
@@ -36,7 +36,7 @@ RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
 FROM node:24-alpine AS dev
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
-RUN npm install -g pnpm@9
+RUN npm install -g pnpm@10
 COPY --link --from=deps /app/node_modules ./node_modules
 COPY package.json pnpm-lock.yaml* .npmrc* ./
 COPY patches/ ./patches/
@@ -47,7 +47,7 @@ CMD ["pnpm", "dev", "--hostname", "0.0.0.0"]
 # Stage 2: Source (dependencies + source files, no build)
 FROM node:24-alpine AS source
 WORKDIR /app
-RUN npm install -g pnpm@9
+RUN npm install -g pnpm@10
 
 # Copy dependencies from deps stage
 COPY --link --from=deps /app/node_modules ./node_modules
@@ -158,7 +158,7 @@ RUN if [ -n "$SENTRY_AUTH_TOKEN" ]; then \
 # Stage 2.6: Migration stage (for running migrations and seeding)
 FROM node:24-alpine AS migrator
 WORKDIR /app
-RUN npm install -g pnpm@9 tsx@4
+RUN npm install -g pnpm@10 tsx@4
 COPY --link --from=deps /etc/ssl/certs/rds-combined-ca-bundle.pem /etc/ssl/certs/rds-combined-ca-bundle.pem
 
 # Copy dependencies, migration files, and seed scripts
@@ -185,7 +185,7 @@ RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
 # Install pnpm
-RUN npm install -g pnpm@9
+RUN npm install -g pnpm@10
 
 # Use scheduler's own package.json for its specific dependencies
 COPY keeperhub-scheduler/package.json keeperhub-scheduler/pnpm-lock.yaml ./
@@ -238,7 +238,7 @@ CMD ["tsx", "block-dispatcher/index.ts"]
 # update RUNNER_UID/RUNNER_GID to match the new image.
 FROM node:24-alpine AS workflow-runner
 WORKDIR /app
-RUN npm install -g pnpm@9 tsx@4
+RUN npm install -g pnpm@10 tsx@4
 COPY --link --from=deps /etc/ssl/certs/rds-combined-ca-bundle.pem /etc/ssl/certs/rds-combined-ca-bundle.pem
 
 # Copy dependencies and workflow execution files
@@ -277,7 +277,7 @@ CMD ["tsx", "keeperhub-executor/workflow-runner.ts"]
 # Stage 2.9: Unified Executor (polls SQS, dispatches to K8s Jobs or in-process)
 FROM node:24-alpine AS executor
 WORKDIR /app
-RUN npm install -g pnpm@9 tsx@4
+RUN npm install -g pnpm@10 tsx@4
 COPY --link --from=deps /etc/ssl/certs/rds-combined-ca-bundle.pem /etc/ssl/certs/rds-combined-ca-bundle.pem
 
 # Full deps needed for in-process workflow execution + @kubernetes/client-node
@@ -359,7 +359,7 @@ CMD ["node", "server.js"]
 # ==============================================================================
 FROM node:24-alpine AS metrics-collector
 WORKDIR /app
-RUN npm install -g pnpm@9 tsx@4
+RUN npm install -g pnpm@10 tsx@4
 COPY --link --from=deps /etc/ssl/certs/rds-combined-ca-bundle.pem /etc/ssl/certs/rds-combined-ca-bundle.pem
 
 COPY --link --from=deps /app/node_modules ./node_modules
