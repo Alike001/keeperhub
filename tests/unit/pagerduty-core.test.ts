@@ -212,6 +212,88 @@ describe("listServices", () => {
  * points every request at the wrong regional host - which comes back as a 401
  * and reads as a bad token.
  */
+/**
+ * A client-credentials grant is refused outright if it asks for a scope the
+ * app does not hold. Asking for a fixed superset and falling back to the
+ * minimal pair loses every combination in between - including the one the
+ * connection form recommends, two read scopes plus incidents.read.
+ */
+describe("OAuth scope requests", () => {
+  function tokenThenOk() {
+    safeFetch
+      .mockResolvedValueOnce(
+        response(200, { access_token: "tok", expires_in: 3600 })
+      )
+      .mockResolvedValueOnce(response(200, { incidents: [] }));
+  }
+
+  it("asks only for the scopes the call needs", async () => {
+    tokenThenOk();
+    await findIncidentByKey(OAUTH_CREDS, {
+      serviceId: "PSKY1",
+      incidentKey: "k1",
+    });
+    const scope = new URLSearchParams(
+      String((safeFetch.mock.calls[0] as [string, { body: string }])[1].body)
+    ).get("scope");
+    expect(scope).toBe(
+      "as_account-us.acme services.read escalation_policies.read incidents.read"
+    );
+  });
+
+  it("does not repeat a scope the pair already covers", async () => {
+    safeFetch
+      .mockResolvedValueOnce(
+        response(200, { access_token: "tok", expires_in: 3600 })
+      )
+      .mockResolvedValueOnce(response(200, { services: [] }));
+    await listServices(OAUTH_CREDS);
+    const scope = new URLSearchParams(
+      String((safeFetch.mock.calls[0] as [string, { body: string }])[1].body)
+    ).get("scope");
+    expect(scope).toBe(
+      "as_account-us.acme services.read escalation_policies.read"
+    );
+  });
+
+  it("holds a separate token per scope set rather than reusing one", async () => {
+    tokenThenOk();
+    await findIncidentByKey(OAUTH_CREDS, {
+      serviceId: "PSKY1",
+      incidentKey: "k1",
+    });
+    safeFetch
+      .mockResolvedValueOnce(
+        response(200, { access_token: "tok2", expires_in: 3600 })
+      )
+      .mockResolvedValueOnce(response(200, { services: [] }));
+    await listServices(OAUTH_CREDS);
+    // Second exchange, because the first token was issued for a scope set
+    // this call does not need - not a cache miss on the credential.
+    expect(safeFetch.mock.calls[2][0]).toContain("identity.pagerduty.com");
+  });
+
+  it("falls back to the pair when the app does not hold the extra scope", async () => {
+    safeFetch
+      .mockResolvedValueOnce(response(400, { error: "invalid_scope" }))
+      .mockResolvedValueOnce(
+        response(200, { access_token: "tok", expires_in: 3600 })
+      )
+      .mockResolvedValueOnce(response(200, { incidents: [] }));
+    const result = await findIncidentByKey(OAUTH_CREDS, {
+      serviceId: "PSKY1",
+      incidentKey: "k1",
+    });
+    expect(result.ok).toBe(true);
+    const retried = new URLSearchParams(
+      String((safeFetch.mock.calls[1] as [string, { body: string }])[1].body)
+    ).get("scope");
+    expect(retried).toBe(
+      "as_account-us.acme services.read escalation_policies.read"
+    );
+  });
+});
+
 describe("service region flag", () => {
   it.each(["true", "TRUE", " 1 ", "yes", "eu", "on"])(
     "reads %s as the EU region",

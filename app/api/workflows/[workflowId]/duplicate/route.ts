@@ -29,13 +29,34 @@ type WorkflowNodeLike = {
   [key: string]: unknown;
 };
 
+/**
+ * Rewrite a config value that is a bare node id.
+ *
+ * Most node references travel as `{{@nodeId:...}}` templates, which the
+ * remapper below handles. Some fields store the id on its own instead, because
+ * they point at a node whose output they deliberately do not read - the
+ * PagerDuty resolve action names the trigger node whose alert it closes,
+ * precisely so it works on the branch where that trigger never ran. A bare id
+ * survived duplication unchanged and went on naming a node in the workflow it
+ * was copied from, which for that action means resolving an alert that does
+ * not exist: PagerDuty answers 202, drops it, and the incident stays open with
+ * every run showing success.
+ *
+ * Only ids of nodes being duplicated right now are rewritten, and node ids are
+ * nanoids, so a config value that is not a node reference cannot collide with
+ * one.
+ */
+function remapBareNodeId(value: string, idMap: Map<string, string>): string {
+  return idMap.get(value) ?? value;
+}
+
 /** Recursively rewrite a single value (string, object, or array) using old->new node ID map */
 function remapTemplateRefsInValue(
   value: unknown,
   idMap: Map<string, string>
 ): unknown {
   if (typeof value === "string") {
-    return remapTemplateRefsInString(value, idMap);
+    return remapTemplateRefsInString(remapBareNodeId(value, idMap), idMap);
   }
   if (Array.isArray(value)) {
     return value.map((item) => remapTemplateRefsInValue(item, idMap));

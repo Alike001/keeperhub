@@ -165,6 +165,27 @@ describe("parseLinks", () => {
     );
   });
 
+  /**
+   * A label is free text. Taking the second field rather than the last threw
+   * the url away and kept the middle of the label, which then failed the https
+   * check - so the line vanished from a well-formed entry.
+   */
+  it("takes the url as the last field, so a label may contain a separator", () => {
+    expect(
+      parseLinks(
+        "Vault A | liquidation risk | https://etherscan.io/address/0x1"
+      )
+    ).toEqual({
+      links: [
+        {
+          href: "https://etherscan.io/address/0x1",
+          text: "Vault A | liquidation risk",
+        },
+      ],
+      dropped: 0,
+    });
+  });
+
   it("ignores blank lines without counting them as dropped", () => {
     const parsed = parseLinks("https://a.example\n\n  \nhttps://b.example");
     expect(parsed.links).toHaveLength(2);

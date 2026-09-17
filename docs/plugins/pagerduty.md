@@ -47,7 +47,7 @@ PagerDuty recommends scoped OAuth over account-wide keys, and the plugin accepts
 - `services.read`
 - `escalation_policies.read`
 
-Add `incidents.read` if you want the acknowledge and resolve actions to check the incident afterwards, `priorities.read` if you want the priority picker on Create Incident to list your account's priorities, and `incidents.write` if you use Create Incident. Each is optional and only the feature that needs it is affected: without `incidents.read` the check reports the status as unknown, and the acknowledge or resolve itself still goes through. Fill in the client id, client secret and your account subdomain, and leave the API token blank.
+Add `incidents.read` if you want the acknowledge and resolve actions to check the incident afterwards, `priorities.read` if you want the priority picker on Create Incident to list your account's priorities, and `incidents.write` if you use Create Incident. Grant only the ones you need: each call asks PagerDuty for the two scopes above plus the one it needs, so any combination you register works. Each is optional and only the feature that needs it is affected: without `incidents.read` the check reports the status as unknown, and the acknowledge or resolve itself still goes through. Fill in the client id, client secret and your account subdomain, and leave the API token blank.
 
 If the account is ever renamed, update the subdomain field: the OAuth scope string carries it. An API token is unaffected by a rename, and nothing in a workflow has to change either way, because services and escalation policies are stored by id.
 
@@ -61,13 +61,13 @@ Open an alert, or update the one already open for the same dedup key.
 
 **Inputs:** PagerDuty service (picked from your account), Summary (becomes the alert title), Severity (`critical`, `error`, `warning`, `info`), Source, Dedup key, and optional Component, Group, Class, Custom details and Links. Supports `{{NodeName.field}}` variables throughout.
 
-**Outputs:** `delivered`, `dedupKey`, `status` (`triggered`, `held`, or `failed`), `consecutiveRuns`, `requiredRuns`, `error`, `summaryFellBack`, `serviceStatus`, `suppressedByService`, `detailsTruncated`, `linksDropped`, `message`, and the backup fields below.
+**Outputs:** `delivered`, `dedupKey`, `status` (`triggered`, `suppressed`, `held`, or `failed`), `consecutiveRuns`, `requiredRuns`, `error`, `summaryFellBack`, `serviceStatus`, `suppressedByService`, `detailsTruncated`, `linksDropped`, `message`, and the backup fields below.
 
-**Links** go one per line, as `text | url` or a bare url, and become clickable links on the incident - the explorer transaction or the dashboard a responder opens first. The url has to be `https`. A line that is not an https url is skipped rather than failing the page, because a page with one missing link beats no page; the Preview on the node shows exactly which links will be sent, and `linksDropped` counts the ones that will not.
+**Links** go one per line, as `text | url` or a bare url - the url is the last field, so a label may contain `|` of its own - and become clickable links on the incident - the explorer transaction or the dashboard a responder opens first. The url has to be `https`. A line that is not an https url is skipped rather than failing the page, because a page with one missing link beats no page; the Preview on the node shows exactly which links will be sent, and `linksDropped` counts the ones that will not.
 
 **Deduplication.** Leave the dedup key blank and the node uses one key per node, so a check that keeps failing updates one alert instead of paging on every run. Put a vault address or chain id in the field to page per subject instead. Once an alert is resolved, the next trigger with the same key opens a new one.
 
-**Paging only after several failures.** Set **Consecutive runs before paging** to hold a flapping check. With 3, the first two runs that reach the node are held and the third pages. Any run that does not reach the node resets the count, so one healthy check clears it. Held runs are recorded in the output, not silently dropped.
+**Paging only after several failures.** Set **Consecutive runs before paging** to hold a flapping check. With 3, the first two runs that reach the node are held and the third pages. A run that finishes successfully without reaching the node resets the count, so one healthy check clears it. A run that failed, was cancelled, or was refused before it started does not reset it and does not advance it - it never got far enough to say whether the condition cleared, and during the outage this node exists to page for those are most of the runs. Held runs are recorded in the output, not silently dropped.
 
 **Severity, urgency and priority are three different things.** Severity describes the condition. On a service using dynamic urgency, `critical` and `error` page at high urgency while `warning` and `info` do not; on other services the service's urgency rule decides. Priority (P1, P2) cannot be set on an event at all: PagerDuty assigns it from the service's Event Orchestration rules, or you set it directly with Create Incident.
 
@@ -136,14 +136,14 @@ Every failure names the object it is about, and the ones that cannot succeed on 
 |---------------|--------------------|
 | Service deleted, or not visible to these credentials | Fails naming the service id. The node keeps the id rather than repointing at another service |
 | Service disabled in PagerDuty | Fails. A disabled service accepts events and raises no incident, so the page would have gone nowhere |
-| Service in a maintenance window | Delivers, and reports `suppressedByService` -- PagerDuty takes the event and raises no incident until the window ends |
+| Service in a maintenance window | Delivers, with `status: suppressed` and `suppressedByService` -- PagerDuty takes the event and raises no incident until the window ends. Branch on `status`, not `delivered` |
 | Service has no Events API v2 integration | Fails naming the service and the fix |
 | Token revoked, or presented to the wrong region | Fails with a credential error. Test Connection tells you when the region checkbox is the cause |
 | PagerDuty account lapsed or downgraded | Fails with PagerDuty's `402`: the plan does not allow the request |
 | Rate limited, 5xx, network fault | Retried, twice by default, honouring the delay PagerDuty asks for |
-| Payload rejected (`400`) | Fails immediately, quoting PagerDuty's own error. Usually a summary that templated to empty |
+| Payload rejected (`400`) | Fails immediately, quoting PagerDuty's own error. An empty summary is not the cause - that is handled with a fallback title - so look at a Component, Group or Class template that rendered to something very large |
 
-Because the trigger action reads the routing key from PagerDuty before it sends anything, a dead account or a dead credential fails on that read rather than firing an event nobody receives.
+Because the trigger action reads the routing key from PagerDuty before it sends anything, a dead account or a dead credential fails on that read rather than firing an event nobody receives. The resolved key is cached for five minutes so a REST blip cannot stop a page, so a credential revoked in the last few minutes may still page from cache - deliberately, because a page sent on a stale key is better than one not sent at all. A service that is disabled or in a maintenance window is never read from cache, so re-enabling one takes effect on the next run.
 
 ### Backup notification
 

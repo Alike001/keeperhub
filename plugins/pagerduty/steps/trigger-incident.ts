@@ -2,7 +2,7 @@ import "server-only";
 
 import { fetchCredentials } from "@/lib/credential-fetcher";
 import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
-import { ErrorCategory, logUserError } from "@/lib/logging";
+import { ErrorCategory, logSystemWarn, logUserError } from "@/lib/logging";
 import { sleep } from "@/lib/sleep";
 import { resolveFailOnError } from "@/lib/utils";
 import {
@@ -82,7 +82,12 @@ type TriggerIncidentResult =
       /** False when the event was held by the consecutive-runs guard, or soft-failed. */
       delivered: boolean;
       dedupKey: string;
-      status: "triggered" | "held" | "failed";
+      /**
+       * "suppressed" is a delivered event on a service in a maintenance
+       * window: PagerDuty took it and raised no incident, so calling it
+       * "triggered" would name an incident state that never happened.
+       */
+      status: "triggered" | "suppressed" | "held" | "failed";
       consecutiveRuns: number;
       requiredRuns: number;
       detailsTruncated?: boolean;
@@ -478,7 +483,7 @@ async function stepHandler(
     success: true,
     delivered: true,
     dedupKey: result.value.dedupKey ?? dedupKey,
-    status: "triggered",
+    status: suppressed ? "suppressed" : "triggered",
     consecutiveRuns,
     requiredRuns,
     detailsTruncated: detailsDropped,
@@ -497,9 +502,26 @@ export async function triggerIncidentStep(
 ): Promise<TriggerIncidentResult> {
   "use step";
 
-  const credentials = await fetchCredentials(input.integrationId, {
-    organizationId: input._context?.organizationId ?? null,
-  });
+  // A throw here would leave the run with a raw system error and never reach
+  // the backup channel, whose entire purpose is to tell someone when the
+  // primary path is down - and a credential store that will not answer is
+  // exactly that. An empty credential set takes the same route as a deleted
+  // connection: a message naming the three things it can be, the backup fired,
+  // and the run failed. The same reasoning as the consecutive-runs guard,
+  // which fails open for the same reason.
+  let credentials: Awaited<ReturnType<typeof fetchCredentials>> = {};
+  try {
+    credentials = await fetchCredentials(input.integrationId, {
+      organizationId: input._context?.organizationId ?? null,
+    });
+  } catch (error) {
+    logSystemWarn(
+      ErrorCategory.DATABASE,
+      "[PagerDuty] Could not read the connection, treating it as empty so the backup still fires",
+      error,
+      LOG_LABELS
+    );
+  }
 
   return runPluginStep(
     { pluginName: "pagerduty", actionName: "trigger-incident" },

@@ -59,20 +59,33 @@ const REQUEST_TIMEOUT_MS = 10_000;
 const PLUGIN = "pagerduty";
 const ACCEPT_V2 = "application/vnd.pagerduty+json;version=2";
 /**
- * Scopes asked for, most useful first. The full set covers every action:
- * reading services (which includes their integrations, hence the routing key),
- * reading escalation policies, reading an incident back after an acknowledge
- * or resolve, and creating one over REST.
- *
- * A client-credentials grant only issues scopes the app registration holds, so
- * an app registered with the two read scopes - which is all the connection form
- * tells people to grant - would be refused the full request. Rather than force
- * everyone to over-grant, the exchange falls back to the minimal pair, and the
- * actions that need more say so when PagerDuty refuses them.
+ * The two scopes every action needs: reading services, which includes their
+ * integrations and so the routing key, and reading escalation policies.
  */
-const OAUTH_SCOPES_FULL =
-  "services.read escalation_policies.read priorities.read incidents.read incidents.write";
 const OAUTH_SCOPES_MINIMAL = "services.read escalation_policies.read";
+
+/**
+ * The scopes to ask for on behalf of one call.
+ *
+ * A client-credentials grant is refused outright - a 400 - if it asks for a
+ * scope the app registration does not hold, so the request has to match what
+ * the user actually granted. Asking for a fixed superset and falling back to
+ * the minimal pair looks like it handles that, and does for the two ends of
+ * the range, but it silently loses everything in between: an app granted the
+ * two read scopes plus incidents.read is refused the superset, falls back to
+ * the pair, and the incident read-back then fails with a 403 for a scope its
+ * owner did in fact grant. That is the shape the connection form recommends,
+ * so it was the common case rather than the edge one.
+ *
+ * Asking for the pair plus whatever this particular call needs means the
+ * request matches the grant for every combination somebody might reasonably
+ * register.
+ */
+function oauthScopesFor(requiredScope: string): string {
+  return OAUTH_SCOPES_MINIMAL.split(" ").includes(requiredScope)
+    ? OAUTH_SCOPES_MINIMAL
+    : `${OAUTH_SCOPES_MINIMAL} ${requiredScope}`;
+}
 /** Renew a little before expiry so a call never races the boundary. */
 const OAUTH_EXPIRY_SKEW_MS = 60_000;
 
@@ -203,7 +216,10 @@ export function apiUrl(
  * region. Tokens are short-lived and never persisted: a restart simply
  * re-exchanges the client credentials.
  */
-const oauthTokens = new Map<string, { header: string; expiresAt: number }>();
+const oauthTokens = new Map<
+  string,
+  { header: string; expiresAt: number; credentialKey: string }
+>();
 
 /** Exported for tests, which need a clean cache between cases. */
 export function clearOAuthTokenCache(): void {
@@ -217,7 +233,15 @@ export function clearOAuthTokenCache(): void {
  * cache until it expires on its own.
  */
 function invalidateOAuthToken(credentials: PagerDutyCredentials): void {
-  oauthTokens.delete(oauthCacheKey(credentials));
+  // Every scope set held for this credential, not just the one the failing
+  // call asked for: a revoked app registration invalidates all of them, and
+  // leaving the others cached would keep answering 401 until they expire.
+  const credentialKey = oauthCredentialKey(credentials);
+  for (const [key, entry] of oauthTokens) {
+    if (entry.credentialKey === credentialKey) {
+      oauthTokens.delete(key);
+    }
+  }
 }
 
 type OAuthTokenResponse = { access_token?: string; expires_in?: number };
@@ -240,13 +264,21 @@ type OAuthTokenResponse = { access_token?: string; expires_in?: number };
  * JSON encodes the parts so no separator can appear inside one and make two
  * different credentials collide on one key.
  */
-function oauthCacheKey(credentials: PagerDutyCredentials): string {
+function oauthCredentialKey(credentials: PagerDutyCredentials): string {
   return JSON.stringify([
     credentials.PAGERDUTY_OAUTH_CLIENT_ID ?? "",
     credentials.PAGERDUTY_SUBDOMAIN ?? "",
     isEuRegion(credentials) ? "eu" : "us",
     credentials.PAGERDUTY_OAUTH_CLIENT_SECRET ?? "",
   ]);
+}
+
+/** One entry per credential and scope set, since a token only carries what it asked for. */
+function oauthCacheKey(
+  credentials: PagerDutyCredentials,
+  scopes: string
+): string {
+  return JSON.stringify([oauthCredentialKey(credentials), scopes]);
 }
 
 export function oauthScopeString(
@@ -259,7 +291,7 @@ export function oauthScopeString(
 
 async function fetchOAuthHeader(
   credentials: PagerDutyCredentials,
-  scopes: string = OAUTH_SCOPES_FULL
+  scopes: string
 ): Promise<PagerDutyResult<string>> {
   const clientId = credentials.PAGERDUTY_OAUTH_CLIENT_ID ?? "";
   const clientSecret = credentials.PAGERDUTY_OAUTH_CLIENT_SECRET ?? "";
@@ -280,10 +312,22 @@ async function fetchOAuthHeader(
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
-    // An app registered with fewer scopes than asked for is refused, so try
-    // again with the pair every connection is told to grant before giving up.
+    // The app does not hold the scope this call wanted. Fall back to the pair
+    // every connection is told to grant, so the reads that only need those
+    // still work; the call that wanted more gets PagerDuty's 403 and a message
+    // naming the scope. The result is cached under the scopes that were asked
+    // for, so this costs one extra exchange per scope set, not per call.
     if (response.status === 400 && scopes !== OAUTH_SCOPES_MINIMAL) {
-      return await fetchOAuthHeader(credentials, OAUTH_SCOPES_MINIMAL);
+      const minimal = await fetchOAuthHeader(credentials, OAUTH_SCOPES_MINIMAL);
+      if (minimal.ok) {
+        const cached = oauthTokens.get(
+          oauthCacheKey(credentials, OAUTH_SCOPES_MINIMAL)
+        );
+        if (cached) {
+          oauthTokens.set(oauthCacheKey(credentials, scopes), cached);
+        }
+      }
+      return minimal;
     }
 
     if (!response.ok) {
@@ -314,9 +358,10 @@ async function fetchOAuthHeader(
     const header = `Bearer ${parsed.access_token}`;
     const lifetimeMs = (parsed.expires_in ?? 0) * 1000;
     if (lifetimeMs > OAUTH_EXPIRY_SKEW_MS) {
-      oauthTokens.set(oauthCacheKey(credentials), {
+      oauthTokens.set(oauthCacheKey(credentials, scopes), {
         header,
         expiresAt: Date.now() + lifetimeMs - OAUTH_EXPIRY_SKEW_MS,
+        credentialKey: oauthCredentialKey(credentials),
       });
     }
     return { ok: true, value: header };
@@ -337,7 +382,8 @@ async function fetchOAuthHeader(
  * are exchanged for a bearer token and cached until shortly before expiry.
  */
 export async function resolveAuthHeader(
-  credentials: PagerDutyCredentials
+  credentials: PagerDutyCredentials,
+  requiredScope = "services.read"
 ): Promise<PagerDutyResult<string>> {
   const token = credentials.PAGERDUTY_API_TOKEN?.trim();
   if (token) {
@@ -379,11 +425,12 @@ export async function resolveAuthHeader(
     };
   }
 
-  const cached = oauthTokens.get(oauthCacheKey(credentials));
+  const scopes = oauthScopesFor(requiredScope);
+  const cached = oauthTokens.get(oauthCacheKey(credentials, scopes));
   if (cached && cached.expiresAt > Date.now()) {
     return { ok: true, value: cached.header };
   }
-  return await fetchOAuthHeader(credentials);
+  return await fetchOAuthHeader(credentials, scopes);
 }
 
 function restFailure(
@@ -430,7 +477,7 @@ async function restGet<T>(
   path: string,
   requiredScope = "services.read"
 ): Promise<PagerDutyResult<T>> {
-  const auth = await resolveAuthHeader(credentials);
+  const auth = await resolveAuthHeader(credentials, requiredScope);
   if (!auth.ok) {
     return auth;
   }
@@ -694,7 +741,19 @@ export async function resolveRoutingKey(
 
   const cacheKey = routingKeyCacheKey(credentials, serviceId);
   const cached = routingKeys.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
+  // A cached status that says the service swallows events is not reused. The
+  // trigger action refuses to send at all on a disabled service, and fires the
+  // backup for a maintenance window when told to, so a status cached before
+  // somebody re-enabled the service would refuse to page for up to the rest of
+  // the TTL - during exactly the minutes when somebody is toggling a service
+  // because an incident is in progress. Re-reading costs one GET on the
+  // abnormal path only. The other direction stays cached and is safe: the
+  // event is posted, and PagerDuty simply raises no incident from it.
+  if (
+    cached &&
+    cached.expiresAt > Date.now() &&
+    !serviceSwallowsEvents(cached.serviceStatus)
+  ) {
     return {
       ok: true,
       value: { routingKey: cached.key, serviceStatus: cached.serviceStatus },
@@ -984,7 +1043,7 @@ export async function createIncident(
     };
   }
 
-  const auth = await resolveAuthHeader(credentials);
+  const auth = await resolveAuthHeader(credentials, "incidents.write");
   if (!auth.ok) {
     return auth;
   }

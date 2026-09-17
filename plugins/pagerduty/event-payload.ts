@@ -89,13 +89,18 @@ export function parseLinks(raw: string | undefined): {
     if (!trimmed) {
       continue;
     }
-    const [first, second] = trimmed.split(LINK_SEPARATOR);
-    const href = (second ?? first).trim();
+    // The url is the last field, not the second: a label is free text and
+    // "Vault A | liquidation risk | https://..." is a reasonable thing to
+    // write. Taking the second field dropped the url and kept the middle of
+    // the label, which then failed the https check and lost the line.
+    const parts = trimmed.split(LINK_SEPARATOR);
+    const href = (parts.at(-1) ?? "").trim();
     if (!href.startsWith("https://")) {
       dropped += 1;
       continue;
     }
-    links.push({ href, text: (second ? first : href).trim() });
+    const label = parts.slice(0, -1).join(" | ").trim();
+    links.push({ href, text: label || href });
   }
   return { links, dropped };
 }

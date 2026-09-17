@@ -114,6 +114,7 @@ export async function GET(
       escalationPolicies: policies.value.escalationPolicies,
       truncated: policies.value.truncated,
       accountSubdomain: firstSubdomain(policies.value.escalationPolicies),
+      euRegion: firstRegion(policies.value.escalationPolicies),
     });
   }
 

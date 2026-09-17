@@ -314,9 +314,11 @@ export function PagerDutyServiceField({
       )}
 
       {truncated && (
-        <Notice tone="info">
-          This account has more services than are listed here. Search narrows
-          what is shown; a service further down the list is not missing.
+        <Notice tone="warning">
+          This account has more services than this list can show, and there is
+          no way to reach one past the end of it here. If the service you want
+          is missing, set its id on this node through the API or MCP, or ask
+          PagerDuty support to tidy up services nobody uses.
         </Notice>
       )}
 
@@ -352,8 +354,19 @@ export function PagerDutyEscalationPolicyField({
   integrationId?: string;
   onChange: (value: string) => void;
 }) {
-  const { items, loading, error, reload, accountSubdomain, truncated } =
-    usePagerDutyResources(integrationId, "escalation-policies", pickPolicies);
+  const {
+    items,
+    loading,
+    error,
+    reload,
+    accountSubdomain,
+    euRegion,
+    truncated,
+  } = usePagerDutyResources(
+    integrationId,
+    "escalation-policies",
+    pickPolicies
+  );
 
   const selected = items.find((policy) => policy.id === value);
   // Not claimed on a truncated list, for the same reason as the service field
@@ -406,7 +419,8 @@ export function PagerDutyEscalationPolicyField({
 
       {accountSubdomain && (
         <p className="ml-1 font-mono text-muted-foreground text-xs">
-          {accountSubdomain}.pagerduty.com
+          {accountSubdomain}
+          {euRegion ? ".eu" : ""}.pagerduty.com
         </p>
       )}
 
@@ -428,9 +442,10 @@ export function PagerDutyEscalationPolicyField({
       )}
 
       {truncated && (
-        <Notice tone="info">
-          This account has more escalation policies than are listed here. One
-          further down the list is not missing.
+        <Notice tone="warning">
+          This account has more escalation policies than this list can show. If
+          the one you want is missing, leave this on the service default - the
+          service's own policy is what every other action uses anyway.
         </Notice>
       )}
     </div>

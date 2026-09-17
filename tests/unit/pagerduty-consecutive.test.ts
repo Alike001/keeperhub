@@ -11,6 +11,7 @@ vi.mock("@/lib/logging", () => ({
 vi.mock("@/lib/db/schema", () => ({
   workflowExecutions: {
     id: "id",
+    status: "status",
     workflowId: "workflow_id",
     startedAt: "started_at",
     completedAt: "completed_at",
@@ -42,7 +43,14 @@ import {
  * Three chained queries: this run's start time, the runs before it, then the
  * log rows showing which of those reached this node.
  */
-function mockQueries(priorRuns: { id: string }[], reached: string[]) {
+function mockQueries(
+  priorRuns: { id: string; status?: string }[],
+  reached: string[]
+) {
+  const rows = priorRuns.map((run) => ({
+    id: run.id,
+    status: run.status ?? "success",
+  }));
   selectMock
     .mockReturnValueOnce({
       from: () => ({
@@ -54,7 +62,7 @@ function mockQueries(priorRuns: { id: string }[], reached: string[]) {
     .mockReturnValueOnce({
       from: () => ({
         where: () => ({
-          orderBy: () => ({ limit: () => Promise.resolve(priorRuns) }),
+          orderBy: () => ({ limit: () => Promise.resolve(rows) }),
         }),
       }),
     })
@@ -115,6 +123,52 @@ describe("countConsecutiveRuns", () => {
     // exec-2 is the most recent prior run and skipped this node: one healthy
     // check is enough to clear the streak.
     mockQueries([{ id: "exec-2" }, { id: "exec-1" }], ["exec-1"]);
+    expect(await countConsecutiveRuns(CONTEXT, 3)).toBe(1);
+  });
+
+  /**
+   * The failure this guard can cause, and the reason for the status check.
+   *
+   * With N=3 on an hourly check: run 1 sees the condition and is held. Run 2
+   * never reaches the node because the check node itself errored - the thing
+   * being monitored is down, so the HTTP call timed out. Counting that as "the
+   * check passed" resets the streak, and it resets it again on every other run
+   * for as long as the outage makes the check flaky. Nobody is ever paged, and
+   * every held run reports success.
+   */
+  it("steps over a run that failed before reaching the node", async () => {
+    mockQueries(
+      [
+        { id: "exec-3", status: "error" },
+        { id: "exec-2", status: "success" },
+        { id: "exec-1", status: "success" },
+      ],
+      ["exec-2", "exec-1"]
+    );
+    expect(await countConsecutiveRuns(CONTEXT, 3)).toBe(3);
+  });
+
+  it.each(["error", "system_error", "cancelled", "skipped", "phantom"])(
+    "steps over a %s run rather than treating it as a healthy check",
+    async (status) => {
+      mockQueries([{ id: "exec-2", status }, { id: "exec-1" }], ["exec-1"]);
+      expect(await countConsecutiveRuns(CONTEXT, 3)).toBe(2);
+    }
+  );
+
+  /**
+   * The other half of the same rule: a run that genuinely finished and did not
+   * reach the node is the healthy check the guard is waiting for, and it still
+   * clears the streak.
+   */
+  it("still breaks the streak on a successful run that skipped the node", async () => {
+    mockQueries(
+      [
+        { id: "exec-3", status: "success" },
+        { id: "exec-2", status: "success" },
+      ],
+      ["exec-2"]
+    );
     expect(await countConsecutiveRuns(CONTEXT, 3)).toBe(1);
   });
 

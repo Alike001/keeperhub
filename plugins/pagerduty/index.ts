@@ -49,7 +49,7 @@ const retryFields: ActionConfigFieldBase[] = [
     label: "Fail the workflow if the page could not be delivered",
     type: "fail-on-error-switch",
     helpText:
-      "On by default, and it covers every way a page fails to land: a rejection, a timeout, an outage, a deleted service. Turn it off to keep the run going and branch on the node's `delivered` or `status` output instead.",
+      "On by default, and it covers every way a page fails to land: a rejection, a timeout, an outage, a deleted service. Turn it off to keep the run going and branch on the node's `status` output instead - it is the one that separates a real page from an event a maintenance window swallowed.",
   },
 ];
 
@@ -217,7 +217,7 @@ const pagerDutyPlugin: IntegrationPlugin = {
         {
           field: "status",
           description:
-            "triggered, held by the consecutive-runs guard, or failed when the event could not be delivered",
+            "triggered, suppressed when the service took the event and raised no incident, held by the consecutive-runs guard, or failed when the event could not be delivered",
         },
         { field: "consecutiveRuns", description: "Runs in a row that reached this node" },
         { field: "requiredRuns", description: "Runs in a row configured before paging" },

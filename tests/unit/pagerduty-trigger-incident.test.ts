@@ -374,6 +374,50 @@ describe("trigger incident", () => {
     });
   });
 
+  /**
+   * "triggered" is a PagerDuty incident state. A maintenance window means no
+   * incident was raised at all, so reporting it as triggered tells a Condition
+   * downstream that somebody was paged when nobody was.
+   */
+  it("calls a swallowed event suppressed rather than triggered", async () => {
+    mockHappyPath(202, "maintenance");
+    const result = await run();
+    expect(result).toMatchObject({
+      success: true,
+      delivered: true,
+      status: "suppressed",
+      suppressedByService: true,
+    });
+  });
+
+  it("still calls a real page triggered", async () => {
+    mockHappyPath();
+    expect(await run()).toMatchObject({
+      status: "triggered",
+      suppressedByService: false,
+    });
+  });
+
+  /**
+   * The status travels in the routing-key cache, which lives for five minutes.
+   * Reusing a cached "disabled" would refuse to page for the rest of that TTL
+   * after somebody re-enabled the service - during the minutes when somebody
+   * is toggling a service because an incident is in progress.
+   */
+  it("re-reads a service it last saw disabled instead of trusting the cache", async () => {
+    mockHappyPath(202, "disabled");
+    const first = await run({ failOnError: false });
+    expect(first).toMatchObject({ delivered: false, status: "failed" });
+
+    safeFetch.mockReset();
+    mockHappyPath(202, "active");
+    const second = await run();
+    expect(second).toMatchObject({ delivered: true, status: "triggered" });
+    // Three calls again: service, integration, event. The cached disabled
+    // entry was not reused.
+    expect(safeFetch).toHaveBeenCalledTimes(3);
+  });
+
   it("sends the links it could use and counts the ones it could not", async () => {
     mockHappyPath();
     const result = await run({

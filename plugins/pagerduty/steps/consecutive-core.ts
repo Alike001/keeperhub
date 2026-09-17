@@ -7,8 +7,11 @@
  * The streak is derived from run history rather than kept in a counter of its
  * own: a run that reached this node is a run where the branch leading to it
  * was taken, which is exactly the condition the user wants counted. A run that
- * did not reach the node breaks the streak, so one healthy check clears it.
- * No new table, and the history a user can already see is the source of truth.
+ * finished successfully without reaching the node breaks the streak, so one
+ * healthy check clears it. A run that failed, was cancelled, or was refused
+ * before it started is stepped over rather than counted either way - see
+ * CONCLUSIVE_STATUSES. No new table, and the history a user can already see is
+ * the source of truth.
  */
 import { and, desc, eq, inArray, isNotNull, isNull, lt } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -78,6 +81,33 @@ export async function countConsecutiveRuns(
   }
 }
 
+/**
+ * How far back to look for the runs that count.
+ *
+ * Only a run that finished successfully can end a streak, so runs that failed
+ * or never started are stepped over and a window of exactly threshold-1 rows
+ * would come up short as soon as one appears. Four times the threshold, with a
+ * floor, covers a bad patch without turning this into an unbounded scan; if
+ * every row in the window is inconclusive the count simply stays where the
+ * evidence puts it, which errs towards paging.
+ */
+const STREAK_WINDOW_MULTIPLIER = 4;
+const MIN_STREAK_WINDOW = 10;
+
+/**
+ * Runs that say the condition cleared.
+ *
+ * A run that did not reach this node only proves the branch was not taken if
+ * the run actually got far enough to decide. A run that errored upstream, was
+ * refused before it started (`skipped`), was cancelled, or died on the
+ * platform's side says nothing about the condition - and during the outage
+ * this node exists to page for, those are exactly the runs that appear.
+ * Counting them as "the check passed" resets the streak on every other run and
+ * holds the page for as long as the outage lasts, which is the one failure
+ * this whole feature is supposed to prevent.
+ */
+const CONCLUSIVE_STATUSES = ["success"] as const;
+
 async function queryStreak(
   workflowId: string,
   nodeId: string,
@@ -85,9 +115,13 @@ async function queryStreak(
   threshold: number
 ): Promise<number> {
   const startedBefore = await currentRunStartedAt(executionId);
+  const window = Math.max(
+    MIN_STREAK_WINDOW,
+    (threshold - 1) * STREAK_WINDOW_MULTIPLIER
+  );
 
   const priorRuns = await db
-    .select({ id: workflowExecutions.id })
+    .select({ id: workflowExecutions.id, status: workflowExecutions.status })
     .from(workflowExecutions)
     .where(
       and(
@@ -105,7 +139,7 @@ async function queryStreak(
       )
     )
     .orderBy(desc(workflowExecutions.startedAt))
-    .limit(threshold - 1);
+    .limit(window);
 
   if (priorRuns.length === 0) {
     return 1;
@@ -124,15 +158,24 @@ async function queryStreak(
     );
 
   const reached = new Set(reachedRows.map((row) => row.executionId));
+  const conclusive: ReadonlySet<string> = new Set(CONCLUSIVE_STATUSES);
 
-  // Walk back from the most recent prior run; the first run that did not
-  // reach this node ends the streak.
+  // Walk back from the most recent prior run. A run that reached this node
+  // extends the streak; a run that finished successfully without reaching it
+  // ends the streak; anything else is stepped over, because it never got to
+  // say either way.
   let streak = 1;
   for (const run of priorRuns) {
-    if (!reached.has(run.id)) {
+    if (reached.has(run.id)) {
+      streak += 1;
+      if (streak >= threshold) {
+        break;
+      }
+      continue;
+    }
+    if (conclusive.has(run.status)) {
       break;
     }
-    streak += 1;
   }
   return streak;
 }
