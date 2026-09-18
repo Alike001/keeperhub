@@ -47,13 +47,8 @@ export function ExclusiveGroupHeading({
         <div className="h-px flex-grow bg-border" />
       </div>
 
-      {/*
-        One slot, always present, whichever line it holds. These messages come
-        and go as somebody types in either option, and rendering them
-        conditionally moved every field below them down the page each time.
-        The height is the tall case - the button - so the row does not resize
-        when it switches from the in-use line to the held-shut one either.
-      */}
+      {/* Always present, and sized to the taller state, so neither message
+          moves the fields below it. */}
       <div className="flex h-8 flex-wrap items-center justify-center gap-2">
         {active && (
           <p className="text-muted-foreground text-xs">

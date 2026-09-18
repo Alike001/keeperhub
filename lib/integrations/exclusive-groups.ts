@@ -1,17 +1,10 @@
 /**
  * Alternative credentials on one connection form.
  *
- * Some services take either of two credentials and never both. PagerDuty is
- * the first here: a REST API token, or a scoped OAuth app's client id, secret
- * and subdomain. A form that simply lists all four reads as though it wants
- * all four, and the run time quietly prefers the token when both are present -
- * so somebody who filled in the OAuth app as well would never learn it was
- * ignored.
- *
- * A plugin marks each alternative with `exclusiveGroup`, and this decides
- * which one is in use and which the form should hold shut. It is kept pure and
- * out of the overlays so the rule is one thing rather than a copy in the add
- * form and another in the edit form.
+ * Some services take either of two and never both, and the run time silently
+ * prefers one. A plugin marks each alternative with `exclusiveGroup`; this
+ * decides which is in use and which the form holds shut. Kept pure so the add
+ * and edit forms share one rule rather than a copy each.
  */
 
 export type ExclusiveField = {

@@ -100,11 +100,9 @@ export function EditConnectionForm({
   inline?: boolean;
 }) {
   const { push, closeAll } = useOverlay();
-  // Config always comes from the fetch below. `GET /api/integrations` states
-  // that it excludes config deliberately, and both callers pass a row from
-  // it, so a props shortcut could only ever be a path where `storedSecrets`
-  // was never populated - which reads as "no secret stored" and is the one
-  // answer that must not be guessed.
+  // Config always comes from the fetch below: `GET /api/integrations`
+  // excludes it deliberately, so a props shortcut could only ever be a path
+  // where `storedSecrets` was never populated.
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -424,17 +422,10 @@ export function EditConnectionForm({
         );
       }
       if (field.type === "checkbox") {
-        // A checkbox has to bind `checked`, not `value`: e.target.value is the
-        // element's value attribute, so the generic text branch below stored
-        // an empty string however the box was ticked, and every plugin reading
-        // the flag saw it as unset.
-        // An empty string counts as unset, not as false. Before this branch
-        // existed the generic text input stored "" for a checkbox however it
-        // was ticked, so that is exactly what every connection saved until
-        // now holds - and SendGrid's box defaults to true and is read at run
-        // time as "on unless it says false". Treating "" as false would show
-        // an existing connection unticked while it behaves as ticked, and one
-        // careless save would turn it genuinely off.
+        // A checkbox binds `checked`, not `value`. An empty string means
+        // unset rather than false: that is what every connection saved before
+        // this branch holds, and a plugin whose box defaults on would show
+        // unticked while behaving as ticked.
         const stored = config[field.configKey];
         const checked =
           stored === undefined || stored === ""
@@ -474,16 +465,9 @@ export function EditConnectionForm({
       );
     });
 
-    // Alternative credentials: hold the option that is not in use shut, so a
-    // form listing four fields does not read as though it wants all four.
-    // Every secret key: this form never receives their stored values, so it
-    // cannot tell a blank field from a credential that is already set.
     // A stored secret stands in for its value, which the browser is never
-    // sent. The server says which keys hold one, so by the time these render
-    // - the form shows a spinner until the fetch resolves - an empty
-    // `storedSecrets` is an answer rather than an absence of one, and every
-    // state resolves from values: one stored secret names its group in use,
-    // two report ambiguous, none reports neither.
+    // sent, so every state resolves from values. The fields do not render
+    // until the fetch resolves, so an empty `storedSecrets` is an answer.
     const knownConfig: Record<string, unknown> = { ...config };
     for (const key of storedSecrets) {
       if (!(knownConfig[key] as string | undefined)?.length) {
@@ -521,16 +505,9 @@ export function EditConnectionForm({
         (group) => group.firstFieldId === field.id
       );
       const locked = isFieldLocked(field, exclusive);
-      // Only where an alternative credential exists on the same form, which
-      // is the case this is for: PagerDuty stores a token and a scoped OAuth
-      // app, prefers the token, and a blank field reads as "unchanged" - so a
-      // leaked token somebody thought they had rotated away went on
-      // authorising every run.
-      //
-      // Deliberately not offered on a connection's sole credential. Removing
-      // Discord's webhook URL, Slack's token or Telegram's bot token leaves a
-      // connection that still lists and still selects on a node and fails
-      // every run, and "delete the connection" is the honest way to do that.
+      // Only where the form holds an alternative, because a blank field means
+      // "unchanged" for a secret and removing a connection's sole credential
+      // would leave one that still selects on a node and fails every run.
       const removable =
         secretKeys.has(field.configKey) &&
         Boolean(field.exclusiveGroup) &&

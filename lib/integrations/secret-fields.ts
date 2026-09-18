@@ -140,14 +140,10 @@ export function removeClearedKeys(
 /**
  * Which secret keys this connection actually holds, without their values.
  *
- * The edit form is told nothing about stored credentials, which is right for
- * the values and wrong for the question "is there one". Without this it
- * cannot say which of two alternative credentials is in use, cannot hold the
- * unused one shut, and cannot warn when both are filled - the case somebody
- * has no other way to diagnose, because the run time silently prefers one.
- *
- * A boolean per key leaks nothing a caller could not already infer by trying
- * the connection.
+ * Withholding the values is right; withholding "is there one" left the form
+ * unable to say which alternative is in use, hold the unused one shut, or
+ * warn when both are filled. The key names leak nothing a caller could not
+ * infer by trying the connection.
  */
 export function storedSecretKeys(
   config: IntegrationConfig,
