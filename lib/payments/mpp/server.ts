@@ -1,24 +1,8 @@
 import { createHash } from "node:crypto";
 import { railForProtocol } from "@/lib/payments/rails";
-import { stripTrailingSlashes } from "@/lib/utils/url";
+import { resolveRealm } from "@/lib/payments/realm";
 
 const MPP_RAIL = railForProtocol("mpp");
-const RE_PROTOCOL = /^https?:\/\//;
-
-/**
- * Host the MPP challenge is issued for. router.ts mints challenges against the
- * same realm, so this has to be one function: a realm that disagrees between
- * the two call sites produces challenges the server will not verify.
- */
-export function resolveRealm(): string {
-  return stripTrailingSlashes(
-    (process.env.NEXT_PUBLIC_APP_URL ?? "app.keeperhub.com").replace(
-      RE_PROTOCOL,
-      ""
-    )
-  );
-}
-
 async function createMppServer(): Promise<unknown> {
   const { Mppx, tempo } = await import("mppx/server");
   return Mppx.create({

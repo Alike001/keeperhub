@@ -68,6 +68,8 @@ import type { BillingStatus } from "./types";
 // executor can share it; re-exported here for existing import sites.
 export { ANONYMOUS_ORG_SLUG } from "@/lib/metrics/metric-constants";
 
+import { DAY_MS } from "@/lib/utils/duration";
+
 // Org slugs for the managed clients (Sky, Ajna) whose per-workflow error series
 // power the managed-client user-error alerts. The per-workflow gauge is scoped
 // to these slugs so `workflow_id` never becomes an unbounded label across the
@@ -442,7 +444,7 @@ const STUCK_PENDING_TX_THRESHOLD_MS = 15 * 60 * 1000;
 // gave the chain nonce. Without a ceiling a single orphan from an abandoned
 // wallet holds the gauge above zero for the lifetime of the table, and a
 // `> 0` alert can never clear. Rows past this age drop out of the count.
-const STUCK_PENDING_TX_CEILING_MS = 24 * 60 * 60 * 1000;
+const STUCK_PENDING_TX_CEILING_MS = DAY_MS;
 
 export type StuckPendingTransactionCounts = Array<{
   chainId: number;

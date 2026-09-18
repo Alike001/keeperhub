@@ -9,13 +9,13 @@ import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
   extractMppPayerAddress,
   hashMppCredential,
-  resolveRealm,
 } from "@/lib/payments/mpp/server";
 import {
   type PaymentProtocol,
   railForProtocol,
   toAssetUnits,
 } from "@/lib/payments/rails";
+import { resolveRealm } from "@/lib/payments/realm";
 import {
   buildPaymentConfig,
   extractPayerAddress,

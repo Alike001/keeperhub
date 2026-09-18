@@ -36,6 +36,7 @@ import {
 } from "../lib/auth-session-token-hash";
 import { getDatabaseUrl } from "../lib/db/connection-utils";
 import { member, organization, sessions, users } from "../lib/db/schema";
+import { DEFAULT_SESSION_TTL_MS } from "@/lib/auth/session-constants";
 
 // ---------------------------------------------------------------------------
 // Guards: hostname + opt-in env var
@@ -72,7 +73,6 @@ function assertOptIn(): void {
 // Mint
 // ---------------------------------------------------------------------------
 
-const DEFAULT_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const COOKIE_OUTPUT_PATH = path.join(
   process.cwd(),
   ".claude",
