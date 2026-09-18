@@ -331,6 +331,8 @@ describe("RPC Config Resolution", () => {
       { json: "eth-sepolia", public: PUBLIC_RPCS.SEPOLIA },
       { json: "base-mainnet", public: PUBLIC_RPCS.BASE_MAINNET },
       { json: "base-testnet", public: PUBLIC_RPCS.BASE_SEPOLIA },
+      { json: "unichain-mainnet", public: PUBLIC_RPCS.UNICHAIN_MAINNET },
+      { json: "unichain-testnet", public: PUBLIC_RPCS.UNICHAIN_SEPOLIA },
       { json: "tempo-testnet", public: PUBLIC_RPCS.TEMPO_TESTNET },
       { json: "tempo-mainnet", public: PUBLIC_RPCS.TEMPO_MAINNET },
       { json: "solana-mainnet", public: PUBLIC_RPCS.SOLANA_MAINNET },
