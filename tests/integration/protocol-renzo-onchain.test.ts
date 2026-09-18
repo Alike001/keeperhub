@@ -38,6 +38,13 @@ const MAINNET_CHAIN_ID = 1;
 const TEST_ADDRESS = "0x0000000000000000000000000000000000000001";
 const TX_RESULT_HEX_PREFIX = /^0x/;
 
+/** A four-byte selector the RestakeManager does not implement. */
+const UNKNOWN_SELECTOR = "0xdeadbeef";
+
+/** Empty returndata as a hex string. Some endpoints report it this way
+ *  instead of as null. See `simulateBytecodeCall`. */
+const EMPTY_REVERT_DATA = "0x";
+
 const rpcConfig = parseRpcConfig(process.env.CHAIN_RPC_CONFIG);
 const resolveRpcUrl = createRpcUrlResolver(rpcConfig);
 const MAINNET_PRIMARY_URL = resolveRpcUrl(
@@ -74,11 +81,18 @@ describe("Renzo on-chain integration", () => {
    * through and reverts with no returndata, so accepting any CALL_EXCEPTION
    * would pass for a function that does not exist:
    *
-   *   RestakeManager 0xdeadbeef    -> CALL_EXCEPTION, data null
+   *   RestakeManager 0xdeadbeef    -> CALL_EXCEPTION, empty revert data
    *   RestakeManager depositETH()  -> CALL_EXCEPTION, data 0x21607339
    *
-   * Requiring non-null data is what makes the assertion mean what the test
-   * name says.
+   * Endpoints disagree on how they report empty returndata, so checking one
+   * shape is not enough. Read on 2026-09-18 at mainnet block 26000715:
+   * ethereum-rpc.publicnode.com answers the unknown selector with data null,
+   * 1rpc.io/eth answers it with data "0x". Those are this file's own primary
+   * and fallback defaults, so a null-only check discriminates on one endpoint
+   * and passes an unknown selector on the other. Rejecting both shapes is what
+   * makes the assertion mean what the test name says. The
+   * "unknown selector is rejected" case below holds that on whichever endpoint
+   * actually answers.
    */
   async function simulateBytecodeCall(tx: {
     to: string;
@@ -101,7 +115,7 @@ describe("Renzo on-chain integration", () => {
         err.code === "CALL_EXCEPTION"
       ) {
         const revertData = (err as { data?: unknown }).data;
-        if (revertData == null) {
+        if (revertData == null || revertData === EMPTY_REVERT_DATA) {
           throw new Error(
             `Selector ${tx.data.slice(0, 10)} on ${tx.to} reverted with no return data, which is what an unknown selector does. The deployed bytecode did not dispatch this call.`
           );
@@ -146,6 +160,34 @@ describe("Renzo on-chain integration", () => {
       });
 
       await expect(simulateBytecodeCall({ to, data })).resolves.toBeUndefined();
+    },
+    15_000
+  );
+
+  // Holds the discriminator the case above rests on. Without it, a helper that
+  // accepted the endpoint's empty-returndata shape would pass depositETH for a
+  // selector the contract has never heard of, which is the whole failure mode
+  // the revert-data requirement exists to rule out.
+  //
+  // Resolving is the only outcome that means the dispatch check has gone
+  // vacuous, so that is what this pins. Any rejection is a pass, including an
+  // endpoint that reports an undispatched call in some shape this file does not
+  // know about: the helper rethrows that rather than accepting it, which is the
+  // property under test. Runs against the same contract and the same endpoint
+  // as the real case, so the two cannot disagree about which endpoint answered.
+  itOnchain(
+    "an unknown selector is rejected, so the dispatch check discriminates",
+    async () => {
+      const { to } = buildCalldata({
+        protocol: renzoDef,
+        actionSlug: "stake",
+        sampleInputs: {},
+        chainId: CHAIN_ID,
+      });
+
+      await expect(
+        simulateBytecodeCall({ to, data: UNKNOWN_SELECTOR })
+      ).rejects.toThrow();
     },
     15_000
   );
