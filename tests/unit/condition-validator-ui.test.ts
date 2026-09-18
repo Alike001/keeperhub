@@ -305,6 +305,16 @@ describe("validateConditionExpressionUI", () => {
       });
     });
 
+    it("leaves a literal's braces alone when the spacing is right", () => {
+      // The control for the span test rather than for the tally: a literal
+      // containing `{{` with an otherwise well-spaced expression is valid on both
+      // versions, and this is what stops a later widening of
+      // `isInsideTemplateToken` from starting to flag a literal's braces.
+      expect(validateConditionExpressionUI('{{@a:A.x}} === "{{"')).toEqual({
+        valid: true,
+      });
+    });
+
     it("leaves a hyphenated node label alone", () => {
       expect(
         validateConditionExpressionUI('String({{@b:My-Node.field}}) === "z"')
