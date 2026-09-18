@@ -29,9 +29,11 @@ import {
 } from "@/lib/workflow/retry-policy";
 import type { PagerDutyCredentials } from "../credentials";
 import {
+  cleanDisplayField,
   describeTrims,
   isEuRegionFlag,
   isHeaderSafeToken,
+  stripControlChars,
   PAGERDUTY_ACCEPT_V2,
   PAGERDUTY_API_HOST,
   PAGERDUTY_API_HOST_EU,
@@ -50,6 +52,7 @@ export {
   buildTriggerEvent,
   buildUpdateEvent,
   deriveDedupKey,
+  cleanDisplayField,
   describeTrims,
   FIELD_LIMITS,
   type Trim,
@@ -1188,11 +1191,16 @@ export async function createIncident(
   const trims: Trim[] = [];
   const incident: Record<string, unknown> = {
     type: "incident",
-    title: trimToLimit(params.title, "Title", trims),
+    title: cleanDisplayField(params.title, "Title", trims),
     service: { id: params.serviceId, type: "service_reference" },
   };
   if (params.details?.trim()) {
-    incident.body = { type: "incident_body", details: params.details };
+    // Cleaned but not bounded: PagerDuty documents no limit on an incident
+    // body, and its newlines are the point.
+    incident.body = {
+      type: "incident_body",
+      details: stripControlChars(params.details, "Details", trims),
+    };
   }
   if (params.urgency) {
     incident.urgency = params.urgency;

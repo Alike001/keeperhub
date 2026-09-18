@@ -15,6 +15,7 @@ import {
 } from "@/lib/workflow/retry-policy";
 import type { PagerDutyCredentials } from "../credentials";
 import {
+  cleanDisplayField,
   describeTrims,
   failureIsExternal,
   MAX_EVENT_BYTES,
@@ -101,9 +102,9 @@ function buildChangeEventBody(params: {
   const body: Record<string, unknown> = {
     routing_key: params.routingKey,
     payload: {
-      summary: trimToLimit(params.summary, "Summary", params.trims),
+      summary: cleanDisplayField(params.summary, "Summary", params.trims),
       timestamp: new Date().toISOString(),
-      source: trimToLimit(params.source, "Source", params.trims),
+      source: cleanDisplayField(params.source, "Source", params.trims),
       custom_details: params.details,
     },
   };

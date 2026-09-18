@@ -280,7 +280,9 @@ describe("field limits are enforced and reported", () => {
   it("names the field, its real length and the limit", () => {
     const { body, trims } = build({ summary: "x".repeat(2000) });
     expect(body.payload?.summary).toHaveLength(1024);
-    expect(trims).toEqual([{ field: "Summary", from: 2000, to: 1024 }]);
+    expect(trims).toEqual([
+      { field: "Summary", from: 2000, to: 1024, kind: "limit" },
+    ]);
     expect(describeTrims(trims)).toBe(
       "Summary was 2000 characters and PagerDuty takes 1024, so it was shortened"
     );

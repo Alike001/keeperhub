@@ -133,8 +133,53 @@ export const FIELD_LIMITS: Readonly<Record<string, number>> = {
   "Incident key": MAX_DEDUP_KEY_CHARS,
 };
 
-/** What a value was shortened from, for the node to report and the preview to warn about. */
-export type Trim = { field: string; from: number; to: number };
+/** What a value was changed by, for the node to report and the preview to warn about. */
+export type Trim = {
+  field: string;
+  from: number;
+  to: number;
+  /** Shortened to fit, or had characters removed that must not reach an alert. */
+  kind?: "limit" | "control";
+};
+
+/**
+ * Characters removed from anything that reaches an alert.
+ *
+ * A templated value carries whatever the upstream step produced. A bidi
+ * override reorders the text it sits in, so a summary can render in
+ * PagerDuty and on a phone as something other than what it says; zero-width
+ * characters hide differences between two values that look identical. Tab,
+ * newline and carriage return are kept - a description is allowed to have
+ * lines in it.
+ *
+ * The same class `lib/workflow/validation/action-config.ts` strips from node
+ * labels, for the same reason.
+ */
+const UNSAFE_CONTROL_CHARS =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: removing exactly these is the point
+  /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u00ad\ufeff\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
+
+/**
+ * Remove them, and record it so the node can say so. Silently is the one way
+ * this must not happen: a summary that renders differently from what the
+ * author wrote is exactly the thing they need told.
+ */
+export function stripControlChars(
+  value: string,
+  field: string,
+  into: Trim[]
+): string {
+  const cleaned = value.replace(UNSAFE_CONTROL_CHARS, "");
+  if (cleaned.length !== value.length) {
+    into.push({
+      field,
+      from: [...value].length,
+      to: [...cleaned].length,
+      kind: "control",
+    });
+  }
+  return cleaned;
+}
 
 /**
  * Trim to the field's limit and record it if anything was lost.
@@ -155,8 +200,24 @@ export function trimToLimit(
   if (length <= max) {
     return value;
   }
-  into.push({ field, from: length, to: max });
+  into.push({ field, from: length, to: max, kind: "limit" });
   return truncateRunes(value, max);
+}
+
+/**
+ * What an alert displays: stripped of what must not reach it, then trimmed to
+ * the limit so the count is of characters that survive.
+ *
+ * The dedup key deliberately does not go through this. It is matched by
+ * equality between a trigger and the resolve that closes it, so changing how
+ * it is derived would orphan every alert already open under the old value.
+ */
+export function cleanDisplayField(
+  value: string,
+  field: string,
+  into: Trim[]
+): string {
+  return trimToLimit(stripControlChars(value, field, into), field, into);
 }
 
 /** One sentence naming what was shortened, for a log line or a node output. */
@@ -165,9 +226,10 @@ export function describeTrims(trims: Trim[]): string | undefined {
     return;
   }
   return trims
-    .map(
-      (trim) =>
-        `${trim.field} was ${trim.from} characters and PagerDuty takes ${trim.to}, so it was shortened`
+    .map((trim) =>
+      trim.kind === "control"
+        ? `${trim.field} carried ${trim.from - trim.to} character(s) that cannot go in an alert - invisible or text-reordering - and they were removed`
+        : `${trim.field} was ${trim.from} characters and PagerDuty takes ${trim.to}, so it was shortened`
     )
     .join("; ");
 }
@@ -306,12 +368,12 @@ export function buildTriggerEvent(params: {
     client_url: omitEmpty(input.clientUrl),
     links: input.links?.length ? input.links : undefined,
     payload: {
-      summary: trimToLimit(input.summary, "Summary", trims),
+      summary: cleanDisplayField(input.summary, "Summary", trims),
       severity: normaliseSeverity(input.severity),
       // PagerDuty documents no limit on source, but an unbounded templated
       // value is how an event ends up over the size limit with nothing left
       // to drop.
-      source: trimToLimit(input.source, "Source", trims),
+      source: cleanDisplayField(input.source, "Source", trims),
       timestamp: params.timestamp,
       // Bounded for the same reason as source. These three were the last
       // templated fields with no ceiling, and the size guard below can only
@@ -319,10 +381,10 @@ export function buildTriggerEvent(params: {
       // something enormous produced a 400 nothing could mitigate, and the
       // page was lost to a field nobody thinks of as risky.
       component: omitEmpty(
-        trimToLimit(input.component ?? "", "Component", trims)
+        cleanDisplayField(input.component ?? "", "Component", trims)
       ),
-      group: omitEmpty(trimToLimit(input.group ?? "", "Group", trims)),
-      class: omitEmpty(trimToLimit(input.class ?? "", "Class", trims)),
+      group: omitEmpty(cleanDisplayField(input.group ?? "", "Group", trims)),
+      class: omitEmpty(cleanDisplayField(input.class ?? "", "Class", trims)),
       custom_details: input.customDetails,
     },
   };
