@@ -159,14 +159,18 @@ export function transformPluginAction(
   const optionalFields: Record<string, string> = {};
 
   for (const field of flatFields) {
-    // A field that renders rather than collects has no value to publish. The
-    // AI prompt and the MCP pin schema both drop these; this surface did not,
-    // so an agent reading `optionalFields` would set a key the pin schema
-    // rejects under `additionalProperties: false` and no step ever reads.
+    // A field that renders rather than collects has no value to publish, and
+    // the pin schema rejects a key set against one.
     if (isDisplayOnlyField(field.type)) {
       continue;
     }
-    const fieldDesc = `${mapFieldType(field)}${field.placeholder ? ` - ${field.placeholder}` : ""}`;
+    // The label is where an author states the unit - "Amount (wei)" - and
+    // protocol inputs carry no placeholder, so without it an agent sees
+    // "string" for a value that is wei on one action and whole tokens on the
+    // next. The type prefix and placeholder keep their positions.
+    const fieldDesc = [mapFieldType(field), field.label, field.placeholder]
+      .filter(Boolean)
+      .join(" - ");
     if (field.required) {
       requiredFields[field.key] = fieldDesc;
     } else {
