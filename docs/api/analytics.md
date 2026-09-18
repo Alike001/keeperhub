@@ -127,7 +127,7 @@ Returns execution counts and gas usage grouped by blockchain network. Gas totals
 
 ### Query Parameters
 
-Same as summary endpoint. `projectId` is the one parameter whose effect differs here: it excludes direct executions rather than filtering them, so every network row loses its direct half.
+Same as the summary endpoint, including `projectId`: it excludes direct executions rather than filtering them, so every network row loses its direct half.
 
 ### Response
 
@@ -369,4 +369,4 @@ data: {"type":"summary","data":{...}}
 data: {"type":"summary","data":{...}}
 ```
 
-The stream sends updated summary data every 2 seconds when changes are detected, with automatic reconnection and heartbeat support.
+The stream sends updated summary data when changes are detected, polling every 5 seconds, with automatic reconnection and heartbeat support. A heartbeat follows every 30 seconds, events are coalesced to at most one per second, and every stream is closed after 5 minutes, which is what the reconnection is for.
