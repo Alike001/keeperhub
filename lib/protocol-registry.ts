@@ -519,8 +519,8 @@ function resolveAbiOutputs(
  * a single unnamed one as the bare value, several keyed by name or
  * unnamedOutput<i>) and expands tuple components to the same depth the
  * editor offers. Deriving the paths here a second time is what let tuple
- * reads suggest `result` while the value was a struct that rendered as
- * [object Object].
+ * reads suggest `result` while the value was a struct, which a string field
+ * renders as its JSON text rather than the component the user wanted.
  *
  * The declared `outputs` overrides supply wording only. Their name used to be
  * the path, which suggested a field that resolved to undefined whenever the

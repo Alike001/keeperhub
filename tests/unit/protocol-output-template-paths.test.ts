@@ -164,23 +164,28 @@ describe("the shapes named in review", () => {
     // to an unrelated ABI cannot silently change what this asserts.
     const { def, action } = findRead("aerodrome/get-pool-for-pair");
     expect(abiOutputsOf(def, action)?.[0]?.name?.trim()).toBe("pool");
-    expect(valuePaths(def, action)).toContain("result.pool");
+    // Pinned as the whole list, not sampled: bare `result` is offered too,
+    // as it is on the generic Read Contract action this delegates to.
+    expect(valuePaths(def, action)).toEqual(["result", "result.pool"]);
   });
 
   it("keys unnamed multi-outputs positionally, not by override name", () => {
     // Declares result0 -> drawnDebt over two unnamed uint256 outputs, so it
     // used to suggest `drawnDebt` while the value sits at unnamedOutput0.
     const { def, action } = findRead("aave-v4/get-user-debt");
-    const paths = valuePaths(def, action);
-    expect(paths).toContain("result.unnamedOutput0");
-    expect(paths).toContain("result.unnamedOutput1");
-    expect(paths).not.toContain("drawnDebt");
+    // The whole list, so an override name leaking back in as a path
+    // (result.drawnDebt) fails here rather than slipping past a sample.
+    expect(valuePaths(def, action)).toEqual([
+      "result",
+      "result.unnamedOutput0",
+      "result.unnamedOutput1",
+    ]);
   });
 
   it("expands a single unnamed tuple into its components", () => {
     // Its own description tells the user to type result.healthFactor; the
-    // suggestion used to stop at `result`, a struct that renders as
-    // [object Object] in a string field.
+    // suggestion used to stop at `result`, a struct that a string field
+    // renders as its JSON text rather than the component the user wanted.
     const { def, action } = findRead("aave-v4/get-user-account-data");
     expect(valuePaths(def, action)).toContain("result.healthFactor");
   });
