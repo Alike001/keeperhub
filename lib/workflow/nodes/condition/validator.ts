@@ -580,12 +580,37 @@ function isValidOperand(token: Token): boolean {
 }
 
 /**
+ * True when `index` falls inside a string literal's span.
+ *
+ * A quoted operand is a value, not syntax: a `contains` rule compiles to
+ * `String(...).includes("...")`, so the `/` and `-` in
+ * `Contract call failed: Error(Splitter/kicked-too-soon)` are characters the
+ * author is matching, and the `-` in a pattern's `[0-9a-fA-F]` is a character
+ * class. The scan below reads the raw expression, so without this it reports
+ * `Operator "-" must have exactly one space before it` for both.
+ *
+ * The tokens come from `tokenizeExpression`, which already knows where a literal
+ * begins and ends, so this reads that answer rather than re-deriving it: a
+ * second definition of what counts as a literal is free to drift from the
+ * tokenizer's, and the tokenizer is also what rejects an unterminated quote,
+ * before this scan runs.
+ */
+function isInsideStringLiteral(tokens: Token[], index: number): boolean {
+  return tokens.some(
+    (token) =>
+      token.type === "string" &&
+      index >= token.start &&
+      index < token.start + token.value.length
+  );
+}
+
+/**
  * Validates spacing around binary operators (must have exactly one space on both sides)
  * Uses regex to find operators directly in the expression string for accurate positioning
  */
 function validateOperatorSpacing(
   expression: string,
-  _tokens: Token[]
+  tokens: Token[]
 ): ValidationResult {
   // Find all operator matches in the expression
   const operatorMatches: Array<{ value: string; index: number }> = [];
@@ -600,7 +625,7 @@ function validateOperatorSpacing(
     const closeBraces = (beforeMatch.match(/\}\}/g) || []).length;
     const isInsideTemplate = openBraces > closeBraces;
 
-    if (!isInsideTemplate) {
+    if (!(isInsideTemplate || isInsideStringLiteral(tokens, match.index))) {
       operatorMatches.push({
         value: match[1],
         index: match.index,

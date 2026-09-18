@@ -124,6 +124,57 @@ describe("validateConditionExpressionUI", () => {
       expect(result.valid).toBe(true);
     });
 
+    // #2502. The fixture above is punctuation-free, which is how a scan that read
+    // quoted operands as code survived a suite this thorough: the pattern has to
+    // carry the characters the scan is looking for.
+    it("should accept a quoted pattern carrying a character class", () => {
+      const result = validateConditionExpressionUI(
+        'new RegExp("^0x[0-9a-fA-F]{40}$").test(String({{@node1:Label.field}}))'
+      );
+      expect(result.valid).toBe(true);
+    });
+
+    it("should accept a quoted operand carrying an operator character", () => {
+      // The `-` in [0-9a-fA-F] is the reported case; `/`, `*`, `+` and `%` are the
+      // same scan reaching the same wrong conclusion.
+      for (const value of ["-", "/", "*", "+", "%"]) {
+        const result = validateConditionExpressionUI(
+          `String({{@node1:Label.field}}).includes("a${value}b")`
+        );
+        expect(result.valid).toBe(true);
+      }
+    });
+
+    it("should accept the error text the Write Contract message recommends matching", () => {
+      // plugins/web3/index.ts:1836 tells authors to match this in a downstream
+      // Condition, and a contains rule compiles to String(...).includes("..."),
+      // so the `/` and the `-` in it are exactly this defect.
+      const result = validateConditionExpressionUI(
+        'String({{@node1:Label.field}}).includes("Contract call failed: Error(Splitter/kicked-too-soon)")'
+      );
+      expect(result.valid).toBe(true);
+    });
+
+    it("should accept a quoted operand carrying punctuation beside a real operator", () => {
+      const result = validateConditionExpressionUI(
+        'String({{@node1:Label.field}}).includes("a-b") && {{@b:B.y}} === "bar"'
+      );
+      expect(result.valid).toBe(true);
+    });
+
+    it("should still reject a spacing error outside the literal", () => {
+      // The exemption is the literal's span, not the line: an operator after the
+      // closing quote is read as before.
+      const result = validateConditionExpressionUI(
+        'String({{@node1:Label.field}}).includes("a-b")+{{@b:B.y}}'
+      );
+      expect(result.valid).toBe(false);
+      expect(result).toEqual({
+        valid: false,
+        error: expect.stringContaining("must have exactly one space"),
+      });
+    });
+
     it("should accept method call combined with logical operator", () => {
       const result = validateConditionExpressionUI(
         'String({{@a:A.x}}).includes("foo") && {{@b:B.y}} === "bar"'
