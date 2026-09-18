@@ -1794,11 +1794,13 @@ export class ChainProviderManager {
       // Log-scoped on purpose, unlike the guards in `detachIfIdle` and
       // `reconnect`. Only the log path accrues an owed range: it is
       // `lastProcessedBlock` that survives the drop and has to be caught up.
-      // A state-only chain owes nothing. Arming the catch-up for one
-      // would run `sampleState` against the pre-drop `headBlock`, handing
-      // the threshold listener a reading from before the outage as the
-      // current value. `sampleState` is documented as a sample of the
-      // present, so that would break its invariant.
+      // A state-only chain owes nothing - its mark advances unconditionally
+      // in `drain` (`served` is `true` for it), and the only rewind runs off
+      // a re-announced block, which cannot fire while the socket is down. So
+      // by the time this timer would arm, such a chain has `behind === 0`;
+      // arming it buys a timer and a `drain` that returns at the `behind <= 0`
+      // check before it reads any logs or samples any state. Nothing to gain,
+      // so it stays log-scoped.
       if (!this.isDestroyed && entry.provider && entry.subscribers.size > 0) {
         this.armCatchUp(entry, GETLOGS_MIN_INTERVAL_MS);
       }
