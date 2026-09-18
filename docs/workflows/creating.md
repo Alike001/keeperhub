@@ -165,6 +165,17 @@ comparison answers as though the field held zero. Guard the field with `isNotEmp
 clause rather than letting the comparison decide - `exists` will not catch it, since a blank string
 is neither null nor undefined.
 
+**A digit field is read as a quantity, not as a spelling.** `===` and `!==` ask the same question
+the ordering operators ask, so two spellings of one number are one value: `007` equals `7`, `1.50`
+equals `1.5`, `+5` equals `5`. For a quantity that is the answer you want, and it is what stops a
+formatter's `1.0` against an author's `1` leaving `<`, `===` and `>` false at once. For an
+identifier that happens to be digits - a zero-padded order number, an invoice reference, a token id
+- it is not: two references that spell the same number compare equal, and no comparison operator
+reads the spelling. Nor did one before: the builder emits a value that looks like a number bare, so
+a rule reading `id === 00123` never matched a stored `"00123"` either, whatever the id was. If a
+rule has to tell `007` from `7`, keep the field in a form the grammar does not read as a number - a
+prefix is enough - since the string operators read text but none of them is an exact match.
+
 **When to use `doesNotExist` vs `isNull` / `isUndefined`:** `exists` and `doesNotExist` treat null and undefined the same, which is the right choice for most checks (for example, a node output field that may or may not be present). Reach for `isNull`, `isNotNull`, `isUndefined`, or `isNotUndefined` only when you need to tell null and undefined apart, since these match one but not the other.
 
 **Referencing a field that may be absent:** the existence operators are also the only ones that accept a field path that is not present on the upstream output at all. Every other operator fails the run when the path is missing, so that a mistyped reference is caught rather than quietly satisfying a comparison. Put an existence operator in the first clause of an AND group to guard the clauses after it. See [Runtime resolution](/workflows/templating#runtime-resolution) in the templating reference for the full rules.

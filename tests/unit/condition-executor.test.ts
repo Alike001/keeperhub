@@ -233,6 +233,32 @@ describe("condition evaluation edge cases", () => {
       expect(result.result).toBe(false);
     });
 
+    it("should match a zero-padded rule against the id it spells", () => {
+      // The visual builder emits a value that looks like a number bare
+      // (wrapOperand in lib/workflow/nodes/condition/expression.ts), so a rule
+      // typed as `id === 00123` arrives here as a numeric literal against a
+      // resolved string. That pair was a string against a number and the rule
+      // never matched, whatever the id held. It matches the number now - and
+      // so does an id written without the padding, which is what it costs to
+      // read a digit field as a quantity rather than as a spelling.
+      const expression = "{{@node1:Order.id}} === 00123";
+
+      const padded = evaluateConditionExpression(expression, {
+        node1: { label: "Order", data: { id: "00123" } },
+      });
+      expect(padded.result).toBe(true);
+
+      const unpadded = evaluateConditionExpression(expression, {
+        node1: { label: "Order", data: { id: "123" } },
+      });
+      expect(unpadded.result).toBe(true);
+
+      const other = evaluateConditionExpression(expression, {
+        node1: { label: "Order", data: { id: "1230" } },
+      });
+      expect(other.result).toBe(false);
+    });
+
     it("should not match BigInt value against a non-numeric string", () => {
       const expression = '{{@node1:Contract.balance}} === "pending"';
       const outputs = {

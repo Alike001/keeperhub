@@ -358,6 +358,21 @@ describe("safeEvaluateCondition - semantics", () => {
       }
     });
 
+    it("reads a digit operand as a quantity, not as a spelling", () => {
+      // The consequence of one notion of equality, and the reason the operator
+      // page says a digit field is a quantity: a zero-padded identifier equals
+      // its unpadded form. Deliberate - the same rule is what stops a
+      // formatter's "1.0" against an author's 1 from leaving every branch
+      // false - and pinned here so the page and the evaluator cannot drift.
+      expect(cmp("===", "00123", "123")).toBe(true);
+      expect(cmp("===", "0071", "71")).toBe(true);
+      expect(cmp("!==", "1.50", "1.5")).toBe(false);
+
+      // Two different numbers stay different, however either one is spelled.
+      expect(cmp("===", "007", "0071")).toBe(false);
+      expect(cmp("!==", "00123", "1230")).toBe(true);
+    });
+
     it("orders two digit strings by magnitude at any length", () => {
       // A uint256 is 78 digits and the same value formatted with 18 decimals
       // is 97 characters, so a read never produces operands this long.
