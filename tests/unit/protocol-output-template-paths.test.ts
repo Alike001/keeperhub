@@ -73,7 +73,7 @@ function abiOutputsOf(
   if (!abi) {
     return;
   }
-  const fn = (JSON.parse(abi) as Array<Record<string, unknown>>).find(
+  const fn = (JSON.parse(abi) as Record<string, unknown>[]).find(
     (entry) => entry.type === "function" && entry.name === action.function
   ) as { outputs?: AbiOutput[] } | undefined;
   return fn?.outputs;
