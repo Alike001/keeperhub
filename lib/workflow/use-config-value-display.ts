@@ -9,9 +9,9 @@ import {
   integrationsLoadedAtom,
 } from "@/lib/integrations-store";
 import { findActionById, flattenConfigFields } from "@/plugins/registry";
+import { stripTrailingSlashes } from "@/lib/utils/url";
 
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
-const TRAILING_SLASH_RE = /\/+$/;
 
 type Chain = { name: string; explorerUrl: string | null };
 type Token = { symbol: string; address: string };
@@ -168,7 +168,7 @@ export function useConfigValueDisplay(enabled: boolean): ConfigValueResolver {
     ): string | null => {
       const explorer = chainId ? chains.get(chainId)?.explorerUrl : null;
       return explorer
-        ? `${explorer.replace(TRAILING_SLASH_RE, "")}/address/${address}`
+        ? `${stripTrailingSlashes(explorer)}/address/${address}`
         : null;
     };
 

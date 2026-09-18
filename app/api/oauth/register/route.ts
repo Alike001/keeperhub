@@ -7,15 +7,14 @@ import { isAllowedRedirectUri } from "@/lib/mcp/redirect-uri";
 import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { oauthRegisterSchema } from "@/lib/schemas/oauth";
 import { validateData } from "@/lib/validate-request";
+import { stripTrailingSlashes } from "@/lib/utils/url";
 
 export const dynamic = "force-dynamic";
-
-const TRAILING_SLASH = /\/$/;
 
 function deriveBaseUrl(request: Request): string {
   const envUrl = process.env.NEXT_PUBLIC_APP_URL ?? process.env.BETTER_AUTH_URL;
   if (envUrl) {
-    return envUrl.replace(TRAILING_SLASH, "");
+    return stripTrailingSlashes(envUrl);
   }
   const url = new URL(request.url);
   return `${url.protocol}//${url.host}`;

@@ -14,7 +14,7 @@
  * a deployment running a prebuilt image could not change it without rebuilding.
  */
 
-const TRAILING_SLASH = /\/$/;
+import { stripTrailingSlashes } from "@/lib/utils/url";
 
 export const DEFAULT_AGENT_NAME = "KeeperHub";
 
@@ -47,7 +47,7 @@ export type AgentIdentity = {
 export function deriveBaseUrl(request: Request): string {
   const envUrl = process.env.NEXT_PUBLIC_APP_URL ?? process.env.BETTER_AUTH_URL;
   if (envUrl) {
-    return envUrl.replace(TRAILING_SLASH, "");
+    return stripTrailingSlashes(envUrl);
   }
   const url = new URL(request.url);
   return `${url.protocol}//${url.host}`;
