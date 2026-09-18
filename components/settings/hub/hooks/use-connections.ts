@@ -5,13 +5,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { api, type Integration } from "@/lib/api-client";
 import { integrationsAtom } from "@/lib/integrations-store";
+import { SYSTEM_INTEGRATION_LABELS } from "@/lib/integrations/system";
 import { getIntegrationLabels } from "@/plugins/registry";
 import { useSettingsContext } from "../settings-context";
 import { cacheRead, cacheWrite } from "./settings-cache";
-
-const SYSTEM_INTEGRATION_LABELS: Record<string, string> = {
-  database: "Database",
-};
 
 export type LabelledIntegration = Integration & { label: string };
 

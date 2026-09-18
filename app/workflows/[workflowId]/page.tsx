@@ -28,6 +28,7 @@ import {
   integrationsLoadedAtom,
   integrationsVersionAtom,
 } from "@/lib/integrations-store";
+import { SYSTEM_ACTION_INTEGRATIONS } from "@/lib/integrations/system";
 import type { IntegrationType } from "@/lib/types/integration";
 import {
   currentExecutionIdAtom,
@@ -78,11 +79,6 @@ type WorkflowPageProps = {
 
 type WorkflowEditorProps = {
   workflowId: string;
-};
-
-// System actions that need integrations (not in plugin registry)
-const SYSTEM_ACTION_INTEGRATIONS: Record<string, IntegrationType> = {
-  "Database Query": "database",
 };
 
 // Helper to get required integration type for an action
