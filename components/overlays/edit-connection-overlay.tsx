@@ -531,7 +531,9 @@ export function EditConnectionForm({
           >
             {rendered}
             {removable && !locked && (
-              <div className="mt-1 ml-1">
+              // No left margin: this sits under the field's own help line,
+              // which has none.
+              <div className="mt-1">
                 {cleared ? (
                   <span className="text-muted-foreground text-xs">
                     Will be removed when you save. Type a new value to keep this
