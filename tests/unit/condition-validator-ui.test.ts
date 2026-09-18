@@ -276,4 +276,50 @@ describe("validateConditionExpressionUI", () => {
       });
     });
   });
+
+  describe("a template variable's span", () => {
+    // The brace tally counted `{{` and `}}` in the raw text before an operator,
+    // which is a second definition of a template: `TEMPLATE_VAR_PATTERN` requires
+    // `{{@`, the tally counted any `{{`, and neither knew where the tokenizer had
+    // already put a literal. These four are the review's two tables, in order.
+    it("still reports a missing space after a template variable", () => {
+      expect(
+        validateConditionExpressionUI('{{@a:A.x}} === "z" && {{@b:B.y}}==="w"')
+      ).toMatchObject({
+        valid: false,
+        error: expect.stringContaining("==="),
+      });
+    });
+
+    it("reports it when a literal earlier in the expression contains {{", () => {
+      // The open-count direction. The literal's braces used to leave the tally
+      // open for the rest of the expression, so every operator after it was
+      // skipped and the expression validated as clean: validation off, silently,
+      // rather than a wrong error.
+      const result = validateConditionExpressionUI(
+        '{{@a:A.x}} === "{{" && {{@b:B.y}}==="w"'
+      );
+      expect(result).toMatchObject({
+        valid: false,
+        error: expect.stringContaining("==="),
+      });
+    });
+
+    it("leaves a hyphenated node label alone", () => {
+      expect(
+        validateConditionExpressionUI('String({{@b:My-Node.field}}) === "z"')
+      ).toEqual({ valid: true });
+    });
+
+    it("leaves it alone when a literal contains }}", () => {
+      // The under-count direction, which is the first case reached by the other
+      // road: the literal's closing braces consumed the real template's opening,
+      // so the label was validated as code and its hyphen read as an operator.
+      expect(
+        validateConditionExpressionUI(
+          'String({{@a:A.x}}).includes("}}") && {{@b:My-Node.field}} === "z"'
+        )
+      ).toEqual({ valid: true });
+    });
+  });
 });
