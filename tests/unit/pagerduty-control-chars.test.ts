@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
+import { stripControlChars } from "@/lib/utils/control-chars";
 import {
   buildTriggerEvent,
   cleanDisplayField,
@@ -72,5 +73,32 @@ describe("characters that must not reach an alert", () => {
       input: { summary: "s", severity: "error", source: "s" },
     });
     expect(body.dedup_key).toBe(dirty);
+  });
+});
+
+/**
+ * The class lives in one module because two copies of a list declared to be
+ * the same list drift, and silently on both sides. These are the two shapes
+ * its callers ask for - the alert path keeps the line breaks a description is
+ * allowed, the node label path keeps nothing and leaves a space behind.
+ */
+describe("the shared character class", () => {
+  const reordering = ["\u202E", "\u200B", "\u0000", "\ufeff", "\u2066"];
+
+  it("removes the same characters the alert path removes", () => {
+    for (const char of reordering) {
+      expect(stripControlChars(`a${char}b`)).toBe("ab");
+      expect(cleanDisplayField(`a${char}b`, "Summary", [])).toBe("ab");
+    }
+  });
+
+  it("keeps tab, newline and carriage return only when asked", () => {
+    const value = "a\u0009b\u000Ac\u000Dd";
+    expect(stripControlChars(value, { keepLineBreaks: true })).toBe(value);
+    expect(stripControlChars(value)).toBe("abcd");
+  });
+
+  it("substitutes rather than removes when given a replacement", () => {
+    expect(stripControlChars("a\u202Eb", { replacement: " " })).toBe("a b");
   });
 });

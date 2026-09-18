@@ -6,6 +6,9 @@
  * into a client bundle. One builder, one set of limits, one place to change
  * them.
  */
+
+import { stripControlChars as removeControlChars } from "@/lib/utils/control-chars";
+
 /**
  * Everything both the steps and the client-bundled connection test need.
  *
@@ -152,15 +155,11 @@ export type Trim = {
  * newline and carriage return are kept - a description is allowed to have
  * lines in it.
  *
- * The same class `lib/workflow/validation/action-config.ts` strips from node
- * labels, for the same reason.
- */
-const UNSAFE_CONTROL_CHARS =
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: removing exactly these is the point
-  /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u00ad\ufeff\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
-
-/**
- * Remove them, and record it so the node can say so. Silently is the one way
+ * The class itself is `lib/utils/control-chars.ts`, shared with the node
+ * label validator, which strips the same characters for the same reason and
+ * differs only in keeping no whitespace and leaving a space behind.
+ *
+ * Removing them is recorded so the node can say so. Silently is the one way
  * this must not happen: a summary that renders differently from what the
  * author wrote is exactly the thing they need told.
  */
@@ -169,7 +168,7 @@ export function stripControlChars(
   field: string,
   into: Trim[]
 ): string {
-  const cleaned = value.replace(UNSAFE_CONTROL_CHARS, "");
+  const cleaned = removeControlChars(value, { keepLineBreaks: true });
   if (cleaned.length !== value.length) {
     into.push({
       field,
