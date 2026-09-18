@@ -59,6 +59,7 @@ import {
   ANONYMOUS_ORG_SLUG,
   NA_ERROR_TYPE,
 } from "@/lib/metrics/metric-constants";
+import { DAY_MS } from "@/lib/utils/duration";
 import type { BillingStatus } from "./types";
 
 // Label value used for workflow executions whose workflow has no organization
@@ -67,8 +68,6 @@ import type { BillingStatus } from "./types";
 // rows. Lives in metric-constants.ts (dependency-free) so the standalone
 // executor can share it; re-exported here for existing import sites.
 export { ANONYMOUS_ORG_SLUG } from "@/lib/metrics/metric-constants";
-
-import { DAY_MS } from "@/lib/utils/duration";
 
 // Org slugs for the managed clients (Sky, Ajna) whose per-workflow error series
 // power the managed-client user-error alerts. The per-workflow gauge is scoped
