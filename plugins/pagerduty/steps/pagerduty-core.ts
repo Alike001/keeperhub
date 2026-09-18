@@ -30,7 +30,6 @@ import {
 import type { PagerDutyCredentials } from "../credentials";
 import {
   cleanDisplayField,
-  describeTrims,
   isEuRegionFlag,
   isHeaderSafeToken,
   stripControlChars,
@@ -51,8 +50,8 @@ import {
 export {
   buildTriggerEvent,
   buildUpdateEvent,
-  deriveDedupKey,
   cleanDisplayField,
+  deriveDedupKey,
   describeTrims,
   FIELD_LIMITS,
   type Trim,

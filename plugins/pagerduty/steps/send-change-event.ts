@@ -22,7 +22,6 @@ import {
   postEventWithRetries,
   resolveRoutingKeyWithRetries,
   type Trim,
-  trimToLimit,
 } from "./pagerduty-core";
 
 const RETRY_ATTEMPT_LIMITS = { defaultAttempts: 2, maxAttempts: 5 };
