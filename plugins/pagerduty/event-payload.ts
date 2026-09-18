@@ -219,6 +219,102 @@ export function cleanDisplayField(
   return trimToLimit(stripControlChars(value, field, into), field, into);
 }
 
+// Deep enough for anything a step produces, and a bound rather than trust: a
+// structure past it is left alone rather than recursed into.
+const MAX_DETAILS_DEPTH = 20;
+
+type StripCount = { from: number; to: number };
+
+function stripCounted(value: string, counts: StripCount): string {
+  const cleaned = removeControlChars(value, { keepLineBreaks: true });
+  counts.from += [...value].length;
+  counts.to += [...cleaned].length;
+  return cleaned;
+}
+
+function stripDeep(value: unknown, depth: number, counts: StripCount): unknown {
+  if (typeof value === "string") {
+    return stripCounted(value, counts);
+  }
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    depth >= MAX_DETAILS_DEPTH
+  ) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => stripDeep(entry, depth + 1, counts));
+  }
+  const cleaned: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    // Two keys that differed only by a zero-width character collapse into one
+    // here, last write winning. That is the point: they were being rendered as
+    // the same key already, and now they are it.
+    cleaned[stripCounted(key, counts)] = stripDeep(entry, depth + 1, counts);
+  }
+  return cleaned;
+}
+
+/**
+ * Custom details, the first of the two display fields that are not one
+ * string.
+ *
+ * Details land in the alert body and in the notification, the same places the
+ * summary does, so they carry the same risk and get the same treatment. They
+ * cannot be a `cleanDisplayField` call because they are not a single value:
+ * an arbitrary object whose keys are rendered beside its values, so the walk
+ * covers both.
+ *
+ * Not trimmed to a character limit - PagerDuty documents none for details,
+ * and the byte ceiling in `buildTriggerEvent` is what keeps the event
+ * sendable.
+ */
+export function cleanCustomDetails(
+  details: Record<string, unknown> | undefined,
+  field: string,
+  into: Trim[]
+): Record<string, unknown> | undefined {
+  if (!details) {
+    return details;
+  }
+  const counts: StripCount = { from: 0, to: 0 };
+  const cleaned = stripDeep(details, 0, counts) as Record<string, unknown>;
+  if (counts.to !== counts.from) {
+    into.push({ field, from: counts.from, to: counts.to, kind: "control" });
+  }
+  return cleaned;
+}
+
+/**
+ * Link labels, the other one. A label's whole job is to describe the href
+ * beside it, so a reordering character there makes a link read as pointing
+ * somewhere it does not - one field away from the summary already protected
+ * against exactly that.
+ *
+ * The href is cleaned as well as the label: a link is only checked for its
+ * https scheme, and a reordering character after that spoofs the rest of the
+ * host it appears to point at.
+ */
+export function cleanLinks(
+  links: { href: string; text: string }[] | undefined,
+  field: string,
+  into: Trim[]
+): { href: string; text: string }[] | undefined {
+  if (!links?.length) {
+    return;
+  }
+  const counts: StripCount = { from: 0, to: 0 };
+  const cleaned = links.map((link) => ({
+    href: stripCounted(link.href, counts),
+    text: stripCounted(link.text, counts),
+  }));
+  if (counts.to !== counts.from) {
+    into.push({ field, from: counts.from, to: counts.to, kind: "control" });
+  }
+  return cleaned;
+}
+
 /** One sentence naming what was shortened, for a log line or a node output. */
 export function describeTrims(trims: Trim[]): string | undefined {
   if (trims.length === 0) {
@@ -365,7 +461,7 @@ export function buildTriggerEvent(params: {
     dedup_key: params.dedupKey,
     client: omitEmpty(input.client),
     client_url: omitEmpty(input.clientUrl),
-    links: input.links?.length ? input.links : undefined,
+    links: cleanLinks(input.links, "Links", trims),
     payload: {
       summary: cleanDisplayField(input.summary, "Summary", trims),
       severity: normaliseSeverity(input.severity),
@@ -384,7 +480,7 @@ export function buildTriggerEvent(params: {
       ),
       group: omitEmpty(cleanDisplayField(input.group ?? "", "Group", trims)),
       class: omitEmpty(cleanDisplayField(input.class ?? "", "Class", trims)),
-      custom_details: input.customDetails,
+      custom_details: cleanCustomDetails(input.customDetails, "Details", trims),
     },
   };
 

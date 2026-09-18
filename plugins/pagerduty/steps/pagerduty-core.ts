@@ -50,7 +50,9 @@ import {
 export {
   buildTriggerEvent,
   buildUpdateEvent,
+  cleanCustomDetails,
   cleanDisplayField,
+  cleanLinks,
   deriveDedupKey,
   describeTrims,
   FIELD_LIMITS,

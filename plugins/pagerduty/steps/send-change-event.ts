@@ -15,6 +15,7 @@ import {
 } from "@/lib/workflow/retry-policy";
 import type { PagerDutyCredentials } from "../credentials";
 import {
+  cleanCustomDetails,
   cleanDisplayField,
   describeTrims,
   failureIsExternal,
@@ -104,7 +105,11 @@ function buildChangeEventBody(params: {
       summary: cleanDisplayField(params.summary, "Summary", params.trims),
       timestamp: new Date().toISOString(),
       source: cleanDisplayField(params.source, "Source", params.trims),
-      custom_details: params.details,
+      custom_details: cleanCustomDetails(
+        params.details,
+        "Details",
+        params.trims
+      ),
     },
   };
 
