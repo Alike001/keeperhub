@@ -121,6 +121,22 @@ describe("buildEventArgTopics", () => {
     expect(applied).toEqual(["from"]);
   });
 
+  it("gives a non-indexed parameter no topic slot at all", () => {
+    // Unlike an unnamed indexed parameter, a non-indexed one holds no topic
+    // position: a filter on `who` is topic1 even though `who` is the second
+    // input. Treating the filter as positional over every input would put
+    // the address on the slot `amount` appears to occupy and match nothing.
+    const fragment = ethers.EventFragment.from(
+      "event Mixed(uint256 amount, address indexed who)"
+    );
+    const { topics } = ok(`{"who":"${ALICE}"}`, fragment);
+    expect(topics).toEqual([
+      fragment.topicHash,
+      ethers.AbiCoder.defaultAbiCoder().encode(["address"], [ALICE]),
+    ]);
+    expect(indexedParams(fragment).map((p) => p.name)).toEqual(["who"]);
+  });
+
   it("keeps a wildcard for an earlier argument that was left empty", () => {
     // Filtering only the second indexed parameter still has to put a null in
     // the first slot, or the value would be matched against the wrong topic.
