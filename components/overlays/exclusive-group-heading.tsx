@@ -47,9 +47,12 @@ export function ExclusiveGroupHeading({
         <div className="h-px flex-grow bg-border" />
       </div>
 
-      {/* Always present, and sized to the taller state, so neither message
-          moves the fields below it. */}
-      <div className="flex h-8 flex-wrap items-center justify-center gap-2">
+      {/* Always present, and reserving the taller state's height, so neither
+          message moves the fields below it. A minimum rather than a fixed
+          height: the locked line plus its button is not a short row, and in a
+          flyout it wraps - which a fixed height would push over whatever sits
+          under it. */}
+      <div className="flex min-h-8 flex-wrap items-center justify-center gap-2">
         {active && (
           <p className="text-muted-foreground text-xs">
             In use. You do not need to fill in the other option.
