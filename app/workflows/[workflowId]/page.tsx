@@ -23,12 +23,12 @@ import {
   getPendingClaim,
   useClaimWorkflow,
 } from "@/lib/hooks/use-claim-workflow";
+import { SYSTEM_ACTION_INTEGRATIONS } from "@/lib/integrations/system";
 import {
   integrationsAtom,
   integrationsLoadedAtom,
   integrationsVersionAtom,
 } from "@/lib/integrations-store";
-import { SYSTEM_ACTION_INTEGRATIONS } from "@/lib/integrations/system";
 import type { IntegrationType } from "@/lib/types/integration";
 import {
   currentExecutionIdAtom,

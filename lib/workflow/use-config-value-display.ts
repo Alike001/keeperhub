@@ -8,10 +8,9 @@ import {
   integrationsAtom,
   integrationsLoadedAtom,
 } from "@/lib/integrations-store";
-import { findActionById, flattenConfigFields } from "@/plugins/registry";
 import { stripTrailingSlashes } from "@/lib/utils/url";
-
-const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+import { EVM_ADDRESS_RE } from "@/lib/web3/address";
+import { findActionById, flattenConfigFields } from "@/plugins/registry";
 
 type Chain = { name: string; explorerUrl: string | null };
 type Token = { symbol: string; address: string };
@@ -245,7 +244,7 @@ export function useConfigValueDisplay(enabled: boolean): ConfigValueResolver {
         }
       }
 
-      if (ADDRESS_RE.test(value)) {
+      if (EVM_ADDRESS_RE.test(value)) {
         const info = addressInfo(value);
         return {
           ...base,

@@ -34,5 +34,5 @@ export const SYSTEM_ACTION_INTEGRATIONS: Record<string, IntegrationType> = {
 };
 
 export const SYSTEM_INTEGRATION_TYPES = Object.keys(
-  SYSTEM_INTEGRATION_LABELS,
+  SYSTEM_INTEGRATION_LABELS
 ) as IntegrationType[];

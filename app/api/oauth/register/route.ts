@@ -6,8 +6,8 @@ import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
 import { isAllowedRedirectUri } from "@/lib/mcp/redirect-uri";
 import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { oauthRegisterSchema } from "@/lib/schemas/oauth";
-import { validateData } from "@/lib/validate-request";
 import { stripTrailingSlashes } from "@/lib/utils/url";
+import { validateData } from "@/lib/validate-request";
 
 export const dynamic = "force-dynamic";
 

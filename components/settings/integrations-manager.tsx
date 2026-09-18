@@ -15,8 +15,8 @@ import { IntegrationIcon } from "@/components/ui/integration-icon";
 import { Spinner } from "@/components/ui/spinner";
 import { api, type Integration } from "@/lib/api-client";
 import { useActiveMember } from "@/lib/hooks/use-organization";
-import { integrationsAtom } from "@/lib/integrations-store";
 import { SYSTEM_INTEGRATION_LABELS } from "@/lib/integrations/system";
+import { integrationsAtom } from "@/lib/integrations-store";
 import { getIntegrationLabels } from "@/plugins/registry";
 
 type IntegrationsManagerProps = {

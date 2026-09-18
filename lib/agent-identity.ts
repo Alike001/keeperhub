@@ -14,6 +14,7 @@
  * a deployment running a prebuilt image could not change it without rebuilding.
  */
 
+import { ETHEREUM_MAINNET_CHAIN_ID } from "@/lib/chains/ids";
 import { stripTrailingSlashes } from "@/lib/utils/url";
 
 export const DEFAULT_AGENT_NAME = "KeeperHub";
@@ -22,7 +23,6 @@ export const DEFAULT_AGENT_NAME = "KeeperHub";
 const DEFAULT_AGENT_ID = 31_875;
 const DEFAULT_REGISTRY = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432";
 const DEFAULT_REGISTRY_CHAIN = "ethereum";
-const DEFAULT_REGISTRY_CHAIN_ID = 1;
 
 export type OnChainAgentIdentity = {
   agentId: number;
@@ -97,7 +97,7 @@ export function onChainIdentity(): OnChainAgentIdentity | null {
     chain: process.env.AGENT_REGISTRY_CHAIN?.trim() || DEFAULT_REGISTRY_CHAIN,
     chainId:
       parsePositiveInt(process.env.AGENT_REGISTRY_CHAIN_ID) ??
-      DEFAULT_REGISTRY_CHAIN_ID,
+      ETHEREUM_MAINNET_CHAIN_ID,
     registry: process.env.AGENT_REGISTRY_ADDRESS?.trim() || DEFAULT_REGISTRY,
   };
 }

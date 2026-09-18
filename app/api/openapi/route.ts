@@ -4,8 +4,8 @@ import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
 import { sanitizeDescription } from "@/lib/sanitize-description";
 import { docsUrl } from "@/lib/site/identity";
-import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 import { stripTrailingSlashes } from "@/lib/utils/url";
+import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 
 export const dynamic = "force-dynamic";
 
