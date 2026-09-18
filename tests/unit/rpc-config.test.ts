@@ -8,6 +8,7 @@ import { gzipSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { logSystemError } from "@/lib/logging";
 import {
+  CHAIN_CONFIG,
   getConfigValue,
   getPrivateRpcUrl,
   getRpcUrl,
@@ -331,8 +332,6 @@ describe("RPC Config Resolution", () => {
       { json: "eth-sepolia", public: PUBLIC_RPCS.SEPOLIA },
       { json: "base-mainnet", public: PUBLIC_RPCS.BASE_MAINNET },
       { json: "base-testnet", public: PUBLIC_RPCS.BASE_SEPOLIA },
-      { json: "unichain-mainnet", public: PUBLIC_RPCS.UNICHAIN_MAINNET },
-      { json: "unichain-testnet", public: PUBLIC_RPCS.UNICHAIN_SEPOLIA },
       { json: "tempo-testnet", public: PUBLIC_RPCS.TEMPO_TESTNET },
       { json: "tempo-mainnet", public: PUBLIC_RPCS.TEMPO_MAINNET },
       { json: "solana-mainnet", public: PUBLIC_RPCS.SOLANA_MAINNET },
@@ -801,6 +800,33 @@ describe("RPC Config Resolution", () => {
         })
       ).toBe("https://chain.techops.live/eth-sepolia");
     });
+  });
+
+  describe("Unichain CHAIN_CONFIG wiring", () => {
+    it.each([
+      {
+        chainId: 130,
+        jsonKey: "unichain-mainnet",
+        wss: PUBLIC_RPCS.UNICHAIN_MAINNET_WSS,
+      },
+      {
+        chainId: 1301,
+        jsonKey: "unichain-testnet",
+        wss: PUBLIC_RPCS.UNICHAIN_SEPOLIA_WSS,
+      },
+    ])(
+      "should wire chain $chainId to $jsonKey with the publicnode WSS default",
+      ({ chainId, jsonKey, wss }) => {
+        expect(CHAIN_CONFIG[chainId].jsonKey).toBe(jsonKey);
+        expect(
+          getWssUrl({
+            rpcConfig: {},
+            jsonKey: CHAIN_CONFIG[chainId].jsonKey,
+            type: "primary",
+          })
+        ).toBe(wss);
+      }
+    );
   });
 
   describe("getWssUrl", () => {

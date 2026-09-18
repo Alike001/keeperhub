@@ -115,7 +115,7 @@ export const PUBLIC_RPCS = {
   // confirmed via eth_chainId against the official RPCs: mainnet returns
   // 0x82 (130), Sepolia testnet returns 0x515 (1301). publicnode's WSS
   // mirrors were verified live with a real eth_subscribe-capable connection
-  // on both networks, unlike Arc/Robinhood which have no public WSS.
+  // on both networks, unlike Robinhood which has no public WSS.
   UNICHAIN_MAINNET: "https://mainnet.unichain.org",
   UNICHAIN_MAINNET_FALLBACK: "https://unichain.drpc.org",
   UNICHAIN_MAINNET_WSS: "wss://unichain-rpc.publicnode.com",
