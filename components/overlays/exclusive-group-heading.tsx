@@ -47,27 +47,35 @@ export function ExclusiveGroupHeading({
         <div className="h-px flex-grow bg-border" />
       </div>
 
-      {active && (
-        <p className="text-center text-muted-foreground text-xs">
-          In use. You do not need to fill in the other option.
-        </p>
-      )}
-
-      {locked && (
-        <div className="flex flex-wrap items-center justify-center gap-2">
+      {/*
+        One slot, always present, whichever line it holds. These messages come
+        and go as somebody types in either option, and rendering them
+        conditionally moved every field below them down the page each time.
+        The height is the tall case - the button - so the row does not resize
+        when it switches from the in-use line to the held-shut one either.
+      */}
+      <div className="flex h-8 flex-wrap items-center justify-center gap-2">
+        {active && (
           <p className="text-muted-foreground text-xs">
-            Not needed - {inUse?.label ?? "the other option"} is in use.
+            In use. You do not need to fill in the other option.
           </p>
-          <Button
-            onClick={() => onUseThisInstead(group)}
-            size="sm"
-            type="button"
-            variant="ghost"
-          >
-            Use this instead
-          </Button>
-        </div>
-      )}
+        )}
+        {locked && (
+          <>
+            <p className="text-muted-foreground text-xs">
+              Not needed - {inUse?.label ?? "the other option"} is in use.
+            </p>
+            <Button
+              onClick={() => onUseThisInstead(group)}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              Use this instead
+            </Button>
+          </>
+        )}
+      </div>
 
       {state.ambiguous && group.id === state.groups[0]?.id && (
         <div className="flex items-start gap-2 rounded-md border border-yellow-500/40 bg-yellow-500/10 p-2 text-xs text-yellow-700 dark:text-yellow-300">
