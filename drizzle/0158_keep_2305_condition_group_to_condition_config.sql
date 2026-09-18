@@ -1,15 +1,22 @@
 -- Issue #2305: remove a Condition node's rule group from the unread top-level `group`
--- key, which is what aborts the run, and promote it to `conditionConfig` only where
--- doing so cannot change which expression the node evaluates.
+-- key, and promote it to `conditionConfig` only where doing so cannot change which
+-- expression the node evaluates.
 --
--- lib/workflow/node-builders.ts emitted `data.config.group`. processActionConfig lifts
--- only `condition` and `conditionConfig` out of the config before rendering templates,
--- so `group.rules` kept its unrendered `{{...}}` tokens, and the leftover-literal scan
--- that runs next found them and aborted the run before the Condition node executed.
+-- lib/workflow/node-builders.ts emitted `data.config.group`, a key
+-- resolveConditionExpression has never read: it takes `conditionConfig.group` or
+-- `condition`, so the rules under a top-level `group` are not the rules that run.
+--
+-- Until #2359 that was loud. processActionConfig lifts only `condition` and
+-- `conditionConfig` before rendering, and the renderer did not walk into objects, so
+-- `group.rules` kept its unrendered `{{...}}` tokens and the leftover-literal scan aborted
+-- the run. renderTemplateValue walks arrays and objects now, so those tokens render, the
+-- scan has nothing to report, and the node runs - without its rules. The fault did not go
+-- away with the abort; only the signal did. A loud failure became a quiet one, which is
+-- why this repair matters more after #2359 than before it.
 --
 -- The rows cannot be repaired from the editor: opening a seeded Condition node parses
 -- the `condition` string into a group and persists it as `conditionConfig`, but never
--- deletes the stale top-level `group`, so the workflow still aborts. Nor can any seeder
+-- deletes the stale top-level `group`, so the stale key survives the edit. Nor can any seeder
 -- reach them. lib/auth.ts:871-886 inserts the three fixtures for a new organization
 -- without an id and without `seededAt`, so scripts/seed/seed-onboarding-workflows.ts,
 -- which selects by the fixture's fixed id and refreshes only a row whose `updatedAt` is
@@ -35,8 +42,8 @@
 -- `{group: <seeded>, condition: <generated from that group>}`. The two differ only in
 -- whether `condition` equals visualConditionToExpression(group), which SQL cannot compute
 -- without a second copy of the generator. So the group is promoted only where there is no
--- expression to outrank, and dropped everywhere else. Dropping still repairs the abort,
--- which skipping the row would not.
+-- expression to outrank, and dropped everywhere else. Dropping still removes the stale
+-- key, which skipping the row would not.
 --
 -- Both group guards test `jsonb_typeof(... 'group') = 'object'` rather than key presence, so
 -- a node carrying `"group": null` or a non-object `group` is left exactly as it is. Writing
@@ -44,9 +51,9 @@
 -- action-config.tsx calls visualConditionToExpression whenever conditionConfig is truthy
 -- and groupToExpression dereferences `group.rules`, so the editor would throw on open.
 --
--- The expression test is `jsonb_typeof(...) = 'string' AND #>> ... <> ''`. `#>` returns SQL
--- NULL for an absent key, and jsonb_typeof of that is NULL, so an absent `condition` fails
--- the test and the group is promoted rather than dropped.
+-- The expression test is `jsonb_typeof(...) = 'string' AND btrim(#>> ..., E' \t\n\r\f\x0b') <> ''`.
+-- `#>` returns SQL NULL for an absent key, and jsonb_typeof of that is NULL, so an absent
+-- `condition` fails the test and the group is promoted rather than dropped.
 --
 -- Idempotent. A row whose Condition nodes no longer carry a top-level `group` is not
 -- matched, so a second run reports UPDATE 0. Covered by
@@ -81,17 +88,34 @@ FROM (
             -- not a repair candidate. Removing it is the repair.
             --
             -- btrim, because resolveConditionExpression (condition/resolver.ts)
-            -- tests condition.trim(): for a condition of spaces Postgres would
-            -- otherwise say an expression is present and take this arm, while
-            -- the resolver treats it as absent. The node would lose its rule
-            -- group with nothing promoted, and workflows.nodes is the only
+            -- tests condition.trim(): for a blank-but-present condition Postgres
+            -- would otherwise say an expression is present and take this arm,
+            -- while the resolver treats it as absent. The node would lose its
+            -- rule group with nothing promoted, and workflows.nodes is the only
             -- copy - the rules would survive solely in workflow_history.
+            --
+            -- The character set is explicit because one-argument btrim strips
+            -- spaces only, so a condition of "\n" or "\t" would still take this
+            -- arm. This is the ASCII part of what trim() strips. A regex
+            -- `!~ '^\s*$'` would be one character narrower: Postgres \s leaves
+            -- out the vertical tab that trim() removes.
+            --
+            -- The vertical tab is written \x0b, not \v. Postgres E-strings have
+            -- no \v escape, so E'\v' is the letter v: that set would leave the
+            -- vertical tab in place and strip a condition of "v" to nothing.
             WHEN jsonb_typeof(node #> '{data,config,condition}') = 'string'
-                 AND btrim(node #>> '{data,config,condition}') <> ''
+                 AND btrim(node #>> '{data,config,condition}', E' \t\n\r\f\x0b') <> ''
             THEN node #- '{data,config,group}'
             -- No expression to outrank, so the group becomes the condition. An object
             -- conditionConfig is merged into rather than replaced, and one that already
             -- carries a group wins outright.
+            --
+            -- This is the arm that changes what runs. A node with no usable condition
+            -- evaluates to undefined today; after this it evaluates the promoted rules.
+            -- That is the repair for a seeded node, and the price is that a user who
+            -- deliberately blanked the expression box gets the seeded rules switched
+            -- back on. It is the mirror of the btrim guard above: both treat a blank
+            -- condition as absent, which is what the resolver already does.
             WHEN jsonb_typeof(node #> '{data,config,conditionConfig}') = 'object'
             THEN CASE
                    WHEN jsonb_exists(node #> '{data,config,conditionConfig}', 'group')

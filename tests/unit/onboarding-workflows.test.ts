@@ -96,7 +96,7 @@ describe("ONBOARDING_WORKFLOW_FIXTURES", () => {
       });
 
       it("has a Condition expression the editor can parse back", () => {
-        // Migration 0152 removes a stale top-level group and, where an
+        // The condition-group migration removes a stale top-level group and, where an
         // expression is already what the node runs, does not promote it. The
         // editor then rebuilds conditionConfig from `condition` on open, so
         // every seeded expression has to be one the parser accepts, or a

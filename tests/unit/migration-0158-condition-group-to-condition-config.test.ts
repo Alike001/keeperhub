@@ -1,20 +1,27 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 // Drift catch for the Condition rule-group repair. The statement has one job
-// it must always do, removing the top-level `group` that carries unrendered
-// tokens into the leftover-literal scan, and one it must do only under a
+// it must always do, removing the top-level `group` that
+// resolveConditionExpression never reads, and one it must do only under a
 // condition, promoting that group to `conditionConfig`. Promotion outranks the
 // `condition` string at runtime, so a node that already has an expression must
 // not get one. The assertions are strict on purpose: every guard here was
 // added because the shape it excludes either crashes the editor or silently
 // changes which expression a workflow evaluates.
 
-const MIGRATION_PATH = join(
-  import.meta.dirname,
-  "../../drizzle/0158_keep_2305_condition_group_to_condition_config.sql"
+// Found by suffix rather than by number, as the tests/db file does. staging
+// keeps gaining migrations while this waits, and a hardcoded number turns each
+// renumber into an ENOENT that reads like a deleted migration.
+const DRIZZLE_DIR = join(import.meta.dirname, "../../drizzle");
+const MIGRATION_FILE = readdirSync(DRIZZLE_DIR).find((name) =>
+  name.endsWith("_keep_2305_condition_group_to_condition_config.sql")
 );
+if (!MIGRATION_FILE) {
+  throw new Error("the condition-group migration is gone");
+}
+const MIGRATION_PATH = join(DRIZZLE_DIR, MIGRATION_FILE);
 
 const READ_SQL = (): string => readFileSync(MIGRATION_PATH, "utf8");
 
@@ -27,13 +34,15 @@ const READ_SQL_DDL_ONLY = (): string =>
 
 describe("the whitespace guard", () => {
   it("trims the condition before deciding an expression is present", () => {
-    // A condition of spaces is absent to resolveConditionExpression, which
-    // tests condition.trim(). Without btrim the migration takes the drop-only
-    // arm for such a node and deletes its rule group with nothing promoted in
-    // its place. Nothing here executes the SQL - this is a text assertion like
-    // the rest of this file - so it pins the call, not the behaviour.
+    // A blank condition - spaces, tabs, newlines - is absent to
+    // resolveConditionExpression, which tests condition.trim(). One-argument
+    // btrim strips spaces only, so the character set has to be passed. Nothing
+    // here executes the SQL - tests/db does that - so this pins the call, not
+    // the behaviour.
     const sql = READ_SQL();
-    expect(sql).toContain("btrim(node #>> '{data,config,condition}') <> ''");
+    expect(sql).toContain(
+      "btrim(node #>> '{data,config,condition}', E' \\t\\n\\r\\f\\x0b') <> ''"
+    );
   });
 });
 
@@ -73,7 +82,7 @@ describe("migration 158: Condition group moves to conditionConfig", () => {
     // seeded condition instead of theirs.
     const ddl = READ_SQL_DDL_ONLY();
     expect(ddl).toMatch(
-      /jsonb_typeof\(node #> '\{data,config,condition\}'\) = 'string'\s*\n?\s*AND btrim\(node #>> '\{data,config,condition\}'\) <> ''\s*\n?\s*THEN node #- '\{data,config,group\}'/
+      /jsonb_typeof\(node #> '\{data,config,condition\}'\) = 'string'\s*\n?\s*AND btrim\(node #>> '\{data,config,condition\}', E' \\t\\n\\r\\f\\x0b'\) <> ''\s*\n?\s*THEN node #- '\{data,config,group\}'/
     );
   });
 

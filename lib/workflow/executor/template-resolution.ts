@@ -115,12 +115,6 @@ export function scanForLeftoverLiterals(
 }
 
 /**
- * Aggregate tracker entries plus a fresh leftover-literal scan over the
- * rendered config and throw `TemplateResolutionError` if either source
- * reports anything. Always fails closed; KEEP-525 removed the legacy
- * silent-substitute opt-out.
- */
-/**
  * The two keys a Condition node resolves for itself.
  *
  * `condition` and `conditionConfig` carry their own template tokens and are
@@ -172,6 +166,12 @@ export function restoreConditionFields(
   return processed;
 }
 
+/**
+ * Aggregate tracker entries plus a fresh leftover-literal scan over the
+ * rendered config and throw `TemplateResolutionError` if either source
+ * reports anything. Always fails closed; KEEP-525 removed the legacy
+ * silent-substitute opt-out.
+ */
 export function assertResolved(
   tracker: TemplateResolutionTracker,
   renderedConfig: unknown,

@@ -29,6 +29,8 @@ const PREFIX = "test_cond_group_";
 const USER = `${PREFIX}user`;
 const ORG = `${PREFIX}org`;
 const WORKFLOW = `${PREFIX}wf`;
+// Carries no Condition group, so the statement must not write it at all.
+const UNTOUCHED = `${PREFIX}wf_untouched`;
 const NOW = new Date("2026-09-09T12:00:00.000Z");
 
 const RULES = {
@@ -67,6 +69,21 @@ const SEEDED = [
   }),
   node("n2-whitespace", "Condition", {
     condition: "   ",
+    group: RULES,
+  }),
+  // One-argument btrim strips spaces only. These two are what it missed.
+  node("n2b-newline", "Condition", {
+    condition: "\n",
+    group: RULES,
+  }),
+  node("n2c-mixed-whitespace", "Condition", {
+    condition: "\t\r\n\v\f ",
+    group: RULES,
+  }),
+  // Not blank. A set written with \v instead of \x0b strips the letter v,
+  // and would promote this node's group over a real expression.
+  node("n2d-letter-v", "Condition", {
+    condition: "v",
     group: RULES,
   }),
   node("n3-bare", "Condition", { group: RULES }),
@@ -120,6 +137,17 @@ describe("condition group moves under conditionConfig (real database)", () => {
     return String(rows[0]?.updated_at);
   }
 
+  /**
+   * The transaction id that last wrote the row. A statement that rebuilds an
+   * array to an identical value still writes the row and moves this, which a
+   * check on the contents cannot see.
+   */
+  async function readXmin(id: string): Promise<string> {
+    const rows = await queryClient`
+        SELECT xmin::text AS xmin FROM workflows WHERE id = ${id}`;
+    return String(rows[0]?.xmin);
+  }
+
   const configOf = (nodes: NodeRow[], id: string): Record<string, unknown> => {
     const found = nodes.find((n) => n.id === id);
     if (!found) {
@@ -129,6 +157,13 @@ describe("condition group moves under conditionConfig (real database)", () => {
   };
 
   beforeAll(async () => {
+    // Checked before new URL(), which would otherwise throw "Invalid URL" and
+    // hide the reason.
+    if (!DATABASE_URL) {
+      throw new Error(
+        "DATABASE_URL is not set; this file needs a local Postgres"
+      );
+    }
     const host = new URL(DATABASE_URL).hostname;
     if (!["localhost", "127.0.0.1", "::1", "postgres", "db"].includes(host)) {
       throw new Error(`refusing to run against a non-local database: ${host}`);
@@ -159,6 +194,16 @@ describe("condition group moves under conditionConfig (real database)", () => {
       createdAt: NOW,
       updatedAt: NOW,
     });
+    await db.insert(workflows).values({
+      id: UNTOUCHED,
+      name: "workflow with no condition group",
+      userId: USER,
+      organizationId: ORG,
+      nodes: [node("u1", "http/request", { url: "https://example.com" })],
+      edges: [],
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
   });
 
   afterAll(async () => {
@@ -168,6 +213,7 @@ describe("condition group moves under conditionConfig (real database)", () => {
 
   it("moves, merges or drops the group once per arm", async () => {
     const before = await readUpdatedAt();
+    const untouchedBefore = await readXmin(UNTOUCHED);
     await runMigration();
     const nodes = await readNodes();
 
@@ -188,6 +234,27 @@ describe("condition group moves under conditionConfig (real database)", () => {
       actionType: "Condition",
       condition: "   ",
       conditionConfig: { group: RULES },
+    });
+
+    // Same arm, whitespace btrim(text) alone would not strip. Measured on 16.14
+    // by the review: without the character set these came out with their
+    // group deleted and nothing promoted.
+    expect(configOf(nodes, "n2b-newline")).toEqual({
+      actionType: "Condition",
+      condition: "\n",
+      conditionConfig: { group: RULES },
+    });
+    expect(configOf(nodes, "n2c-mixed-whitespace")).toEqual({
+      actionType: "Condition",
+      condition: "\t\r\n\v\f ",
+      conditionConfig: { group: RULES },
+    });
+
+    // "v" is an expression, so the group is only removed. Postgres has no \v
+    // escape; a set that relied on one would have stripped this to nothing.
+    expect(configOf(nodes, "n2d-letter-v")).toEqual({
+      actionType: "Condition",
+      condition: "v",
     });
 
     expect(configOf(nodes, "n3-bare")).toEqual({
@@ -219,11 +286,20 @@ describe("condition group moves under conditionConfig (real database)", () => {
 
     // A repair is not a user edit.
     expect(await readUpdatedAt()).toBe(before);
+
+    // A row with no Condition group is not written at all. This is what the
+    // EXISTS qualifier is for, and the lost-update window is about exactly
+    // this set of rows.
+    expect(await readXmin(UNTOUCHED)).toBe(untouchedBefore);
   });
 
-  it("is idempotent", async () => {
+  it("is idempotent, and a second run writes nothing", async () => {
     const first = await readNodes();
+    const writtenBy = await readXmin(WORKFLOW);
     await runMigration();
     expect(await readNodes()).toEqual(first);
+    // Content alone would pass even if every row were rewritten to the same
+    // value; the row not being written is what UPDATE 0 means.
+    expect(await readXmin(WORKFLOW)).toBe(writtenBy);
   });
 });

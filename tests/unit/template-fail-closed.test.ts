@@ -1022,8 +1022,12 @@ describe("liftConditionFields keeps the Condition-owned keys out of the scan", (
     expect(restored.condition).toBe("a < 1");
     expect(restored.conditionConfig).toEqual({ group: { id: "g" } });
 
-    // A config that carried neither gets neither back, rather than two
-    // undefined keys the step would then have to ignore.
+    // restoreConditionFields adds back only what it lifted, so a config that
+    // carried neither key gets neither from it. That is a claim about restore
+    // alone. On the executor path the two keys do reach the step as undefined:
+    // liftConditionFields sets them on `rest` unconditionally and
+    // processTemplates copies every key of its input. The code before the
+    // refactor did the same, so this is not a change in behaviour.
     const bare = liftConditionFields({ actionType: "Condition" });
     const untouched = restoreConditionFields(
       { actionType: "Condition" },
