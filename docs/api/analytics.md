@@ -30,7 +30,7 @@ Returns aggregated analytics for the organization including run counts, success 
 | `range` | string | Time range: `1h`, `24h`, `7d`, `30d`, `custom` (default: `24h`). An unrecognised value is not rejected: `?range=90d` falls through to the `24h` offset |
 | `customStart` | string | ISO timestamp for custom range start |
 | `customEnd` | string | ISO timestamp for custom range end |
-| `projectId` | string | Restrict the figures to one workflow project. It also removes direct executions from the response entirely, so `totalRuns` and both gas totals lose their direct half |
+| `projectId` | string | Restrict the figures to one workflow project. It also removes direct executions from the response entirely, so `totalRuns` and `totalGasWei` lose their direct half. `sponsoredGasWei` is workflow-only on every request and has no direct half to lose: the parameter narrows it to the project rather than halving it |
 
 ### Response
 
@@ -127,7 +127,7 @@ Returns execution counts and gas usage grouped by blockchain network. Gas totals
 
 ### Query Parameters
 
-Same as summary endpoint.
+Same as summary endpoint. `projectId` is the one parameter whose effect differs here: it excludes direct executions rather than filtering them, so every network row loses its direct half.
 
 ### Response
 
@@ -174,7 +174,7 @@ Returns a unified list of both workflow executions and direct executions with pa
 | `limit` | number | Results per page (default: 50, capped at 100: a larger value is clamped rather than rejected) |
 | `cursor` | string | Pagination cursor from previous response |
 | `page` | number | One-based page number, an alternative to `cursor`. Values below 1 are clamped to 1 |
-| `projectId` | string | Restrict the listing to one workflow project. Direct executions are excluded rather than filtered, so every network row loses its direct half |
+| `projectId` | string | Restrict the listing to one workflow project. Direct executions are excluded rather than filtered |
 
 ### Response
 
