@@ -939,12 +939,15 @@ const EXPLORER_CONFIG_TEMPLATES: Record<
     explorerAddressPath: "/account/{address}",
     explorerContractPath: "/account/{address}#anchorProgramIDL",
   },
-  // Arc Testnet - Blockscout
+  // Arc Testnet - Blockscout. Circle's own host rather than
+  // testnet.arcscan.app, which now answers 301 and redirects here: the API
+  // client posts to explorerApiUrl, and a redirect on that hop is a failure
+  // for any caller that does not follow one.
   5042002: {
     chainType: "evm",
-    explorerUrl: "https://testnet.arcscan.app",
+    explorerUrl: "https://explorer.testnet.arc.io",
     explorerApiType: "blockscout",
-    explorerApiUrl: "https://testnet.arcscan.app/api",
+    explorerApiUrl: "https://explorer.testnet.arc.io/api",
     explorerTxPath: "/tx/{hash}",
     explorerAddressPath: "/address/{address}",
     explorerContractPath: "/address/{address}?tab=contract",
