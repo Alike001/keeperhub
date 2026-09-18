@@ -1,13 +1,14 @@
 import { hasIndependentTokenList } from "@/lib/web3/independent-token-list-chains";
 
-// TEMPO uses stablecoins for gas, so we display stablecoins only (no native token)
-const TEMPO_CHAIN_IDS: ReadonlySet<number> = new Set([42_431, 4217]);
+// Single source of truth for Tempo's categorical no-native-row rule and for
+// which chains can have their native balance mirrored by a supported-token
+// row -- see lib/wallet/build-withdrawable-assets.ts.
+export {
+  hidesNativeRow,
+  isTempoChain,
+} from "@/lib/wallet/build-withdrawable-assets";
 
 export const MAINNET_CHAIN_ID = 1;
-
-export function isTempoChain(chainId: number): boolean {
-  return TEMPO_CHAIN_IDS.has(chainId);
-}
 
 // Re-exported so wallet components keep importing chain helpers from one
 // place; the list itself lives in lib/web3 because the supported-tokens API

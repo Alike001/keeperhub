@@ -21,6 +21,8 @@ describe("independent token list chains", () => {
       9745, // Plasma: USDT0, no Circle USDC
       4217,
       42_431, // Tempo pays gas in stablecoins
+      5042,
+      5_042_002, // Arc: USDC is the native gas token
     ]) {
       expect(hasIndependentTokenList(chainId), `chain ${chainId}`).toBe(true);
     }
