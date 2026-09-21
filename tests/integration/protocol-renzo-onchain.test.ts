@@ -2,9 +2,12 @@
  * Renzo On-Chain Integration Tests
  *
  * Verifies that the ABI-driven Renzo protocol definition produces
- * calldata that the deployed RestakeManager and ezETH contracts accept
- * on Ethereum mainnet. Catches contract dispatch and ABI-shape mistakes
- * the unit-test layer cannot see.
+ * calldata that the deployed RestakeManager, risk-oracle middleware and
+ * ezETH contracts accept on Ethereum mainnet. Catches contract dispatch
+ * and ABI-shape mistakes the unit-test layer cannot see, plus two things
+ * only the chain can answer: that the manager still points at the
+ * middleware address this definition declares, and that a failed stake's
+ * revert selector is one the declared ABI can name.
  *
  * RPC URL resolution (shared with the rest of the codebase):
  *   1. CHAIN_RPC_CONFIG JSON (Helm/AWS Parameter Store, set in CI +
@@ -29,6 +32,7 @@ import {
   PUBLIC_RPCS,
   parseRpcConfig,
 } from "@/lib/rpc/rpc-config";
+import { classifyRevert } from "@/lib/web3/decode-revert-error";
 import renzoDef from "@/protocols/renzo";
 import { buildCalldata } from "./_shared/build-calldata";
 import { itOnchain } from "./_shared/onchain-rpc";
@@ -126,6 +130,33 @@ describe("Renzo on-chain integration", () => {
     }
   }
 
+  /**
+   * The revert data of a call that must revert with data. Same extraction the
+   * helper above rejects on, surfaced instead of discarded, so a case can assert
+   * what the selector decodes to rather than only that one was present.
+   */
+  async function expectRevertData(tx: {
+    to: string;
+    data: string;
+  }): Promise<string> {
+    try {
+      const result = await manager.executeWithFailover((p) =>
+        p.call({ ...tx, from: TEST_ADDRESS })
+      );
+      throw new Error(
+        `Expected ${tx.data.slice(0, 10)} on ${tx.to} to revert, got ${result}`
+      );
+    } catch (err: unknown) {
+      const revertData = (err as { data?: unknown }).data;
+      if (typeof revertData !== "string" || revertData === EMPTY_REVERT_DATA) {
+        throw new Error(
+          `Expected ${tx.data.slice(0, 10)} on ${tx.to} to revert with data, got ${JSON.stringify(revertData)}`
+        );
+      }
+      return revertData;
+    }
+  }
+
   itOnchain(
     "paused: eth_call returns a decodable bool",
     async () => {
@@ -188,6 +219,90 @@ describe("Renzo on-chain integration", () => {
       await expect(
         simulateBytecodeCall({ to, data: UNKNOWN_SELECTOR })
       ).rejects.toThrow();
+    },
+    15_000
+  );
+
+  itOnchain(
+    "deposit-paused: eth_call returns a decodable bool",
+    async () => {
+      const { to, data, contract } = buildCalldata({
+        protocol: renzoDef,
+        actionSlug: "deposit-paused",
+        sampleInputs: {},
+        chainId: CHAIN_ID,
+      });
+
+      const result = await manager.executeWithFailover((p) =>
+        p.call({ to, data })
+      );
+
+      const abi = JSON.parse(contract.abi as string);
+      const iface = new ethers.Interface(abi);
+      const decoded = iface.decodeFunctionResult("depositPaused", result);
+      expect(decoded).toBeDefined();
+      expect(typeof decoded[0]).toBe("boolean");
+    },
+    15_000
+  );
+
+  // The other half of the gate is only the right half while the manager still
+  // points at this middleware. `riskOracleMiddleware` is an `immutable` on the
+  // manager, so it moves only on a manager implementation upgrade - which is
+  // exactly the event that would silently turn `deposit-paused` into a read of
+  // a contract Renzo no longer consults. Reading the getter and comparing it to
+  // the declared address is what catches that, and the declared address alone
+  // cannot.
+  itOnchain(
+    "the manager still points at the declared risk-oracle middleware",
+    async () => {
+      const declared =
+        renzoDef.contracts.riskOracleMiddleware.addresses[CHAIN_ID];
+      const restakeManager =
+        renzoDef.contracts.restakeManager.addresses[CHAIN_ID];
+
+      const result = await manager.executeWithFailover((p) =>
+        p.call({
+          to: restakeManager,
+          data: ethers.id("riskOracleMiddleware()").slice(0, 10),
+        })
+      );
+
+      const [onChain] = ethers.AbiCoder.defaultAbiCoder().decode(
+        ["address"],
+        result
+      );
+      expect(ethers.getAddress(onChain as string)).toBe(
+        ethers.getAddress(declared)
+      );
+    },
+    15_000
+  );
+
+  // Item 2's fix, held against the chain rather than against a fixture. The
+  // reverts a stake produces are named by parsing the revert data against the
+  // RestakeManager document's own `error` fragments, which is the only interface
+  // `classifyRevert` consults on a write. A no-value `depositETH()` is the
+  // reproducible one: the manager's mint-amount call reaches
+  // RenzoOracle.calculateMintAmount, which rejects a zero mint. If the live
+  // selector ever stops matching the fragment, this fails here instead of
+  // reaching a user as hex.
+  itOnchain(
+    "a no-value depositETH reverts with a selector the ABI can name",
+    async () => {
+      const { to, data, contract } = buildCalldata({
+        protocol: renzoDef,
+        actionSlug: "stake",
+        sampleInputs: {},
+        chainId: CHAIN_ID,
+      });
+
+      const revertData = await expectRevertData({ to, data });
+      const iface = new ethers.Interface(JSON.parse(contract.abi as string));
+      expect(iface.parseError(revertData)?.name).toBe("InvalidTokenAmount");
+      expect(
+        classifyRevert({ code: "CALL_EXCEPTION", data: revertData }, iface)
+      ).toEqual({ kind: "contract-custom", name: "InvalidTokenAmount" });
     },
     15_000
   );

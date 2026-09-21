@@ -12,5 +12,7 @@
     "stateMutability": "view",
     "inputs": [],
     "outputs": [{ "name": "paused", "type": "bool" }]
-  }
+  },
+  { "type": "error", "name": "ContractPaused", "inputs": [] },
+  { "type": "error", "name": "InvalidTokenAmount", "inputs": [] }
 ]

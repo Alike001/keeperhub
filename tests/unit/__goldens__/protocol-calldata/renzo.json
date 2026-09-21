@@ -10,6 +10,11 @@
       "data": "0x5c975abb",
       "skipped": false
     },
+    "deposit-paused": {
+      "to": "0x08921F17A32110F8df44A3d5007F2acd09Cfae6d",
+      "data": "0x02befd24",
+      "skipped": false
+    },
     "ez-balance-of": {
       "to": "0xbf5495Efe5DB9ce00f80364C8B423567e58d2110",
       "data": "0x70a082310000000000000000000000001111111111111111111111111111111111111111",

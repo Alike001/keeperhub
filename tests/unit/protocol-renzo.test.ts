@@ -1,9 +1,11 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { ethers } from "ethers";
 import { describe, expect, it } from "vitest";
 import { type AbiItem, findAbiFunction } from "@/lib/abi/utils";
 import type { ProtocolAction } from "@/lib/protocol-registry";
 import { getProtocol, registerProtocol } from "@/lib/protocol-registry";
+import { classifyRevert } from "@/lib/web3/decode-revert-error";
 import {
   type AbiOutputParam,
   structureAbiOutputs,
@@ -16,13 +18,16 @@ const HEX_ADDRESS_REGEX = /^0x[0-9a-fA-F]{40}$/;
 
 /**
  * Decoded return values observed on Ethereum mainnet over a public RPC on
- * 2026-09-17: `paused()` returned 0x00..00 and ezETH `totalSupply()` returned
- * 0x8c0111289f2afea6b1c. Held as a fixture, BigInt-serialized the way
- * readContractCore records them, so the checks below run in PR CI without an
- * RPC. The balance is a stand-in; only its shape matters.
+ * 2026-09-17, with `deposit-paused` added on 2026-09-21 at block 26024442:
+ * `paused()` returned 0x00..00, the risk-oracle middleware's `depositPaused()`
+ * returned 0x00..00 and ezETH `totalSupply()` returned 0x8c0111289f2afea6b1c.
+ * Held as a fixture, BigInt-serialized the way readContractCore records them,
+ * so the checks below run in PR CI without an RPC. The balance is a stand-in;
+ * only its shape matters.
  */
 const DECODED_RETURNS: Record<string, unknown[]> = {
   paused: [false],
+  "deposit-paused": [false],
   "ez-total-supply": ["41321936922433047653148"],
   "ez-balance-of": ["1000000000000000000"],
 };
@@ -119,29 +124,39 @@ describe("Renzo Protocol Definition (ABI-driven)", () => {
     }
   });
 
-  it("has two contracts (restakeManager, ezeth)", () => {
+  it("has three contracts (restakeManager, riskOracleMiddleware, ezeth)", () => {
     expect(Object.keys(renzoDef.contracts).sort()).toEqual([
       "ezeth",
       "restakeManager",
+      "riskOracleMiddleware",
     ]);
     expect(renzoDef.contracts.restakeManager.label).toBe(
       "Renzo Restake Manager"
     );
+    expect(renzoDef.contracts.riskOracleMiddleware.label).toBe(
+      "Renzo Risk Oracle Middleware"
+    );
     expect(renzoDef.contracts.ezeth.label).toBe("ezETH Token");
   });
 
-  it("has 4 actions: 1 write and 3 reads", () => {
-    expect(renzoDef.actions).toHaveLength(4);
+  it("has 5 actions: 1 write and 4 reads", () => {
+    expect(renzoDef.actions).toHaveLength(5);
     const reads = renzoDef.actions.filter((a) => a.type === "read");
     const writes = renzoDef.actions.filter((a) => a.type === "write");
-    expect(reads).toHaveLength(3);
+    expect(reads).toHaveLength(4);
     expect(writes).toHaveLength(1);
   });
 
   it("exposes the expected action slugs", () => {
     const slugs = renzoDef.actions.map((a) => a.slug).sort();
     expect(slugs).toEqual(
-      ["ez-balance-of", "ez-total-supply", "paused", "stake"].sort()
+      [
+        "deposit-paused",
+        "ez-balance-of",
+        "ez-total-supply",
+        "paused",
+        "stake",
+      ].sort()
     );
   });
 
@@ -166,6 +181,49 @@ describe("Renzo Protocol Definition (ABI-driven)", () => {
     expect(paused?.outputs).toHaveLength(1);
     expect(paused?.outputs?.[0].name).toBe("paused");
     expect(paused?.outputs?.[0].type).toBe("bool");
+  });
+
+  // The gate `depositETH()` carries is `paused || riskOracleMiddleware
+  // .depositPaused()`, so the manager flag alone cannot answer "are deposits
+  // accepted". Both halves have to be on the definition, on their own
+  // contracts, and neither label may claim to be the whole gate.
+  it("deposit-paused reads the middleware's bool on its own contract", () => {
+    const gate = renzoDef.actions.find((a) => a.slug === "deposit-paused");
+    expect(gate).toBeDefined();
+    expect(gate?.type).toBe("read");
+    expect(gate?.contract).toBe("riskOracleMiddleware");
+    expect(gate?.function).toBe("depositPaused");
+    expect(gate?.inputs).toHaveLength(0);
+    expect(gate?.outputs).toHaveLength(1);
+    expect(gate?.outputs?.[0].name).toBe("depositPaused");
+    expect(gate?.outputs?.[0].type).toBe("bool");
+  });
+
+  it("neither pause label claims to be the whole deposit gate", () => {
+    const labels = renzoDef.actions
+      .filter((a) => a.slug === "paused" || a.slug === "deposit-paused")
+      .map((a) => a.label);
+    expect(labels).toHaveLength(2);
+    expect(labels).not.toContain("Check Deposit Pause Status");
+    expect(labels.sort()).toEqual([
+      "Check Manager Pause Flag",
+      "Check Risk Oracle Deposit Pause",
+    ]);
+  });
+
+  // Both halves must be readable by a workflow, so both must be enrolled in the
+  // fork sweep and both must carry a chain expectation. A half that is declared
+  // but never exercised is how the single-condition gate got this far.
+  it("testData exercises both halves of the deposit gate", () => {
+    const chain = renzoDef.testData?.["1"];
+    expect(Object.keys(chain?.actions ?? {})).toContain("paused");
+    expect(Object.keys(chain?.actions ?? {})).toContain("deposit-paused");
+    expect(chain?.expectations?.paused).toEqual([
+      { field: "paused", equals: "false" },
+    ]);
+    expect(chain?.expectations?.["deposit-paused"]).toEqual([
+      { field: "depositPaused", equals: "false" },
+    ]);
   });
 
   it("ez-total-supply reads an 18-decimal uint256 from ezETH", () => {
@@ -196,7 +254,10 @@ describe("Renzo Protocol Definition (ABI-driven)", () => {
     }
   });
 
-  it("excludes Sepolia, Holesky, Goerli, Base and Arbitrum", () => {
+  // Definition-level lock, not an on-chain claim: it pins that no chain beyond
+  // mainnet was added to any contract. Which of these chains are actually empty
+  // is recorded in docs/plugins/renzo.md with the blocks it was read at.
+  it("declares no chain other than mainnet for Sepolia, Holesky, Goerli, Base or Arbitrum", () => {
     const excluded = ["11155111", "17000", "5", "8453", "42161"];
     for (const contract of Object.values(renzoDef.contracts)) {
       for (const chainId of excluded) {
@@ -210,9 +271,14 @@ describe("Renzo Protocol Definition (ABI-driven)", () => {
 
   it("contract addresses match the verified mainnet deployments", () => {
     // Verified on-chain 2026-09-10: ezETH name/symbol, RestakeManager.paused()
-    // false and renzoOracle() returning a live oracle address.
+    // false and renzoOracle() returning a live oracle address. Re-read
+    // 2026-09-21 at block 26024442, when RestakeManager.riskOracleMiddleware()
+    // returned the middleware address below.
     expect(renzoDef.contracts.restakeManager.addresses["1"]).toBe(
       "0x74a09653A083691711cF8215a6ab074BB4e99ef5"
+    );
+    expect(renzoDef.contracts.riskOracleMiddleware.addresses["1"]).toBe(
+      "0x08921F17A32110F8df44A3d5007F2acd09Cfae6d"
     );
     expect(renzoDef.contracts.ezeth.addresses["1"]).toBe(
       "0xbf5495Efe5DB9ce00f80364C8B423567e58d2110"
@@ -269,6 +335,12 @@ describe("Renzo read outputs resolve at runtime", () => {
     expect(structuredResult(findAction("paused"))).toEqual({ paused: false });
   });
 
+  it("the middleware gate is readable as result.depositPaused", () => {
+    expect(structuredResult(findAction("deposit-paused"))).toEqual({
+      depositPaused: false,
+    });
+  });
+
   it("every declared expectation resolves against the structured result", () => {
     const chain = renzoDef.testData?.["1"];
     expect(chain).toBeDefined();
@@ -307,5 +379,59 @@ describe("Renzo read outputs resolve at runtime", () => {
         ).toBeNull();
       }
     }
+  });
+});
+
+/**
+ * A failed stake reaches the user through `classifyRevert`, which parses the
+ * revert data against the TARGET contract's own interface and nothing else.
+ * With no `error` fragments on the RestakeManager document, both reverts a
+ * `depositETH()` can produce came back `{ kind: "unknown" }` and the user saw a
+ * four-byte selector. These pin the naming against selectors computed from the
+ * signatures, and `0x21607339` is the selector measured on mainnet for
+ * `depositETH()` sent no value.
+ */
+describe("Renzo stake reverts are named, not raw selectors", () => {
+  const restakeManagerInterface = new ethers.Interface(
+    JSON.parse(renzoDef.contracts.restakeManager.abi as string)
+  );
+
+  /** What an ethers CALL_EXCEPTION carrying revert data looks like. */
+  function revertWith(data: string) {
+    return { code: "CALL_EXCEPTION", data };
+  }
+
+  it("selectors resolve from the signatures rather than being hardcoded", () => {
+    expect(ethers.id("ContractPaused()").slice(0, 10)).toBe("0xab35696f");
+    expect(ethers.id("InvalidTokenAmount()").slice(0, 10)).toBe("0x21607339");
+  });
+
+  it("names ContractPaused, the revert of a deposit while either gate is set", () => {
+    const selector = ethers.id("ContractPaused()").slice(0, 10);
+    expect(
+      classifyRevert(revertWith(selector), restakeManagerInterface)
+    ).toEqual({
+      kind: "contract-custom",
+      name: "ContractPaused",
+    });
+  });
+
+  // RenzoOracle.calculateMintAmount raises this one and it bubbles up through
+  // the manager, so the manager's own verified ABI does not declare it. It is on
+  // this document because it is what depositETH() measurably reverts with, and
+  // the decode path never consults the oracle's interface.
+  it("names InvalidTokenAmount, the measured revert of a zero-value deposit", () => {
+    expect(
+      classifyRevert(revertWith("0x21607339"), restakeManagerInterface)
+    ).toEqual({
+      kind: "contract-custom",
+      name: "InvalidTokenAmount",
+    });
+  });
+
+  it("still returns unknown for a selector the document does not declare", () => {
+    expect(
+      classifyRevert(revertWith("0xdeadbeef"), restakeManagerInterface)
+    ).toEqual({ kind: "unknown" });
   });
 });
