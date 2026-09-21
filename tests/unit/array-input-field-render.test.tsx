@@ -1,17 +1,17 @@
 // @vitest-environment jsdom
-import { act, type ReactNode } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/components/ui/template-badge-input", () => ({
-  TemplateBadgeInput: ({ value }: { value: string }) => (
-    <input readOnly value={value} />
-  ),
-}));
-vi.mock("@/components/ui/button", () => ({
-  Button: ({ children }: { children: ReactNode }) => (
-    <button type="button">{children}</button>
-  ),
+vi.mock("@/lib/workflow/store", async () => {
+  const { atom } = await import("jotai");
+  return {
+    nodesAtom: atom([]),
+    selectedNodeAtom: atom(null),
+  };
+});
+vi.mock("@/components/ui/template-autocomplete", () => ({
+  TemplateAutocomplete: () => null,
 }));
 vi.mock("@/components/workflow/config/tuple-input-field", () => ({
   TupleInputField: () => null,
@@ -50,7 +50,10 @@ describe("ArrayInputField legacy migration", () => {
     );
 
     expect(
-      Array.from(container.querySelectorAll("input"), (input) => input.value)
+      Array.from(
+        container.querySelectorAll('[role="textbox"]'),
+        (input) => input.textContent
+      )
     ).toEqual(["0xpool1", "0xpool2"]);
     expect(onChange).toHaveBeenCalledWith(["0xpool1", "0xpool2"]);
   });
@@ -71,7 +74,10 @@ describe("ArrayInputField legacy migration", () => {
     );
 
     expect(
-      Array.from(container.querySelectorAll("input"), (input) => input.value)
+      Array.from(
+        container.querySelectorAll('[role="textbox"]'),
+        (input) => input.textContent
+      )
     ).toEqual(["0xpool1"]);
     expect(onChange).not.toHaveBeenCalled();
   });
@@ -101,8 +107,93 @@ describe("ArrayInputField legacy migration", () => {
     );
 
     expect(
-      Array.from(container.querySelectorAll("input"), (input) => input.value)
+      Array.from(
+        container.querySelectorAll('[role="textbox"]'),
+        (input) => input.textContent
+      )
     ).toEqual(["0xpool2", "0xpool3"]);
     expect(onChange).toHaveBeenLastCalledWith(["0xpool2", "0xpool3"]);
+  });
+
+  it("shows a whole-field template as an editable row", async () => {
+    const onChange = vi.fn();
+
+    await act(async () =>
+      root.render(
+        <ArrayInputField
+          fieldKey="amounts"
+          itemType="uint256"
+          onChange={onChange}
+          value="{{Get Withdrawal Requests.requestIds}}"
+        />
+      )
+    );
+
+    expect(container.textContent).not.toContain("Empty array");
+    expect(container.querySelector('[role="textbox"]')?.textContent).toContain(
+      "Get Withdrawal Requests.requestIds"
+    );
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("preserves the focused row while a controlled parent accepts typing", async () => {
+    function Harness(): React.ReactNode {
+      const [value, setValue] = useState<unknown[]>(["0xpool1"]);
+      return (
+        <ArrayInputField
+          fieldKey="pools"
+          itemType="address"
+          onChange={setValue}
+          value={value}
+        />
+      );
+    }
+
+    await act(async () => root.render(<Harness />));
+    const editor = container.querySelector<HTMLElement>('[role="textbox"]');
+    expect(editor).not.toBeNull();
+    editor?.focus();
+
+    await act(async () => {
+      if (!editor) {
+        return;
+      }
+      editor.textContent = "0xpool12";
+      editor.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    });
+
+    expect(container.querySelector('[role="textbox"]')).toBe(editor);
+    expect(document.activeElement).toBe(editor);
+  });
+
+  it("adds and removes rows through the real controls", async () => {
+    function Harness(): React.ReactNode {
+      const [value, setValue] = useState<unknown[]>(["0xpool1"]);
+      return (
+        <ArrayInputField
+          fieldKey="pools"
+          itemType="address"
+          onChange={setValue}
+          value={value}
+        />
+      );
+    }
+
+    await act(async () => root.render(<Harness />));
+    const addButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Add Item")
+    );
+    expect(addButton).toBeDefined();
+
+    await act(async () => addButton?.click());
+    expect(container.querySelectorAll('[role="textbox"]')).toHaveLength(2);
+
+    const removeButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => !button.textContent?.includes("Add Item")
+    );
+    expect(removeButton).toBeDefined();
+    await act(async () => removeButton?.click());
+
+    expect(container.querySelectorAll('[role="textbox"]')).toHaveLength(1);
   });
 });

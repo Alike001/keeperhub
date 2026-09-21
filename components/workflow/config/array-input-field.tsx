@@ -27,7 +27,11 @@ type ArrayInputFieldProps = {
 };
 
 function isTemplateValue(value: string): boolean {
-  return /^\{\{.+\}\}$/.test(value.trim());
+  return /^\{\{[^{}]+\}\}$/.test(value.trim());
+}
+
+function makeArrayItem(value: unknown, nextId: () => number): ArrayItem {
+  return { id: nextId(), value: value ?? "" };
 }
 
 function parseArrayValueWithMigration(
@@ -36,10 +40,7 @@ function parseArrayValueWithMigration(
 ): ParsedArrayValue {
   if (Array.isArray(value) && value.length > 0) {
     return {
-      items: value.map((v) => ({
-        id: nextId(),
-        value: v ?? "",
-      })),
+      items: value.map((item) => makeArrayItem(item, nextId)),
       shouldMigrateLegacyValue: false,
     };
   }
@@ -47,32 +48,49 @@ function parseArrayValueWithMigration(
   if (typeof value === "string" && value.trim() !== "") {
     try {
       const parsed: unknown = JSON.parse(value);
-      if (Array.isArray(parsed) && parsed.length > 0) {
+      if (Array.isArray(parsed)) {
         return {
-          items: parsed.map((v) => ({
-            id: nextId(),
-            value: v ?? "",
-          })),
+          items: parsed.map((item) => makeArrayItem(item, nextId)),
           shouldMigrateLegacyValue: false,
         };
       }
 
-      return { items: [], shouldMigrateLegacyValue: false };
+      // Before scalar arrays had a structured editor, a single scalar could be
+      // stored directly. Keep it visible as one row rather than presenting a
+      // misleading empty array. Objects receive the same treatment for tuple
+      // arrays.
+      return {
+        items: [
+          makeArrayItem(
+            typeof parsed === "object" && parsed !== null
+              ? parsed
+              : String(parsed),
+            nextId
+          ),
+        ],
+        shouldMigrateLegacyValue: false,
+      };
     } catch {
       if (isTemplateValue(value)) {
-        return { items: [], shouldMigrateLegacyValue: false };
+        return {
+          items: [makeArrayItem(value.trim(), nextId)],
+          shouldMigrateLegacyValue: false,
+        };
       }
 
       // Before scalar arrays had a structured editor, protocol inputs such as
       // Aerodrome gauge lists were entered as comma-separated text. Preserve
-      // those saved values when the workflow is opened in the new editor.
+      // those saved values when the workflow is opened in the new editor. A
+      // single legacy value stays visible but is not rewritten just by opening
+      // the configuration panel.
+      const items = value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .map((item) => makeArrayItem(item, nextId));
       return {
-        items: value
-          .split(",")
-          .map((item) => item.trim())
-          .filter(Boolean)
-          .map((item) => ({ id: nextId(), value: item })),
-        shouldMigrateLegacyValue: true,
+        items,
+        shouldMigrateLegacyValue: value.includes(","),
       };
     }
   }
@@ -89,6 +107,27 @@ export function parseArrayValue(
 
 function serializeItems(items: ArrayItem[]): unknown[] {
   return items.map((item) => item.value);
+}
+
+function haveEqualValues(current: ArrayItem[], incoming: ArrayItem[]): boolean {
+  return (
+    JSON.stringify(serializeItems(current)) ===
+    JSON.stringify(serializeItems(incoming))
+  );
+}
+
+function preserveRowIds(
+  current: ArrayItem[],
+  incoming: ArrayItem[]
+): ArrayItem[] {
+  if (haveEqualValues(current, incoming)) {
+    return current;
+  }
+
+  return incoming.map((item, index) => ({
+    ...item,
+    id: current[index]?.id ?? item.id,
+  }));
 }
 
 export function shouldMigrateLegacyArrayValue(value: unknown): value is string {
@@ -128,7 +167,7 @@ export function ArrayInputField({
   useEffect(() => {
     const parsed = parseArrayValueWithMigration(value, nextId);
     const incoming = parsed.items;
-    setItems(incoming);
+    setItems((current) => preserveRowIds(current, incoming));
 
     if (
       !disabled &&
