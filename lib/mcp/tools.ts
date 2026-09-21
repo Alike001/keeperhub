@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import "@/protocols";
 import {
   describeCron,
   IntervalTooSmallError,
@@ -2348,7 +2349,7 @@ export function registerMetaTools(
   // Meta-tool 1: Search and discover available protocol actions
   server.tool(
     "search_protocol_actions",
-    "Search for available protocol actions across all supported DeFi protocols (Aave, Morpho, Chronicle, Chainlink, Uniswap, Compound, Lido, etc.). Call this first to discover what actions are available and what parameters they require, then use execute_protocol_action to run them.",
+    "Search for available protocol actions across all supported DeFi protocols (Aave, Morpho, Chronicle, Chainlink, Uniswap, Compound, Lido, etc.). Call this first to discover what actions are available and what parameters they require, then use execute_protocol_action only when protocolDirectExecution is true; otherwise use the action-specific sibling tool (such as execute_transfer or execute_contract_call) or workflow execution.",
     {
       query: z
         .string()
@@ -2394,6 +2395,7 @@ export function registerMetaTools(
             requiresCredentials?: boolean;
             requiredPlan?: string | null;
             featureEnabled?: boolean;
+            protocolDirectExecution?: boolean;
           }
         >;
 
@@ -2424,6 +2426,7 @@ export function registerMetaTools(
           requiresCredentials: a.requiresCredentials,
           requiredPlan: a.requiredPlan ?? null,
           featureEnabled: a.featureEnabled ?? true,
+          protocolDirectExecution: a.protocolDirectExecution ?? false,
         }));
 
         return {
