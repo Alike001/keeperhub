@@ -1,6 +1,23 @@
 import { defineAbiProtocol } from "@/lib/protocol-registry";
 import { amount, native, wallet } from "@/lib/test-data/types";
 
+const ERC20_READONLY_ABI = JSON.stringify([
+  {
+    type: "function",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "totalSupply",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+]);
+
 const WSTETH_ABI = JSON.stringify([
   {
     type: "function",
@@ -268,6 +285,10 @@ export default defineAbiProtocol({
           "requires an approval of the Withdrawal Queue after the fixture's wstETH funding step; added once the queue request receipt is covered",
         "claim-withdrawals":
           "requires an oracle-finalized request owned by the test wallet; unit tests cover the owner-only ABI shape",
+        "get-wsteth-balance-l2":
+          "L2 action - wstethL2 contract only on Base (bridged, ERC-20 only)",
+        "get-wsteth-total-supply-l2":
+          "L2 action - wstethL2 contract only on Base (bridged, ERC-20 only)",
       },
       // Chain invariants (unnamed outputs, so no field): the wstETH<->stETH
       // exchange rates only ratchet up from 1e18, the 1-unit conversions are
@@ -309,6 +330,48 @@ export default defineAbiProtocol({
           "withdrawal-claimed":
             "requires an oracle-finalized withdrawal NFT owned by the fork test wallet",
         },
+      },
+    },
+    "8453": {
+      setup: {
+        minNativeHuman: "0.01",
+        requiredTokens: [],
+        approvals: [],
+      },
+      actions: {
+        "get-wsteth-balance-l2": { account: wallet() },
+        "get-wsteth-total-supply-l2": {},
+      },
+      skipped: {
+        wrap: "Mainnet only - wsteth contract not on Base",
+        unwrap: "Mainnet only - wsteth contract not on Base",
+        "get-steth-by-wsteth": "Mainnet only - wsteth contract not on Base",
+        "get-wsteth-by-steth": "Mainnet only - wsteth contract not on Base",
+        "steth-per-token": "Mainnet only - wsteth contract not on Base",
+        "tokens-per-steth": "Mainnet only - wsteth contract not on Base",
+        "get-wsteth-balance": "Mainnet only - wsteth contract not on Base",
+        "get-wsteth-total-supply": "Mainnet only - wsteth contract not on Base",
+        "get-steth-balance": "Mainnet only - steth contract not on Base",
+        "approve-steth": "Mainnet only - steth contract not on Base",
+        "request-withdrawals":
+          "Mainnet only - Withdrawal Queue contract not on Base",
+        "request-withdrawals-wsteth":
+          "Mainnet only - Withdrawal Queue contract not on Base",
+        "get-withdrawal-requests":
+          "Mainnet only - Withdrawal Queue contract not on Base",
+        "get-withdrawal-status":
+          "Mainnet only - Withdrawal Queue contract not on Base",
+        "get-last-checkpoint-index":
+          "Mainnet only - Withdrawal Queue contract not on Base",
+        "find-checkpoint-hints":
+          "Mainnet only - Withdrawal Queue contract not on Base",
+        "get-claimable-ether":
+          "Mainnet only - Withdrawal Queue contract not on Base",
+        "claim-withdrawals":
+          "Mainnet only - Withdrawal Queue contract not on Base",
+      },
+      expectations: {
+        "get-wsteth-total-supply-l2": [{ nonZero: true }],
       },
     },
   },
@@ -466,8 +529,6 @@ export default defineAbiProtocol({
       addresses: {
         // Ethereum Mainnet
         "1": "0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0",
-        // Base
-        "8453": "0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452",
         // Sepolia Testnet
         "11155111": "0xB82381A3fBD3FaFA77B3a7bE693342618240067b",
       },
@@ -565,6 +626,43 @@ export default defineAbiProtocol({
           slug: "get-wsteth-total-supply",
           label: "Get wstETH Total Supply",
           description: "Get the total supply of wstETH tokens",
+          outputs: {
+            result: {
+              name: "totalSupply",
+              label: "Total wstETH Supply (wei)",
+              decimals: 18,
+            },
+          },
+        },
+      },
+    },
+    wstethL2: {
+      label: "wstETH (Wrapped stETH) - L2",
+      abi: ERC20_READONLY_ABI,
+      addresses: {
+        // Base - only ERC-20 functions (wrap/unwrap/conversion not implemented)
+        "8453": "0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452",
+      },
+      overrides: {
+        balanceOf: {
+          slug: "get-wsteth-balance-l2",
+          label: "Get wstETH Balance (L2)",
+          description: "Check the wstETH balance of an address on L2",
+          inputs: {
+            account: { label: "Wallet Address" },
+          },
+          outputs: {
+            result: {
+              name: "balance",
+              label: "wstETH Balance (wei)",
+              decimals: 18,
+            },
+          },
+        },
+        totalSupply: {
+          slug: "get-wsteth-total-supply-l2",
+          label: "Get wstETH Total Supply (L2)",
+          description: "Get the total supply of wstETH tokens on L2",
           outputs: {
             result: {
               name: "totalSupply",

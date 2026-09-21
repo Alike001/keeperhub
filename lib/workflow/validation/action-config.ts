@@ -1,4 +1,5 @@
 import { ADDRESS_BOOK_SELECTION_KEY } from "@/lib/address-book-selection";
+import { stripControlChars } from "@/lib/utils/control-chars";
 import { evaluateShowWhen } from "@/lib/workflow/editor/show-when";
 import { SYSTEM_ACTION_TYPES as SYSTEM_ACTION_TYPE_LIST } from "@/lib/workflow/executor/system-action-types";
 import {
@@ -6,6 +7,7 @@ import {
   type ActionConfigFieldBase,
   findActionById,
   getAllActions,
+  isDisplayOnlyField,
 } from "@/plugins/registry";
 
 // Built from the shared union so this validator, the executor dispatch table,
@@ -38,20 +40,11 @@ const FIXED_ARRAY_LENGTH_PATTERN = /\[(\d+)]$/;
 // Matches the 500-char cap in export-schema.ts but shorter for readability.
 const NODE_LABEL_MAX_CHARS = 100;
 
-// Control characters, Unicode bidi overrides and isolates that can inject
-// invisible text or alter rendering order in error messages. Stripped from
-// node labels before interpolation into the summary.
-//
-// Covers: C0 + DEL + C1 controls, line/paragraph separators, zero-width
-// chars (ZWSP/ZWNJ/ZWJ/LRM/RLM), bidi overrides (LRE/RLE/PDF/LRO/RLO),
-// bidi isolates (LRI/RLI/FSI/PDI), Arabic letter mark, BOM, and soft
-// hyphen.
-const NODE_LABEL_CONTROL_CHARS_RE =
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control chars + Unicode separators + bidi-overrides/isolates to neutralise log-injection / hidden-text vectors before rendering upstream-supplied strings
-  /[\u0000-\u001f\u007f-\u009f\u00ad\ufeff\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
-
 function sanitiseNodeLabel(label: string): string {
-  let stripped = label.replace(NODE_LABEL_CONTROL_CHARS_RE, " ");
+  // A label is interpolated into a single-line summary, so nothing
+  // whitespace-like survives, and a removed character leaves a space rather
+  // than joining the words either side of it into one.
+  let stripped = stripControlChars(label, { replacement: " " });
   // Escape format delimiters to prevent a malicious label from rendering a
   // convincing fake entry in the summary.
   stripped = stripped
@@ -392,9 +385,16 @@ function validateFieldValue(
       if (!validateStringLike(value)) {
         return { valid: false, expected: "select option", received: value };
       }
+      // A template resolves at run time, so its text is never one of the
+      // options and cannot be checked here. That is only allowed where the
+      // field opted in: a select's options are a promise to the step, and
+      // waiving it for every select in the product would let a template steer
+      // fields like robinhood's buy/sell `side`, which treats anything that
+      // is not "buy" as a sell.
       if (
         field.options &&
         field.options.length > 0 &&
+        !(field.allowTemplate && valueContainsTemplate(value)) &&
         !field.options.some((option) => option.value === String(value))
       ) {
         return {
@@ -604,6 +604,14 @@ export function validateWorkflowActionConfigs(
     }
 
     for (const field of fields) {
+      // A field that renders rather than collects has no value to validate,
+      // and cannot be required. Nothing writes under these keys today, so
+      // this is not a live fault - but the AI-prompt and pin-schema paths both
+      // had to learn the same exception, and a display panel that ever
+      // persisted anything would otherwise start blocking saves.
+      if (isDisplayOnlyField(field.type)) {
+        continue;
+      }
       if (!evaluateShowWhen(field.showWhen, config)) {
         continue;
       }
@@ -671,8 +679,9 @@ export function validateWorkflowActionConfigs(
 
 // Returns true if any known action node in `nodes` is in draft state — i.e.
 // its config contains only actionType, reserved keys, and underscore-prefixed
-// metadata keys with no user-supplied parameters. Used by the PATCH handler to
-// block enabling a workflow before all action nodes are configured.
+// metadata keys with no user-supplied parameters. Actions that declare no
+// config fields are exempt. Used by the PATCH handler to block enabling a
+// workflow before all action nodes are configured.
 export function hasDraftActionNodes(
   nodes: WorkflowNodeForValidation[]
 ): boolean {
@@ -691,7 +700,14 @@ export function hasDraftActionNodes(
     if (SYSTEM_ACTION_TYPES.has(actionType)) {
       continue;
     }
-    if (!findActionById(actionType)) {
+    const action = findActionById(actionType);
+    if (!action) {
+      continue;
+    }
+    // An action that declares no config fields has nothing for the user to
+    // fill in, so its config can only ever hold reserved keys. Treating it as
+    // draft would make every workflow that uses one permanently un-enablable.
+    if (flattenConfigFields(action.configFields).length === 0) {
       continue;
     }
     const hasUserParams = Object.keys(config).some(
