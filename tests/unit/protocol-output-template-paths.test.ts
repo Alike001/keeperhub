@@ -31,14 +31,20 @@ import {
  * value lands either - it asks `structureAbiOutputs`, by probe.
  *
  * The path is resolved by handing it to `processTemplate`, so the rules are
- * the executor's and not a restatement of them. That resolver is more
- * forgiving in one direction and stricter in another than a naive walk: it
- * maps a field access over an array cursor, and it aborts on `null` as well
- * as `undefined`. It is also stricter than the executor's own retry, which
- * tries a failed path again under `.data` and `.result`, so a failure here is
- * not always a suggestion that reads empty at runtime. The strict path is the
+ * the executor's and not a restatement of them, in both the spellings a
+ * binding can carry. That resolver is more forgiving in one direction and
+ * stricter in another than a naive walk: it maps a field access over an array
+ * cursor, so any path at all under an array-typed value "resolves", to an
+ * array of `undefined`; and it aborts on `null` as well as `undefined`. The
+ * first is why what a path resolved to is checked and not only that it
+ * resolved. It is also stricter than the executor's own retry, which tries a
+ * failed path again under `.data` and `.result`, so a failure here is not
+ * always a suggestion that reads empty at runtime. The strict path is the
  * stronger invariant and the one worth holding.
  */
+
+/** The trailing array dimension of a type: "uint256[]" or "address[3]". */
+const ARRAY_DIMENSION = /\[\d*\]$/;
 
 /** A decoded value of roughly the right shape for an ABI output type. */
 function sampleValue(output: AbiOutputParam): unknown {
@@ -50,7 +56,12 @@ function sampleValue(output: AbiOutputParam): unknown {
     return type.endsWith("]") ? [element] : element;
   }
   if (type.endsWith("]")) {
-    return [];
+    // One element, not none. An empty array renders as the empty string, and
+    // so does the array of `undefined` an array-cursor map leaves behind, so
+    // sampling `[]` here would make the two indistinguishable downstream.
+    return [
+      sampleValue({ ...output, type: type.replace(ARRAY_DIMENSION, "") }),
+    ];
   }
   if (type === "bool") {
     return true;
@@ -65,27 +76,61 @@ function sampleValue(output: AbiOutputParam): unknown {
 }
 
 /**
- * Walk a dotted path the way a saved workflow binding does.
+ * The two spellings of a binding the executor resolves, walked by two
+ * near-identical but separate functions. `{{@nodeId:Label.field}}` is what a
+ * saved workflow stores and goes through `resolveFieldPath`; `{{$nodeId.field}}`
+ * is the legacy spelling still accepted at runtime and goes through
+ * `resolveExpressionById`. Both are exercised rather than one taken as proof
+ * of the other, which is what lets them drift.
+ */
+const BINDING_FORMATS = [
+  { name: "stored", token: (path: string): string => `{{@step:Step.${path}}}` },
+  { name: "legacy", token: (path: string): string => `{{$step.${path}}}` },
+];
+
+/**
+ * A render carrying no value at all. Mapping a field access over an array
+ * cursor yields an array of `undefined`, which formats to nothing but the
+ * separators between its elements. Every sampled leaf is a non-empty string,
+ * number or boolean, so nothing that did resolve can render this way.
+ */
+const EMPTY_RENDER = /^[\s,]*$/;
+
+/**
+ * Walk a dotted path the way a workflow binding does, in both spellings.
  *
  * Asked of `processTemplate` rather than walked here, because the rules are
- * not the ones a local walk reaches for: `resolveExpressionById` aborts on
- * `undefined` *or* `null` at every hop, and a field access on an array cursor
- * maps over the elements instead of missing. A copy of those rules is a copy
- * that can drift from them, which is the same fault one layer down that this
- * file exists to catch.
+ * not the ones a local walk reaches for: both walkers abort on `undefined` as
+ * well as on `null` at every hop, and a field access on an array cursor maps
+ * over the elements instead of missing. A copy of those rules is a copy that can
+ * drift from them, which is the same fault one layer down that this file
+ * exists to catch.
  *
- * The tracker carries the answer, not the return value: a resolved value and
- * an absent one both come back as a string, so the rendered text cannot tell
- * the two apart.
+ * The tracker alone is not the answer. It reports a path under an array
+ * cursor as resolved, because an array of `undefined` is neither `undefined`
+ * nor `null` - which would let a suggestion naming a component that does not
+ * exist pass, on exactly the tuple-array shapes where a suggestion is hardest
+ * to eyeball. So the render has to be non-empty too.
+ *
+ * Returns one entry per spelling that produced no value; empty means both
+ * resolved.
  */
-function resolves(stepOutput: unknown, path: string): boolean {
-  const tracker = createTracker();
-  processTemplate(
-    `{{$step.${path}}}`,
-    { step: { label: "Step", data: stepOutput } },
-    tracker
-  );
-  return tracker.unresolved.length === 0;
+function unresolvedBindings(stepOutput: unknown, path: string): string[] {
+  const failures: string[] = [];
+  for (const format of BINDING_FORMATS) {
+    const tracker = createTracker();
+    const rendered = processTemplate(
+      format.token(path),
+      { step: { label: "Step", data: stepOutput } },
+      tracker
+    );
+    if (tracker.unresolved.length > 0) {
+      failures.push(`${format.name}: no such path`);
+    } else if (EMPTY_RENDER.test(rendered)) {
+      failures.push(`${format.name}: resolved to an array of undefined`);
+    }
+  }
+  return failures;
 }
 
 function abiOutputsOf(
@@ -222,9 +267,9 @@ describe("protocol read output template paths", () => {
       expect(suggested.length).toBeGreaterThan(0);
       for (const path of suggested) {
         expect(
-          resolves(stepOutput, path),
-          `${def.slug}/${action.slug}: '${path}' does not resolve`
-        ).toBe(true);
+          unresolvedBindings(stepOutput, path),
+          `${def.slug}/${action.slug}: '${path}' does not resolve to a value`
+        ).toEqual([]);
       }
     });
   }
@@ -318,6 +363,34 @@ describe("the shapes named in review", () => {
 });
 
 describe("curated output labels", () => {
+  /**
+   * The rule, stated rather than left as a side effect of the sweep below:
+   * every registered read action declares one `action.outputs` entry per
+   * top-level ABI output, in ABI order.
+   *
+   * `outputs` is optional on `ProtocolAction`, so this is a policy the type
+   * does not carry. Two things rest on it. The positional join below is only
+   * sound while the two lists line up - with `outputs` shorter, the label for
+   * ABI output 2 would be read off entry 2 of a list that never described it.
+   * And a read with no curated labels is a read whose template suggestions
+   * cannot say which of six uint256s is the health factor, which is the whole
+   * point of the field.
+   */
+  it("declares one curated label per top-level ABI output", () => {
+    const mismatched = reads
+      .map(({ def, action }) => ({
+        id: `${def.slug}/${action.slug}`,
+        declared: (action.outputs ?? []).length,
+        abi: (abiOutputsOf(def, action) ?? []).length,
+      }))
+      .filter(({ declared, abi }) => declared !== abi)
+      .map(
+        ({ id, declared, abi }) =>
+          `${id}: declares ${declared} curated output label(s) for ${abi} ABI output(s). Add one \`outputs\` entry per top-level ABI output, in ABI order, each carrying the wording a user should see for that value.`
+      );
+    expect(mismatched).toEqual([]);
+  });
+
   it("puts every curated label on the path the runtime actually uses", () => {
     const problems: string[] = [];
     let curatedHits = 0;
@@ -378,6 +451,9 @@ describe("curated output labels", () => {
   });
 });
 
+// Here rather than in a file of its own: it pins the other side of the gate
+// the read sweep above depends on - `buildOutputFieldsFromAction` decides both
+// what a read advertises and that a write advertises nothing.
 describe("write action output fields", () => {
   it("advertises no result paths", () => {
     // writeContractCore returns result: undefined, so a result path here
