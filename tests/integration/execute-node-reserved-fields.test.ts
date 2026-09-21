@@ -377,6 +377,37 @@ describe("POST /api/execute/node broadcast hash on a failed step", () => {
     expect(response.status).toBe(422);
   });
 
+  it("forwards the request's action type to the step as _actionType", async () => {
+    // The protocol steps only apply the chain-scoped L2 slug aliases on the
+    // _actionType branch of resolveProtocolMeta. Without this field a node
+    // executed here resolves from whatever _protocolMeta the caller carried,
+    // so an old slug on an L2 fails while the same node succeeds through the
+    // workflow executor.
+    const response = await nodePOST(
+      postRequest({
+        actionType: "sky/vault-balance",
+        network: "8453",
+        config: { account: "0xabc" },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.capturedInput?._actionType).toBe("sky/vault-balance");
+  });
+
+  it("overrides an _actionType smuggled inside config", async () => {
+    const response = await nodePOST(
+      postRequest({
+        actionType: "sky/vault-balance",
+        network: "8453",
+        config: { account: "0xabc", _actionType: "sky/vault-deposit" },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.capturedInput?._actionType).toBe("sky/vault-balance");
+  });
+
   it("still reports a pre-broadcast failure as terminal with no hash", async () => {
     mocks.stepFn.mockResolvedValue({
       success: false,

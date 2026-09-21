@@ -412,6 +412,16 @@ async function executeNode(
     ...safeConfig,
     ...(integrationId ? { integrationId } : {}),
     ...(network ? { network } : {}),
+    // The request's action type is the node's identity, and the protocol
+    // steps only apply the chain-scoped L2 slug aliases on the `_actionType`
+    // branch of resolveProtocolMeta. Without it a caller that carries a
+    // `_protocolMeta` snapshot in its config (the builder persists one) is
+    // resolved from that stale snapshot instead, and an aliased slug fails on
+    // the L2 here while the same call succeeds through the workflow executor.
+    // Forwarding it also makes `_actionType` authoritative over any
+    // caller-supplied `_protocolMeta`, which is the precedence
+    // resolveProtocolMeta documents and every other caller already gets.
+    _actionType: data.actionType,
     _context: {
       executionId,
       nodeId: executionId,
