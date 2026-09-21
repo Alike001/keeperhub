@@ -82,6 +82,44 @@ describe("ArrayInputField legacy migration", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
+  it("does not rewrite a single legacy value on an enabled look-only visit", async () => {
+    const onChange = vi.fn();
+
+    await act(async () =>
+      root.render(
+        <ArrayInputField
+          fieldKey="pools"
+          itemType="address"
+          onChange={onChange}
+          value="0xpool1"
+        />
+      )
+    );
+
+    expect(container.querySelector('[role="textbox"]')?.textContent).toBe(
+      "0xpool1"
+    );
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("does not overwrite an empty comma-only legacy value", async () => {
+    const onChange = vi.fn();
+
+    await act(async () =>
+      root.render(
+        <ArrayInputField
+          fieldKey="pools"
+          itemType="address"
+          onChange={onChange}
+          value=","
+        />
+      )
+    );
+
+    expect(container.textContent).toContain("Empty array");
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it("keeps displayed rows aligned when the legacy value changes", async () => {
     const onChange = vi.fn();
 

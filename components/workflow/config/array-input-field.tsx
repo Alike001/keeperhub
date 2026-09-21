@@ -64,7 +64,7 @@ function parseArrayValueWithMigration(
           makeArrayItem(
             typeof parsed === "object" && parsed !== null
               ? parsed
-              : String(parsed),
+              : value.trim(),
             nextId
           ),
         ],
@@ -130,10 +130,6 @@ function preserveRowIds(
   }));
 }
 
-export function shouldMigrateLegacyArrayValue(value: unknown): value is string {
-  return parseArrayValueWithMigration(value, () => 0).shouldMigrateLegacyValue;
-}
-
 function makeEmptyValue(components?: AbiComponent[]): unknown {
   if (components && components.length > 0) {
     const obj: Record<string, unknown> = {};
@@ -172,6 +168,7 @@ export function ArrayInputField({
     if (
       !disabled &&
       parsed.shouldMigrateLegacyValue &&
+      incoming.length > 0 &&
       migratedLegacyValue.current !== value
     ) {
       migratedLegacyValue.current = String(value);

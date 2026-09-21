@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  parseArrayValue,
-  shouldMigrateLegacyArrayValue,
-} from "@/components/workflow/config/array-input-field";
+import { parseArrayValue } from "@/components/workflow/config/array-input-field";
 
 describe("parseArrayValue", () => {
   it("preserves legacy comma-separated scalar-array values", () => {
@@ -16,15 +13,6 @@ describe("parseArrayValue", () => {
       { id: 1, value: "0xpool1" },
       { id: 2, value: "0xpool2" },
     ]);
-  });
-
-  it("identifies every non-JSON legacy scalar-array value for migration", () => {
-    expect(shouldMigrateLegacyArrayValue("0xpool1, 0xpool2")).toBe(true);
-    expect(shouldMigrateLegacyArrayValue("{{a}}, {{b}}")).toBe(true);
-    expect(shouldMigrateLegacyArrayValue("0xpool1")).toBe(false);
-    expect(shouldMigrateLegacyArrayValue('["0xpool1","0xpool2"]')).toBe(false);
-    expect(shouldMigrateLegacyArrayValue('{"a":1,"b":2}')).toBe(false);
-    expect(shouldMigrateLegacyArrayValue("{{previous.items}}")).toBe(false);
   });
 
   it("renders a whole-field template as one array row", () => {
@@ -50,9 +38,12 @@ describe("parseArrayValue", () => {
     ]);
   });
 
-  it("keeps a JSON scalar visible as one legacy row", () => {
-    expect(parseArrayValue("1000", () => 1)).toEqual([
-      { id: 1, value: "1000" },
+  it("keeps JSON numeric scalars as their exact raw legacy value", () => {
+    expect(parseArrayValue("1000000000000000000000", () => 1)).toEqual([
+      { id: 1, value: "1000000000000000000000" },
+    ]);
+    expect(parseArrayValue("12345678901234567890", () => 2)).toEqual([
+      { id: 2, value: "12345678901234567890" },
     ]);
   });
 
