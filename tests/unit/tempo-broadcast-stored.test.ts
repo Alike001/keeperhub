@@ -14,6 +14,7 @@ vi.mock("@/lib/web3/wallet-helpers", () => ({
 vi.mock("@/lib/logging", () => ({
   ErrorCategory: { TRANSACTION: "transaction" },
   logSystemError: vi.fn(),
+  logUserError: vi.fn(),
 }));
 
 const mockGetRpcProvider = vi.fn();
@@ -31,6 +32,7 @@ vi.mock("ox/tempo", () => ({
 }));
 
 import { broadcastStoredTempoTx } from "@/plugins/tempo/steps/tempo-tx-core";
+import { isOnChainPendingError } from "@/lib/web3/onchain-revert";
 
 const NOW_SEC = 1_800_000_000;
 const CHAIN = 42_431;
@@ -90,6 +92,69 @@ describe("broadcastStoredTempoTx", () => {
     expect(mockSend).toHaveBeenCalledWith("eth_sendRawTransaction", [
       "0x76blob",
     ]);
+  });
+
+  it("treats a node funding-shortfall rejection as terminal, not pending", async () => {
+    // The node read the envelope and refused it: nothing was broadcast.
+    // Wrapping this in OnChainPendingError would record a hash that is not
+    // on chain, which reconcile reads as pending forever.
+    mockDeserialize.mockReturnValue({ validBefore: NOW_SEC + 100 });
+    mockHash.mockReturnValue("0xhash");
+    const nodeError = new Error("insufficient funds for gas * price + value");
+    mockSend.mockRejectedValue(nodeError);
+
+    const thrown = await broadcastStoredTempoTx({
+      chainId: CHAIN,
+      serialized: "0x76blob",
+      waitForConfirmation: false,
+    }).then(
+      () => undefined,
+      (error: unknown) => error
+    );
+
+    expect(thrown).toBe(nodeError);
+    expect(isOnChainPendingError(thrown)).toBe(false);
+  });
+
+  it("treats an intrinsic-gas rejection as terminal, not pending", async () => {
+    mockDeserialize.mockReturnValue({ validBefore: NOW_SEC + 100 });
+    mockHash.mockReturnValue("0xhash");
+    const nodeError = new Error(
+      "intrinsic gas too low: have 21000, want 53000"
+    );
+    mockSend.mockRejectedValue(nodeError);
+
+    const thrown = await broadcastStoredTempoTx({
+      chainId: CHAIN,
+      serialized: "0x76blob",
+      waitForConfirmation: false,
+    }).then(
+      () => undefined,
+      (error: unknown) => error
+    );
+
+    expect(thrown).toBe(nodeError);
+    expect(isOnChainPendingError(thrown)).toBe(false);
+  });
+
+  it("still carries the hash as pending when the send outcome is unreadable", async () => {
+    mockDeserialize.mockReturnValue({ validBefore: NOW_SEC + 100 });
+    mockHash.mockReturnValue("0xhash");
+    mockSend.mockRejectedValue(new Error("request timed out"));
+
+    const thrown = await broadcastStoredTempoTx({
+      chainId: CHAIN,
+      serialized: "0x76blob",
+      waitForConfirmation: false,
+    }).then(
+      () => undefined,
+      (error: unknown) => error
+    );
+
+    expect(isOnChainPendingError(thrown)).toBe(true);
+    expect(
+      (thrown as { transactionHash?: string }).transactionHash
+    ).toBe("0xhash");
   });
 
   it("rejects a non-Tempo chain before touching the blob", async () => {

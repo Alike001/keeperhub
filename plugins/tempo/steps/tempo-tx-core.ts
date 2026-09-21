@@ -512,6 +512,25 @@ export async function signTempoTx(
 }
 
 /**
+ * Rejections where the node read the envelope and refused it outright: the
+ * payer cannot cover the cost (isFundingShortfall), a generic
+ * insufficient-funds answer, or an intrinsic-gas validation failure. All
+ * mean the envelope never entered the mempool, so the send is conclusively
+ * terminal rather than unknown.
+ */
+const NODE_ENVELOPE_REJECTION_PATTERNS: readonly RegExp[] = [
+  /insufficient funds/i,
+  /intrinsic gas/i,
+];
+
+function isNodeEnvelopeRejection(message: string): boolean {
+  return (
+    isFundingShortfall(message) ||
+    NODE_ENVELOPE_REJECTION_PATTERNS.some((pattern) => pattern.test(message))
+  );
+}
+
+/**
  * Broadcast a previously-signed Tempo 0x76 blob and (by default) wait for a
  * successful receipt. Deserializes first to enforce the on-chain validity
  * window before spending an RPC round-trip, and to verify the blob still hashes
@@ -568,6 +587,17 @@ export async function broadcastStoredTempoTx(
       error,
       { chain_id: String(chainId) }
     );
+    // Node envelope rejections are terminal, not pending: the node read the
+    // envelope and refused it (the payer cannot cover it, or the envelope
+    // fails intrinsic validation), so nothing was broadcast. Wrapping one in
+    // OnChainPendingError would park the row in `broadcast` with a hash that
+    // is not on chain, and the reconcile sweep reads a not-found hash as
+    // pending forever.
+    if (isNodeEnvelopeRejection(message)) {
+      throw error;
+    }
+    // Provenance is established here: this catch wraps only the send call,
+    // so a refusal message can only have come from the broadcast itself.
     if (isDefinitelyPreBroadcastNetworkError(error)) {
       throw error;
     }

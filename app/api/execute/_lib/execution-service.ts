@@ -119,7 +119,23 @@ export async function completeExecution(
         // A hash we cannot see is not a hash that failed. Settling it as
         // failed is what makes a caller retry an action that already moved
         // funds, so it stays non-terminal until the chain actually answers.
-        status = isInconclusive(receipts) ? "unconfirmed" : "failed";
+        //
+        // The spentASafeNonce half mirrors the guard in failExecution below:
+        // `safe_inner_failure` is conclusive about the inner call, not the
+        // transaction -- the outer execTransaction mined, so the Safe nonce
+        // and the owner signatures for it are spent, and `failed` maps to
+        // `release` in idempotency-disposition. Releasing here lets a retry
+        // spend a second nonce and a second signature set. Latent for the
+        // reason failExecution's comment gives (safeTxGas=0 makes the outer
+        // transaction revert first), but the guard belongs at both
+        // chokepoints, not one.
+        const spentASafeNonce = receipts.some(
+          (receipt) => receipt.receiptStatus === "safe_inner_failure"
+        );
+        status =
+          isInconclusive(receipts) || spentASafeNonce
+            ? "unconfirmed"
+            : "failed";
         error = describeVerificationFailure(results);
       }
     }

@@ -23,7 +23,10 @@ vi.mock("@/lib/web3/verify-receipt", () => ({
   describeVerificationFailure: vi.fn(() => "verification failed"),
 }));
 
-import { failExecution } from "@/app/api/execute/_lib/execution-service";
+import {
+  completeExecution,
+  failExecution,
+} from "@/app/api/execute/_lib/execution-service";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -77,6 +80,31 @@ describe("failExecution Safe receipt handling", () => {
             receiptStatus: "safe_inner_failure",
           }),
         ],
+      })
+    );
+  });
+});
+
+describe("completeExecution Safe receipt handling", () => {
+  it("keeps safe_inner_failure unconfirmed in the !allVerified branch, mirroring failExecution", async () => {
+    // The verify mock returns a safe_inner_failure receipt and no allVerified
+    // flag (falsy), so completeExecution takes its !allVerified branch.
+    // Without the hoisted guard this settled `failed`, which maps to
+    // `release` in idempotency-disposition and frees the key for a retry
+    // that spends a second Safe nonce and a second signature set.
+    const outcome = await completeExecution("exec_2", {
+      transactionHash: "0xsafe",
+      chainId: 8453,
+    });
+
+    expect(outcome.status).toBe("unconfirmed");
+    expect(mocks.verifyExecutionReceipts).toHaveBeenCalledWith([
+      { hash: "0xsafe", chainId: 8453 },
+    ]);
+    expect(mocks.set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "unconfirmed",
+        completedAt: null,
       })
     );
   });

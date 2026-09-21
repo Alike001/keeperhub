@@ -6,7 +6,9 @@ vi.mock("server-only", () => ({}));
 import type { RpcOperationType, RpcProviderManager } from "@/lib/rpc/providers";
 import {
   isNonceConflictError,
+  isPreBroadcastNetworkError,
   NonceConflictError,
+  PreBroadcastNetworkError,
   submitSignedTransactionWithFailover,
 } from "@/lib/web3/submit-signed";
 
@@ -248,7 +250,7 @@ describe("submitSignedTransactionWithFailover", () => {
     ).rejects.toBeInstanceOf(NonceConflictError);
   });
 
-  it("re-throws original error when broadcast fails with non-conflict error and no on-chain trace", async () => {
+  it("tags a lone connection refusal as PreBroadcastNetworkError, preserving the cause", async () => {
     const { signer } = makeMockSigner();
     const originalError = new Error("ECONNREFUSED");
     const { rpcManager } = makeMockRpcManager({
@@ -257,9 +259,21 @@ describe("submitSignedTransactionWithFailover", () => {
       getTransaction: vi.fn().mockResolvedValue(null),
     });
 
-    await expect(
-      submitSignedTransactionWithFailover(signer, TEST_TX_REQUEST, rpcManager)
-    ).rejects.toBe(originalError);
+    const thrown = await submitSignedTransactionWithFailover(
+      signer,
+      TEST_TX_REQUEST,
+      rpcManager
+    ).then(
+      () => undefined,
+      (error: unknown) => error
+    );
+
+    expect(thrown).toBeInstanceOf(PreBroadcastNetworkError);
+    expect(isPreBroadcastNetworkError(thrown)).toBe(true);
+    // The tag wraps, it does not rewrite: log readers and message matchers
+    // see the original text, and the cause chain keeps the raw error.
+    expect((thrown as Error).message).toBe("ECONNREFUSED");
+    expect((thrown as PreBroadcastNetworkError).cause).toBe(originalError);
   });
 
   it("preserves the deterministic hash when failover mixes timeout with connection refusal", async () => {
@@ -282,7 +296,7 @@ describe("submitSignedTransactionWithFailover", () => {
     });
   });
 
-  it("treats an all-refused failover round as definitely pre-broadcast", async () => {
+  it("tags an all-refused failover round as PreBroadcastNetworkError", async () => {
     const { signer } = makeMockSigner();
     const originalError = new Error(
       "RPC failed on both endpoints. Primary: connection refused. Fallback: ECONNREFUSED"
@@ -295,7 +309,11 @@ describe("submitSignedTransactionWithFailover", () => {
 
     await expect(
       submitSignedTransactionWithFailover(signer, TEST_TX_REQUEST, rpcManager)
-    ).rejects.toBe(originalError);
+    ).rejects.toMatchObject({
+      name: "PreBroadcastNetworkError",
+      kind: "pre-broadcast",
+      cause: originalError,
+    });
   });
 
   it("preserves the deterministic hash when a send reply is ambiguous", async () => {
@@ -443,5 +461,27 @@ describe("isNonceConflictError", () => {
       revert: null,
     });
     expect(isNonceConflictError(err)).toBe(false);
+  });
+});
+
+describe("isPreBroadcastNetworkError", () => {
+  it("recognises the tagged error and nothing else", () => {
+    const tagged = new PreBroadcastNetworkError("ECONNREFUSED", new Error("x"));
+    expect(isPreBroadcastNetworkError(tagged)).toBe(true);
+
+    // The whole point of the tag: identical TEXT without the marker is not
+    // evidence. A refused receipt poll or bookkeeping insert reads exactly
+    // like this, and text-matching it is what let a live transaction look
+    // safe to retry.
+    expect(isPreBroadcastNetworkError(new Error("ECONNREFUSED"))).toBe(false);
+    expect(
+      isPreBroadcastNetworkError(
+        new Error(
+          "RPC failed on both endpoints. Primary: connection refused. Fallback: ECONNREFUSED"
+        )
+      )
+    ).toBe(false);
+    expect(isPreBroadcastNetworkError("ECONNREFUSED")).toBe(false);
+    expect(isPreBroadcastNetworkError(undefined)).toBe(false);
   });
 });

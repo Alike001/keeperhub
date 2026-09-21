@@ -6,7 +6,7 @@
  * exporting functions from "use step" files (which breaks the workflow bundler).
  */
 import "server-only";
-import { isDefinitelyPreBroadcastNetworkError } from "@/lib/web3/submit-signed";
+import { isPreBroadcastNetworkError } from "@/lib/web3/submit-signed";
 import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { eq } from "drizzle-orm";
@@ -797,7 +797,7 @@ async function writeContractCoreImpl(
         broadcastAttempted: broadcastHash
           ? true
           : rejection.kind !== "unknown" ||
-              isDefinitelyPreBroadcastNetworkError(error)
+              isPreBroadcastNetworkError(error)
             ? false
             : true,
         ...(rejection.kind !== "unknown" ? { rejection } : {}),

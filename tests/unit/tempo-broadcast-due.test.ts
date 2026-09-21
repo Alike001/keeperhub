@@ -40,6 +40,7 @@ vi.mock("@/plugins/tempo/steps/tempo-tx-core", () => ({
 }));
 
 import { processDueHeldPayments } from "@/lib/tempo/broadcast-due";
+import { OnChainPendingError } from "@/lib/web3/onchain-revert";
 
 function row(over: Record<string, unknown> = {}) {
   return {
@@ -101,6 +102,25 @@ describe("processDueHeldPayments - broadcast phase", () => {
     expect(broker.markFailed).toHaveBeenCalledWith("p1", "underpriced");
     expect(res.failed).toBe(1);
     expect(res.broadcast).toBe(0);
+  });
+
+  it("keeps an unreadable send outcome in broadcast, matching the manual route", async () => {
+    // Aligned with releaseHeldPaymentNow: an OnChainPendingError means the
+    // transaction may still land, so the row keeps its hash and the
+    // reconcile phase keeps watching instead of stamping a terminal failure.
+    broker.selectDueHeldPayments.mockResolvedValue([row({ id: "p1" })]);
+    mockBroadcast.mockRejectedValue(
+      new OnChainPendingError({
+        message: "Tempo transaction send outcome could not be determined",
+        transactionHash: "0xhash",
+      })
+    );
+
+    const res = await processDueHeldPayments();
+    expect(broker.markBroadcast).toHaveBeenCalledWith("p1", "0xhash");
+    expect(broker.markFailed).not.toHaveBeenCalled();
+    expect(res.broadcast).toBe(1);
+    expect(res.failed).toBe(0);
   });
 });
 

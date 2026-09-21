@@ -6,7 +6,7 @@
  * exporting functions from "use step" files (which breaks the workflow bundler).
  */
 import "server-only";
-import { isDefinitelyPreBroadcastNetworkError } from "@/lib/web3/submit-signed";
+import { isPreBroadcastNetworkError } from "@/lib/web3/submit-signed";
 
 import { eq } from "drizzle-orm";
 import { ethers } from "ethers";
@@ -534,7 +534,7 @@ async function transferFundsCoreImpl(
         broadcastAttempted:
           broadcastHash ? true
             : rejection.kind !== "unknown" ||
-                isDefinitelyPreBroadcastNetworkError(error)
+                isPreBroadcastNetworkError(error)
               ? false
               : true,
         ...(broadcastHash ? { transactionHash: broadcastHash, chainId } : {}),
