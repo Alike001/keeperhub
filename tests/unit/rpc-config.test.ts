@@ -827,6 +827,36 @@ describe("RPC Config Resolution", () => {
         ).toBe(wss);
       }
     );
+
+    it.each([
+      {
+        chainId: 130,
+        envKey: "CHAIN_UNICHAIN_MAINNET_PRIMARY_RPC",
+        fallbackEnvKey: "CHAIN_UNICHAIN_MAINNET_FALLBACK_RPC",
+        publicFallback: PUBLIC_RPCS.UNICHAIN_MAINNET_FALLBACK,
+      },
+      {
+        chainId: 1301,
+        envKey: "CHAIN_UNICHAIN_SEPOLIA_PRIMARY_RPC",
+        fallbackEnvKey: "CHAIN_UNICHAIN_SEPOLIA_FALLBACK_RPC",
+        publicFallback: PUBLIC_RPCS.UNICHAIN_SEPOLIA_FALLBACK,
+      },
+    ])(
+      "should pin env keys and public fallback for chain $chainId, with no fallback WSS",
+      ({ chainId, envKey, fallbackEnvKey, publicFallback }) => {
+        const entry = CHAIN_CONFIG[chainId];
+        expect(entry.envKey).toBe(envKey);
+        expect(entry.fallbackEnvKey).toBe(fallbackEnvKey);
+        expect(entry.publicFallback).toBe(publicFallback);
+        expect(
+          getWssUrl({
+            rpcConfig: {},
+            jsonKey: entry.jsonKey,
+            type: "fallback",
+          })
+        ).toBeUndefined();
+      }
+    );
   });
 
   describe("getWssUrl", () => {
