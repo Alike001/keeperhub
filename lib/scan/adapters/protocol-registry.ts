@@ -11,6 +11,7 @@ import "server-only";
  * Verification sources:
  *   Aave V3 Pool: github.com/bgd-labs/aave-address-book (AaveV3*.sol files)
  *   Lido: docs.lido.fi/deployed-contracts (mainnet page)
+ *   Lido Hoodi: docs.lido.fi/deployed-contracts/hoodi
  *   Chainlink: reference-data-directory.vercel.app/feeds-*.json
  *   Spark Pool: etherscan.io/address/0xC13e21B648A5Ee794902342038FF3aDAB66BE987 + docs.spark.fi
  *   sUSDS + USDS: docs.spark.fi/dev/savings/susds-token + developers.skyeco.com
@@ -40,7 +41,7 @@ export const AAVE_V3_POOLS: Record<number, string> = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface LidoChainTokens {
-  /** stETH (rebasing ERC20): only available on Ethereum mainnet. */
+  /** stETH (rebasing ERC20): available on Ethereum mainnet and Hoodi. */
   stETH?: string;
   /** Wrapped stETH (non-rebasing); present on Ethereum + L2 bridges. */
   wstETH: string;
