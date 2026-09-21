@@ -14,5 +14,10 @@
     "outputs": [{ "name": "paused", "type": "bool" }]
   },
   { "type": "error", "name": "ContractPaused", "inputs": [] },
-  { "type": "error", "name": "InvalidTokenAmount", "inputs": [] }
+  { "type": "error", "name": "InvalidTokenAmount", "inputs": [] },
+  { "type": "error", "name": "OperatoDelegatorNotDelegated", "inputs": [] },
+  { "type": "error", "name": "OracleNotFound", "inputs": [] },
+  { "type": "error", "name": "OraclePriceExpired", "inputs": [] },
+  { "type": "error", "name": "InvalidOraclePrice", "inputs": [] },
+  { "type": "error", "name": "CheckpointNotRecorded", "inputs": [] }
 ]

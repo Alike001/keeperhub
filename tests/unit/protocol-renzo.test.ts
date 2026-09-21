@@ -385,11 +385,13 @@ describe("Renzo read outputs resolve at runtime", () => {
 /**
  * A failed stake reaches the user through `classifyRevert`, which parses the
  * revert data against the TARGET contract's own interface and nothing else.
- * With no `error` fragments on the RestakeManager document, both reverts a
+ * With no `error` fragments on the RestakeManager document, every revert a
  * `depositETH()` can produce came back `{ kind: "unknown" }` and the user saw a
- * four-byte selector. These pin the naming against selectors computed from the
- * signatures, and `0x21607339` is the selector measured on mainnet for
- * `depositETH()` sent no value.
+ * four-byte selector. `depositETH()` traverses `calculateTVLs()`, the deposit
+ * queue, `RenzoOracle` and `ezETH`, so the errors those raise have to be
+ * declared on the manager's document too. These pin the naming against
+ * selectors computed from the signatures, and `0x21607339` is the selector
+ * measured on mainnet for `depositETH()` sent no value.
  */
 describe("Renzo stake reverts are named, not raw selectors", () => {
   const restakeManagerInterface = new ethers.Interface(
@@ -401,9 +403,40 @@ describe("Renzo stake reverts are named, not raw selectors", () => {
     return { code: "CALL_EXCEPTION", data };
   }
 
+  /**
+   * Every custom error reachable from `depositETH()`, paired with the selector
+   * its signature hashes to. The definition records where each one is declared
+   * and which call on the deposit path reaches it.
+   */
+  const DEPOSIT_PATH_ERRORS = [
+    { signature: "ContractPaused()", selector: "0xab35696f" },
+    { signature: "InvalidTokenAmount()", selector: "0x21607339" },
+    { signature: "OperatoDelegatorNotDelegated()", selector: "0xdca284ad" },
+    { signature: "OracleNotFound()", selector: "0x2c283834" },
+    { signature: "OraclePriceExpired()", selector: "0xeafdc186" },
+    { signature: "InvalidOraclePrice()", selector: "0x1f8f95a0" },
+    { signature: "CheckpointNotRecorded()", selector: "0x93c952a8" },
+  ];
+
   it("selectors resolve from the signatures rather than being hardcoded", () => {
-    expect(ethers.id("ContractPaused()").slice(0, 10)).toBe("0xab35696f");
-    expect(ethers.id("InvalidTokenAmount()").slice(0, 10)).toBe("0x21607339");
+    for (const { signature, selector } of DEPOSIT_PATH_ERRORS) {
+      expect(ethers.id(signature).slice(0, 10), signature).toBe(selector);
+    }
+  });
+
+  // A selector the document does not declare is indistinguishable from
+  // 0xdeadbeef below: the user gets four bytes. Every error the deposit path
+  // can raise therefore has to decode to a name here.
+  it("names every revert reachable from a deposit", () => {
+    for (const { signature, selector } of DEPOSIT_PATH_ERRORS) {
+      expect(
+        classifyRevert(revertWith(selector), restakeManagerInterface),
+        signature
+      ).toEqual({
+        kind: "contract-custom",
+        name: signature.replace("()", ""),
+      });
+    }
   });
 
   it("names ContractPaused, the revert of a deposit while either gate is set", () => {

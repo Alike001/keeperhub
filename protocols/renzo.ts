@@ -43,16 +43,48 @@ import riskOracleMiddlewareAbi from "./abis/renzo-risk-oracle-middleware.json";
 // surfaces deferred to a follow-up. Mainnet only: minting settles on the beacon
 // chain.
 //
-// The RestakeManager ABI carries two error fragments so a failed stake is named
-// rather than shown as a raw selector. ContractPaused() (0xab35696f) is the
-// manager's own, declared in its verified ABI. InvalidTokenAmount()
-// (0x21607339) is declared by RenzoOracle (RenzoOracle.sol:144) and bubbles up
-// through the manager's mint-amount call at RestakeManager.sol:637; it is
-// carried here because that selector is what depositETH() actually reverts with
-// when it is sent no value, measured on mainnet, and classifyRevert only
-// consults the target contract's own interface. Neither the ezETH nor the
-// middleware document declares errors: their exposed functions are `view` and
-// have no reachable revert to name.
+// The RestakeManager ABI carries seven error fragments so a failed stake is
+// named rather than shown as a raw selector. classifyRevert parses revert data
+// against the target contract's own interface and nothing else, so an error
+// raised by a contract depositETH() calls has to be declared on this document
+// or it degrades to a bare four-byte selector. All seven are reachable from
+// depositETH(), read off the verified Sourcify sources of the implementations
+// live on 2026-09-21:
+//
+//   ContractPaused() 0xab35696f - RestakeManager.sol:93, the notPaused
+//     modifier, raised while either half of the gate is set.
+//   InvalidTokenAmount() 0x21607339 - RenzoOracle.sol:144, raised when
+//     calculateMintAmount rounds the mint to zero. Reached through the
+//     manager's mint-amount call at RestakeManager.sol:637, and measured on
+//     mainnet as what depositETH() reverts with when it is sent no value.
+//   OperatoDelegatorNotDelegated() 0xdca284ad - RestakeManager.sol:314, inside
+//     calculateTVLs (called at RestakeManager.sol:631) when an operator
+//     delegator is no longer delegated on EigenLayer. The missing `r` is the
+//     contract's spelling, not a typo here.
+//   OracleNotFound() 0x2c283834, OraclePriceExpired() 0xeafdc186 and
+//     InvalidOraclePrice() 0x1f8f95a0 - RenzoOracle.sol:79, :82 and :83, the
+//     three branches of lookupTokenValue, which calculateTVLs calls per
+//     collateral token at RestakeManager.sol:332 and :342. One collateral token
+//     is configured on mainnet, so an unmapped, stale or non-positive Chainlink
+//     feed halts every deposit through this path.
+//   CheckpointNotRecorded() 0x93c952a8 - OperatorDelegator.sol:853, via
+//     _checkCheckpointSync in getStakedETHBalance (OperatorDelegator.sol:469),
+//     which calculateTVLs calls per delegator at RestakeManager.sol:354. Fires
+//     when an EigenPod checkpoint has completed but Renzo has not recorded it,
+//     halting deposits until an admin does.
+//
+// Sourced from RestakeManager impl 0xd5b3be349ed0b7c82dbd9271ce3739a381fc7aa0,
+// RenzoOracle impl 0xf206406dc547b3ed138063eab4631b2e1766dbcf (behind proxy
+// 0x5a12796f7e7ebbbc8a402667d266d2e65a814042) and OperatorDelegator impl
+// 0x489a36e43aba883b60e5a6cc43d05738479e7589 (shared by both delegators the
+// manager lists), each Sourcify exact_match and each read out of the EIP-1967
+// implementation slot on 2026-09-21.
+//
+// Two guards on the deposit path are deliberately left out: NotRestakeManager()
+// on the deposit queue and NotEzETHMinterBurner() on ezETH check the caller,
+// and the manager is that caller, so neither can fire from a user deposit.
+// Neither the ezETH nor the middleware document declares errors: their exposed
+// functions are `view` and have no reachable revert to name.
 
 const RENZO_DOCS =
   "https://docs.renzoprotocol.com/docs/contracts/ethereum-mainnet";
