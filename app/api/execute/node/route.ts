@@ -197,6 +197,17 @@ function isTransactionResult(output: unknown): output is {
 // biome-ignore lint/suspicious/noExplicitAny: Step functions have varying signatures
 type StepFn = ((input: any) => Promise<unknown>) & { maxRetries?: number };
 
+/**
+ * What the route has to answer with, whether the step succeeded or not.
+ *
+ * `maxRetriesApplied` is the budget in force for THIS request: the caller's
+ * `retry.maxRetries`, defaulted by `resolveConfig` and capped by the step's own
+ * declaration. It is absent when the request sent no `retry` config at all, since
+ * then no retries were applied and there is no budget to report - which is why it
+ * does not read as "the retry ceiling this step declares": a step declaring 0
+ * against a request that sent no retry reports nothing here, and the declaration
+ * is read only to cap what the caller asked for.
+ */
 type InvokeResult =
   | {
       ok: true;
@@ -249,9 +260,9 @@ async function invokeStep(
   if (effectiveRetry) {
     // The budget the caller is actually held to, reported back so a request whose
     // retries the step's declaration nullified is not indistinguishable from one
-    // that never asked to retry. `effectiveRetry.maxRetries` is 0 for the 61 step
-    // files that declare `maxRetries = 0`, and it is the caller's own number when
-    // the declaration is absent or higher.
+    // that never asked to retry. The number is 0 for a step that declares
+    // `maxRetries = 0`, and it is the caller's own when the declaration is absent
+    // or higher.
     const maxRetriesApplied = effectiveMaxRetries(effectiveRetry);
     if (isWeb3) {
       const retryResult = await executeWithRetry<TransactionResult>(

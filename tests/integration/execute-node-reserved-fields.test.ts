@@ -395,8 +395,9 @@ describe("POST /api/execute/node step-declared retry ceiling", () => {
   it("reports the budget the declaration left in force", async () => {
     // The round-7 finding: a caller asking for three retries against a step that
     // declares none got a 200, one attempt and no retryCount, which is the same
-    // shape as never having asked. 61 of the 120 step files under plugins/*/steps
-    // declare 0, so this is the common case rather than the corner.
+    // shape as never having asked. Every value-moving step reachable through
+    // `resolveAction` declares 0, and the ones declaring nothing are read-only
+    // queries, so this is the common case rather than the corner.
     Object.assign(mocks.stepFn, { maxRetries: 0 });
     mocks.stepFn.mockResolvedValue({
       success: false,
@@ -451,6 +452,28 @@ describe("POST /api/execute/node step-declared retry ceiling", () => {
     const body = (await response.json()) as Record<string, unknown>;
 
     expect(response.status).toBe(200);
+    expect(body.maxRetriesApplied).toBeUndefined();
+  });
+
+  it("reports no budget for a declaring step the caller never retried", async () => {
+    // The field is the budget in force for this request, not the step's ceiling:
+    // a step declaring 0 against a request that sent no `retry` runs once and
+    // reports nothing, because no budget was applied to that request. Reading the
+    // field as "this step allows N" is wrong exactly here, and this is the case
+    // that pins the difference - the run above carries no declaration.
+    Object.assign(mocks.stepFn, { maxRetries: 0 });
+    mocks.stepFn.mockResolvedValue({ success: true });
+
+    const response = await nodePOST(
+      postRequest({
+        actionType: "web3/write-contract",
+        config: { network: "1", contractAddress: "0xabc" },
+      })
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(mocks.stepFn).toHaveBeenCalledTimes(1);
     expect(body.maxRetriesApplied).toBeUndefined();
   });
 

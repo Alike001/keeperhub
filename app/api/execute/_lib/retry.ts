@@ -124,11 +124,15 @@ export function capRetriesByDeclaration(
  * identity still has no number on it. Reported back to the caller, that difference
  * matters: the direct-execution route replies with the budget it held a step to, and
  * `undefined` there would read as "no budget was in force" rather than "the
- * default". Kept here rather than exporting the constant so the resolution has one
- * definition, next to the config resolution itself.
+ * default".
+ *
+ * The number is read out of `resolveConfig` rather than repeating its `??`, so
+ * there is one definition of the default and this call is the same one
+ * `executeWithRetry` makes on the same object. That is what makes the reported
+ * number and the applied one unable to drift.
  */
 export function effectiveMaxRetries(config: RetryConfig): number {
-  return config.maxRetries ?? DEFAULT_MAX_RETRIES;
+  return resolveConfig(config).maxRetries;
 }
 
 function withTimeout<T>(
