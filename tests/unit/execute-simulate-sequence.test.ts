@@ -36,7 +36,8 @@ vi.mock("@/plugins/web3/steps/transfer-token-core", () => ({
 
 vi.mock("@/lib/logging", () => ({
   logSystemError: vi.fn(),
-  ErrorCategory: { DATABASE: "database" },
+  logSystemWarn: vi.fn(),
+  ErrorCategory: { DATABASE: "database", NETWORK_RPC: "network_rpc" },
   logSecurityEvent: vi.fn(),
 }));
 
@@ -71,6 +72,7 @@ import {
   resetSequenceMechanismCache,
   simulateCallSequence,
 } from "@/lib/execute/simulate-sequence";
+import { logSystemWarn } from "@/lib/logging";
 
 const ERC20_ABI = JSON.stringify([
   {
@@ -403,6 +405,26 @@ describe("simulateCallSequence on a node without eth_simulateV1", () => {
 
     expect(firstAttempts).toBe(1);
     expect(totalAttempts).toBe(1);
+  });
+
+  it("logs the one-time degradation warning when the mechanism flips to state-overrides", async () => {
+    fallbackNode();
+
+    const first = await run();
+    expect(first.mechanism).toBe("state-overrides");
+    // The flip is logged exactly once, at the point the fallback is pinned.
+    const warn = vi.mocked(logSystemWarn);
+    expect(warn).toHaveBeenCalledTimes(1);
+    const [category, message, error, labels] = warn.mock.calls[0];
+    expect(category).toBe("network_rpc");
+    expect(String(message)).toContain("eth_simulateV1");
+    expect(error).toBeDefined();
+    expect(labels).toEqual({ chainId: "84532" });
+
+    // The pinned fallback path stays silent: the warning fires only at the flip.
+    const second = await run();
+    expect(second.mechanism).toBe("state-overrides");
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 
   it("stops rather than answering as if the earlier call never ran", async () => {

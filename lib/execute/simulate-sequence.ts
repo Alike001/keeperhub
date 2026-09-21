@@ -12,6 +12,7 @@ import {
 } from "@/lib/execute/simulate";
 import { MAX_SEQUENCE_CALLS } from "@/lib/execute/simulate-sequence-limits";
 import { checkStablecoinContractCallBatch } from "@/lib/execute/stablecoin-cap";
+import { ErrorCategory, logSystemWarn } from "@/lib/logging";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { getErrorMessage } from "@/lib/utils";
 import { decodeRevertReason } from "@/lib/web3/decode-revert-error";
@@ -497,6 +498,16 @@ export async function simulateCallSequence(
       if (!isMethodNotFound(err)) {
         return sequenceUnavailable(from, encoded, getErrorMessage(err));
       }
+      // The fallback is pinned for the process lifetime, and the result
+      // message reaches only the caller, so an operator would otherwise never
+      // learn that this chain's node stopped answering eth_simulateV1.
+      // Log the flip once, here, where the pin happens.
+      logSystemWarn(
+        ErrorCategory.NETWORK_RPC,
+        `[SimulateSequence] chain ${chainId} does not answer eth_simulateV1; degraded to the state-overrides fallback for the process lifetime`,
+        err,
+        { chainId: String(chainId) }
+      );
       mechanism = "state-overrides";
       mechanismByChain.set(chainId, "state-overrides");
       try {
