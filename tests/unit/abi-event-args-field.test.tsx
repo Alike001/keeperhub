@@ -140,6 +140,101 @@ describe("AbiEventArgsField", () => {
     expect(container.textContent).toContain("cannot be shown here");
   });
 
+  it("flags a stored empty value instead of rendering it as no filter", () => {
+    render({ from: "" });
+    expect(input("from")?.value).toBe("");
+    expect(input("from")?.getAttribute("aria-invalid")).toBe("true");
+    expect(container.textContent).toContain("holds an empty value for from");
+    // The parameter the user did not set carries none of this.
+    expect(input("to")?.getAttribute("aria-invalid")).toBeNull();
+  });
+
+  it("removes the parameter when the empty row's button is used", () => {
+    const onChange = render({ from: "", to: ALICE });
+    const button = [...container.querySelectorAll("button")].find(
+      (b) => b.textContent === "Match any value"
+    );
+    act(() => button?.click());
+    expect(onChange).toHaveBeenCalledWith(JSON.stringify({ to: ALICE }));
+  });
+
+  it("offers no way out of an empty row to a viewer who cannot edit", () => {
+    render({ from: "" }, vi.fn(), true);
+    expect(container.textContent).toContain("holds an empty value for from");
+    expect(container.querySelector("button")).toBeNull();
+  });
+
+  it("keeps a whitespace-only filter on an indexed string, which hashes verbatim", () => {
+    const tagged = JSON.stringify([
+      {
+        type: "event",
+        name: "Tagged",
+        inputs: [{ name: "label", type: "string", indexed: true }],
+      },
+    ]);
+    const onChange = vi.fn();
+    act(() => {
+      root.render(
+        <AbiEventArgsField
+          abiValue={tagged}
+          eventValue="Tagged"
+          field={field}
+          onChange={onChange}
+          value=""
+        />
+      );
+    });
+    const box = container.querySelector<HTMLInputElement>("#eventArgs-label");
+    expect(box).not.toBeNull();
+    act(() => {
+      // React tracks the last value it set, so assign through the prototype
+      // setter to make the change event carry the new one.
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value"
+      )?.set;
+      setter?.call(box, " ");
+      box?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(onChange).toHaveBeenCalledWith(JSON.stringify({ label: " " }));
+  });
+
+  it("stores a filter for a parameter named __proto__ rather than losing it", () => {
+    const proto = JSON.stringify([
+      {
+        type: "event",
+        name: "Odd",
+        inputs: [{ name: "__proto__", type: "address", indexed: true }],
+      },
+    ]);
+    const onChange = vi.fn();
+    act(() => {
+      root.render(
+        <AbiEventArgsField
+          abiValue={proto}
+          eventValue="Odd"
+          field={field}
+          onChange={onChange}
+          value=""
+        />
+      );
+    });
+    const box = container.querySelector<HTMLInputElement>(
+      "#eventArgs-__proto__"
+    );
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value"
+      )?.set;
+      setter?.call(box, ALICE);
+      box?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    // Written out rather than built with an object literal, where
+    // `__proto__` would set the prototype and stringify to "{}".
+    expect(onChange).toHaveBeenCalledWith(`{"__proto__":"${ALICE}"}`);
+  });
+
   it("leaves the stored value alone when the panel is read-only", () => {
     const onChange = render(
       JSON.stringify({ from: ALICE, owner: ALICE }),

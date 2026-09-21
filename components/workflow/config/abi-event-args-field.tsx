@@ -142,6 +142,21 @@ function parseStored(raw: unknown): StoredFilter {
   }
 }
 
+/**
+ * Whether a stored value is one the step will refuse as empty.
+ *
+ * An absent key means "match any value" and an empty one fails the step, so
+ * the two must never look alike in the panel. The rule matches the step's:
+ * every type is trimmed before encoding except `string`, whose whitespace is
+ * part of the keccak hash.
+ */
+function isEmptyForStep(param: EventParam, value: string | undefined): boolean {
+  if (value === undefined) {
+    return false;
+  }
+  return param.type === "string" ? value === "" : value.trim() === "";
+}
+
 function placeholderFor(param: EventParam): string {
   if (param.type === "address") {
     return "0x... or {{NodeName.address}}";
@@ -217,21 +232,43 @@ export function AbiEventArgsField({
     );
   }, [disabled, state.kind, staleKeys.length, current, onChange]);
 
-  const update = (name: string, next: string) => {
-    const merged = { ...current };
-    if (next.trim() === "") {
-      delete merged[name];
-    } else {
-      merged[name] = next;
-    }
+  // Object.assign onto a null-prototype object rather than a spread: a
+  // spread reintroduces Object.prototype, and an event parameter named
+  // __proto__ would then assign into the prototype instead of the record,
+  // silently dropping what was typed.
+  const write = (mutate: (draft: Record<string, string>) => void) => {
+    const merged = Object.assign(Object.create(null), current);
+    mutate(merged);
     onChange(Object.keys(merged).length === 0 ? "" : JSON.stringify(merged));
+  };
+
+  // Emptying the box removes the parameter, which is the only way to mean
+  // "any value". Only a literally empty box does that: for an indexed
+  // `string` the whitespace is part of the hashed value, so a whitespace-only
+  // filter has to stay expressible here.
+  const update = (name: string, next: string) => {
+    write((merged) => {
+      if (next === "") {
+        delete merged[name];
+      } else {
+        merged[name] = next;
+      }
+    });
+  };
+
+  const remove = (name: string) => {
+    write((merged) => {
+      delete merged[name];
+    });
   };
 
   // Checked first: the step fails on an unreadable value whatever the ABI
   // and event say, so no other message may stand in for this one.
   if (parsedStored.kind === "unreadable") {
     return (
-      <div className="space-y-2 rounded-md border border-dashed p-3 text-center text-muted-foreground text-sm">
+      // Styled as an error, not as one of the benign empty states: this is
+      // the only one of the six that means every run will fail.
+      <div className="space-y-2 rounded-md border border-destructive border-dashed p-3 text-center text-destructive text-sm">
         <p>
           The saved filter is not a JSON object of parameter names to values,
           so it cannot be shown here. The step will fail on it until it is
@@ -274,7 +311,9 @@ export function AbiEventArgsField({
 
   return (
     <div className="space-y-3" key={field.key}>
-      {params.map((param) => (
+      {params.map((param) => {
+        const empty = isEmptyForStep(param, current[param.name]);
+        return (
         <div className="space-y-1" key={param.name}>
           <Label
             className="ml-1 font-normal text-xs"
@@ -284,6 +323,7 @@ export function AbiEventArgsField({
             <span className="text-muted-foreground">{param.type}</span>
           </Label>
           <Input
+            aria-invalid={empty || undefined}
             disabled={disabled || !param.filterable}
             id={`${field.key}-${param.name}`}
             onChange={(e) => update(param.name, e.target.value)}
@@ -294,6 +334,24 @@ export function AbiEventArgsField({
             }
             value={current[param.name] ?? ""}
           />
+          {empty && (
+            <div className="ml-1 space-y-1">
+              <p className="text-destructive text-xs">
+                The saved filter holds an empty value for {param.name}, which
+                fails every run. An empty box here does not mean "any value" -
+                the parameter has to be absent for that.
+              </p>
+              {!disabled && (
+                <Button
+                  onClick={() => remove(param.name)}
+                  size="sm"
+                  variant="outline"
+                >
+                  Match any value
+                </Button>
+              )}
+            </div>
+          )}
           {!param.filterable && (
             <p className="ml-1 text-muted-foreground text-xs">
               An indexed {param.type} is stored as a hash of its encoded
@@ -309,7 +367,8 @@ export function AbiEventArgsField({
             </p>
           )}
         </div>
-      ))}
+        );
+      })}
       {state.unnamed > 0 && (
         <p className="ml-1 text-muted-foreground text-xs">
           {eventValue} also indexes {state.unnamed} parameter(s) the ABI does
