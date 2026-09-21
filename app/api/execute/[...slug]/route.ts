@@ -52,38 +52,6 @@ async function executeProtocolAction(
   apiKeyId: string,
   idem: IdempotencyOutcome | null
 ): Promise<NextResponse> {
-  // Resolved without a chain, so the chain-scoped L2 slug aliases in
-  // resolveProtocolMeta cannot apply yet. This establishes only that the
-  // action type names a registered protocol action; the meta actually used
-  // for execution is re-resolved below, once the chain is normalized.
-  const initialMeta = resolveProtocolMeta({ _actionType: actionType });
-  if (!initialMeta) {
-    return recordIdempotentResponse(
-      idem,
-      NextResponse.json(
-        {
-          success: false,
-          error: `Could not resolve protocol metadata for: ${actionType}`,
-        },
-        { status: HttpStatus.BAD_REQUEST }
-      )
-    );
-  }
-
-  const protocol = getProtocol(initialMeta.protocolSlug);
-  if (!protocol) {
-    return recordIdempotentResponse(
-      idem,
-      NextResponse.json(
-        {
-          success: false,
-          error: `Unknown protocol: ${initialMeta.protocolSlug}`,
-        },
-        { status: HttpStatus.BAD_REQUEST }
-      )
-    );
-  }
-
   // KEEP-490: accept `chainId` as the canonical input, with `network` as a
   // deprecated alias. Either field may carry the numeric chain ID (1, 11155111)
   // or a known chain name/slug ("ethereum", "sepolia", "base"). Downstream
@@ -121,13 +89,37 @@ async function executeProtocolAction(
   }
   const network = String(resolvedChainId);
 
-  // The L2 slug aliases are chain-scoped, so they can only be applied now
-  // that the chain is a numeric ID. An integration still calling a slug the
-  // wstETH/sUSDS L2 split renamed binds the L2 contract key here, matching
-  // what the workflow read/write steps do. Falls back to the chain-free
-  // resolution, which is what every non-aliased action type returns anyway.
-  const meta =
-    resolveProtocolMeta({ _actionType: actionType, network }) ?? initialMeta;
+  // The L2 slug aliases are chain-scoped, so the chain has to be normalized
+  // before the action type can be resolved: an integration still calling a
+  // slug the wstETH/sUSDS L2 split renamed binds the L2 contract key here,
+  // matching what the workflow read/write steps do.
+  const meta = resolveProtocolMeta({ _actionType: actionType, network });
+  if (!meta) {
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json(
+        {
+          success: false,
+          error: `Could not resolve protocol metadata for: ${actionType}`,
+        },
+        { status: HttpStatus.BAD_REQUEST }
+      )
+    );
+  }
+
+  const protocol = getProtocol(meta.protocolSlug);
+  if (!protocol) {
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json(
+        {
+          success: false,
+          error: `Unknown protocol: ${meta.protocolSlug}`,
+        },
+        { status: HttpStatus.BAD_REQUEST }
+      )
+    );
+  }
 
   const contract = protocol.contracts[meta.contractKey];
   if (!contract) {

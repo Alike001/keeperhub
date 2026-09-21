@@ -1,3 +1,4 @@
+import { aliasedChainIds } from "@/lib/protocol-action-aliases";
 import {
   assertEncodeTransformsLegalFor,
   setActionInputsLookup,
@@ -393,7 +394,18 @@ function buildConfigFieldsFromAction(
   action: ProtocolAction
 ): ActionConfigField[] {
   const contract = def.contracts[action.contract];
-  const allowedChainIds = Object.keys(contract.addresses);
+  // A chain-scoped alias keeps an old slug executing on a chain its declared
+  // contract left (lib/protocol-action-aliases.ts). Those chains belong in the
+  // offered list: this is what the save-time chain-select validation checks a
+  // stored node against and what the builder's chain dropdown renders, so
+  // omitting them makes a Base workflow that still runs unsaveable and blanks
+  // its Network field.
+  const allowedChainIds = Array.from(
+    new Set([
+      ...Object.keys(contract.addresses),
+      ...aliasedChainIds(def, `${def.slug}/${action.slug}`, action),
+    ])
+  );
   const fields: ActionConfigField[] = [
     {
       key: "network",

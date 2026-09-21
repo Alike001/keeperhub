@@ -13,11 +13,12 @@
  */
 import { describe, expect, it } from "vitest";
 import "@/protocols";
-import { getProtocol } from "@/lib/protocol-registry";
+import { L2_RENAMED_ACTIONS } from "@/lib/protocol-action-aliases";
 import {
-  L2_RENAMED_ACTIONS,
-  resolveProtocolMeta,
-} from "@/plugins/protocol/steps/resolve-protocol-meta";
+  getProtocol,
+  protocolActionToPluginAction,
+} from "@/lib/protocol-registry";
+import { resolveProtocolMeta } from "@/plugins/protocol/steps/resolve-protocol-meta";
 
 describe("resolveProtocolMeta: L2 slug aliases", () => {
   const cases = [
@@ -198,6 +199,22 @@ describe("resolveProtocolMeta: the alias table matches the registry", () => {
       expect(fromDecimals).toEqual([18]);
       expect(toOutputs.map((o) => o.decimals)).toEqual(fromDecimals);
 
+      // Same argument names, in the same order. protocol-read.ts builds the
+      // call args by reading `input[inp.name]` off the node config for each
+      // input of the resolved action, so a renamed parameter binds "" and the
+      // read silently queries the zero address instead of the user's wallet.
+      // The redirect is only argument-compatible because both sides call the
+      // parameter `account`; nothing but this assertion keeps it that way.
+      expect(to.inputs.map((i) => i.name)).toEqual(
+        from.inputs.map((i) => i.name)
+      );
+      // Same output names: the redirected node's downstream template
+      // references ({{@node.balance}}) resolve by name, so a renamed output
+      // breaks every consumer of an aliased node.
+      expect(toOutputs.map((o) => o.name)).toEqual(
+        fromOutputs.map((o) => o.name)
+      );
+
       for (const chainId of rename.chainIds) {
         expect(
           protocol.contracts[from.contract]?.addresses[chainId],
@@ -210,4 +227,69 @@ describe("resolveProtocolMeta: the alias table matches the registry", () => {
       }
     });
   }
+});
+
+describe("the Network field offers the chains the alias covers", () => {
+  // buildConfigFieldsFromAction derives allowedChainIds from the declared
+  // contract's addresses, which after the split lists mainnet alone. That
+  // list is what lib/workflow/validation/action-config.ts checks a stored
+  // node's network against on save, and what chain-select-field.tsx filters
+  // the dropdown by - so leaving the aliased chains out makes a Base
+  // workflow that still executes correctly fail to save with a 422 and
+  // render an empty Network field.
+  for (const [actionType, rename] of Object.entries(L2_RENAMED_ACTIONS)) {
+    it(`${actionType} offers ${rename.chainIds.join("/")}`, () => {
+      const [protocolSlug, oldSlug] = actionType.split("/");
+      const protocol = getProtocol(protocolSlug ?? "");
+      if (!protocol) {
+        throw new Error(`${actionType} names no registered protocol`);
+      }
+      const action = protocol.actions.find((a) => a.slug === oldSlug);
+      if (!action) {
+        throw new Error(`${actionType} names no registered action`);
+      }
+
+      const networkField = protocolActionToPluginAction(
+        protocol,
+        action
+      ).configFields?.find((f) => "key" in f && f.key === "network");
+      const allowed =
+        networkField && "allowedChainIds" in networkField
+          ? (networkField.allowedChainIds ?? [])
+          : [];
+
+      for (const chainId of rename.chainIds) {
+        expect(
+          allowed,
+          `${actionType} resolves on chain ${chainId} through the alias, so the Network field must offer it`
+        ).toContain(chainId);
+      }
+      // The chains the declared contract carries stay offered: the union
+      // adds to the list, it does not replace it.
+      for (const chainId of Object.keys(
+        protocol.contracts[action.contract]?.addresses ?? {}
+      )) {
+        expect(allowed).toContain(chainId);
+      }
+    });
+  }
+
+  it("leaves an unaliased action's chain list untouched", () => {
+    const protocol = getProtocol("sky");
+    const action = protocol?.actions.find((a) => a.slug === "vault-deposit");
+    if (!(protocol && action)) {
+      throw new Error("sky/vault-deposit is not registered");
+    }
+    const networkField = protocolActionToPluginAction(
+      protocol,
+      action
+    ).configFields?.find((f) => "key" in f && f.key === "network");
+    const allowed =
+      networkField && "allowedChainIds" in networkField
+        ? (networkField.allowedChainIds ?? [])
+        : [];
+    expect(allowed).toEqual(
+      Object.keys(protocol.contracts[action.contract]?.addresses ?? {})
+    );
+  });
 });

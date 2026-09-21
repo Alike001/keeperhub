@@ -71,21 +71,17 @@ function camelCaseSlug(slug: string): string {
 
 // -- Chain & address resolution ----------------------------------------------
 
-function resolveChain(
-  ctx: ProtocolActionContext,
-  nodeConfig: Record<string, unknown> | undefined
-): ResolvedChain {
-  const chainId = nodeConfig?.network as string | undefined;
+function resolveChain(chainId: string | undefined): ResolvedChain {
   if (!chainId) {
     return { kind: "missing" };
   }
   const entry = VIEM_CHAINS[chainId];
+  // "unknown" means unknown to viem, and nothing else. Whether the contract
+  // has an address on this chain is resolveAddress's question, and it already
+  // answers it with "no deployment recorded for chain id N". Folding the two
+  // together made a node on Base emit "chain id 8453 is not in viem/chains",
+  // which is false and sends the reader to define a chain viem ships.
   if (!entry) {
-    return { kind: "unknown", chainId };
-  }
-  if (
-    !(ctx.contract.userSpecifiedAddress || chainId in ctx.contract.addresses)
-  ) {
     return { kind: "unknown", chainId };
   }
   return { kind: "known", chainId, entry };
@@ -661,11 +657,12 @@ function buildSynthesisInputs(
   actionId: string,
   nodeConfig?: Record<string, unknown>
 ): SynthesisInputs | null {
-  const ctx = getProtocolActionContext(actionId);
+  const chainId = nodeConfig?.network as string | undefined;
+  const ctx = getProtocolActionContext(actionId, chainId);
   if (!ctx) {
     return null;
   }
-  const chain = resolveChain(ctx, nodeConfig);
+  const chain = resolveChain(chainId);
   const address = resolveAddress(ctx, chain, nodeConfig);
   const fnVarName = `${camelCaseSlug(ctx.actionSlug)}Step`;
   return { ctx, chain, address, fnVarName };

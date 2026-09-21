@@ -1,5 +1,6 @@
 import "@/protocols";
 
+import { resolveRenamedAction } from "@/lib/protocol-action-aliases";
 import {
   getProtocol,
   type ProtocolAction,
@@ -138,8 +139,23 @@ function resolveAbiFragment(
   };
 }
 
+/**
+ * `chainId` (the numeric chain ID as a string, from the node's network field)
+ * applies the chain-scoped L2 slug aliases, so the emitted code targets the
+ * contract the step would actually call. Without it a node whose old slug
+ * reaches the bridged token through an alias generates the zero address and a
+ * "no deployment recorded" comment for a workflow that runs. Omitting the
+ * chain keeps the pre-alias behaviour, for callers with no node in hand.
+ *
+ * Only `action`/`contract`/`contractKey` follow the redirect. `actionId` and
+ * `actionSlug` stay as asked, because they name the action the user selected
+ * and key both the generated function name and the encode-transform lookup;
+ * the alias is argument-compatible by invariant (see
+ * tests/unit/resolve-protocol-meta.test.ts).
+ */
 export function getProtocolActionContext(
-  actionId: string
+  actionId: string,
+  chainId?: string
 ): ProtocolActionContext | null {
   const slashIndex = actionId.indexOf("/");
   if (slashIndex === -1) {
@@ -153,10 +169,11 @@ export function getProtocolActionContext(
     return null;
   }
 
-  const action = protocol.actions.find((a) => a.slug === actionSlug);
-  if (!action) {
+  const declared = protocol.actions.find((a) => a.slug === actionSlug);
+  if (!declared) {
     return null;
   }
+  const action = resolveRenamedAction(protocol, actionId, declared, chainId);
 
   const contract = protocol.contracts[action.contract];
   if (!contract) {
