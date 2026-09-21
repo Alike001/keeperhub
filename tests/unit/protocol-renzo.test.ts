@@ -395,15 +395,14 @@ describe("Renzo read outputs resolve at runtime", () => {
 });
 
 /**
- * A failed stake reaches the user through `classifyRevert`, which parses the
- * revert data against the TARGET contract's own interface and nothing else.
- * With no `error` fragments on the RestakeManager document, every revert a
+ * A failed stake reaches the user through `classifyRevert`, which tries the
+ * TARGET contract's interface first, then the shared Roles and common-error
+ * lists, then a bare string decode. Neither shared list holds a Renzo error, so
+ * with no `error` fragments on the RestakeManager document every revert a
  * `depositETH()` can produce came back `{ kind: "unknown" }` and the user saw a
- * four-byte selector. `depositETH()` traverses `calculateTVLs()`, the deposit
- * queue, `RenzoOracle` and `ezETH`, so the errors those raise have to be
- * declared on the manager's document too. These pin the naming against
- * selectors computed from the signatures, and `0x21607339` is the selector
- * measured on mainnet for `depositETH()` sent no value.
+ * four-byte selector. These pin the naming against selectors computed from the
+ * signatures, and `0x21607339` is the selector measured on mainnet for
+ * `depositETH()` sent no value.
  */
 describe("Renzo stake reverts are named, not raw selectors", () => {
   const restakeManagerInterface = new ethers.Interface(
@@ -416,62 +415,66 @@ describe("Renzo stake reverts are named, not raw selectors", () => {
   }
 
   /**
-   * Every custom error reachable from `depositETH()`, paired with the selector
-   * its signature hashes to. The definition records where each one is declared
-   * and which call on the deposit path reaches it.
+   * Every error the RestakeManager document declares: the manager's own
+   * verified set, then the five that bubble up from `RenzoOracle` and
+   * `OperatorDelegator`, each paired with the selector its signature hashes
+   * to. `argTail` carries ABI-encoded arguments for the one fragment that
+   * takes any, because a bare selector does not parse against it.
    */
-  const DEPOSIT_PATH_ERRORS = [
+  const DECLARED_ERRORS: {
+    signature: string;
+    selector: string;
+    argTail?: string;
+  }[] = [
+    { signature: "AlreadyAdded()", selector: "0xf411c327" },
     { signature: "ContractPaused()", selector: "0xab35696f" },
-    { signature: "InvalidTokenAmount()", selector: "0x21607339" },
+    { signature: "InvalidTVL()", selector: "0x344f641a" },
+    {
+      signature: "InvalidTokenDecimals(uint8,uint8)",
+      selector: "0xc251ac7c",
+      argTail: ethers.AbiCoder.defaultAbiCoder()
+        .encode(["uint8", "uint8"], [18, 6])
+        .slice(2),
+    },
+    { signature: "InvalidZeroInput()", selector: "0x862a6067" },
+    { signature: "MaxTokenTVLReached()", selector: "0x12e96886" },
+    { signature: "NotDepositQueue()", selector: "0x14bc7046" },
+    { signature: "NotDepositWithdrawPauser()", selector: "0xc2952d6b" },
+    { signature: "NotFound()", selector: "0xc5723b51" },
+    { signature: "NotRestakeManagerAdmin()", selector: "0x2ec79ab9" },
+    // The missing `r` is the contract's own spelling. Correcting it hashes to
+    // 0x021e91c1, which nothing ever raises.
     { signature: "OperatoDelegatorNotDelegated()", selector: "0xdca284ad" },
+    { signature: "OverMaxBasisPoints()", selector: "0x6b5c4261" },
+    { signature: "InvalidTokenAmount()", selector: "0x21607339" },
     { signature: "OracleNotFound()", selector: "0x2c283834" },
     { signature: "OraclePriceExpired()", selector: "0xeafdc186" },
     { signature: "InvalidOraclePrice()", selector: "0x1f8f95a0" },
     { signature: "CheckpointNotRecorded()", selector: "0x93c952a8" },
   ];
 
-  it("selectors resolve from the signatures rather than being hardcoded", () => {
-    for (const { signature, selector } of DEPOSIT_PATH_ERRORS) {
+  it("each pinned selector is the keccak hash of its signature", () => {
+    for (const { signature, selector } of DECLARED_ERRORS) {
       expect(ethers.id(signature).slice(0, 10), signature).toBe(selector);
     }
   });
 
   // A selector the document does not declare is indistinguishable from
-  // 0xdeadbeef below: the user gets four bytes. Every error the deposit path
-  // can raise therefore has to decode to a name here.
-  it("names every revert reachable from a deposit", () => {
-    for (const { signature, selector } of DEPOSIT_PATH_ERRORS) {
+  // 0xdeadbeef below: the user gets four bytes. Every error the document
+  // declares therefore has to decode back to a name here.
+  it("names every error the document declares", () => {
+    for (const { signature, selector, argTail } of DECLARED_ERRORS) {
       expect(
-        classifyRevert(revertWith(selector), restakeManagerInterface),
+        classifyRevert(
+          revertWith(`${selector}${argTail ?? ""}`),
+          restakeManagerInterface
+        ),
         signature
       ).toEqual({
         kind: "contract-custom",
-        name: signature.replace("()", ""),
+        name: signature.slice(0, signature.indexOf("(")),
       });
     }
-  });
-
-  it("names ContractPaused, the revert of a deposit while either gate is set", () => {
-    const selector = ethers.id("ContractPaused()").slice(0, 10);
-    expect(
-      classifyRevert(revertWith(selector), restakeManagerInterface)
-    ).toEqual({
-      kind: "contract-custom",
-      name: "ContractPaused",
-    });
-  });
-
-  // RenzoOracle.calculateMintAmount raises this one and it bubbles up through
-  // the manager, so the manager's own verified ABI does not declare it. It is on
-  // this document because it is what depositETH() measurably reverts with, and
-  // the decode path never consults the oracle's interface.
-  it("names InvalidTokenAmount, the measured revert of a zero-value deposit", () => {
-    expect(
-      classifyRevert(revertWith("0x21607339"), restakeManagerInterface)
-    ).toEqual({
-      kind: "contract-custom",
-      name: "InvalidTokenAmount",
-    });
   });
 
   it("still returns unknown for a selector the document does not declare", () => {
