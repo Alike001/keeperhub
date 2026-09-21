@@ -13,9 +13,14 @@
  */
 import { describe, expect, it } from "vitest";
 import "@/protocols";
-import { L2_RENAMED_ACTIONS } from "@/lib/protocol-action-aliases";
+import {
+  L2_RENAMED_ACTIONS,
+  resolveRenamedAction,
+} from "@/lib/protocol-action-aliases";
 import {
   getProtocol,
+  type ProtocolAction,
+  type ProtocolDefinition,
   protocolActionToPluginAction,
 } from "@/lib/protocol-registry";
 import { resolveProtocolMeta } from "@/plugins/protocol/steps/resolve-protocol-meta";
@@ -225,8 +230,75 @@ describe("resolveProtocolMeta: the alias table matches the registry", () => {
           `${protocolSlug}/${rename.slug} has no address on chain ${chainId}, so the alias redirects to another dead end`
         ).toBeDefined();
       }
+
+      // Completeness, not just correctness. The loop above only inspects the
+      // chains the entry already lists, so adding an Optimism address to
+      // sUsdsL2 would leave sky/vault-balance broken there with this suite
+      // green. chainIds must be the whole derived set: every chain the
+      // replacement contract covers and the declared one does not.
+      const derived = Object.keys(
+        protocol.contracts[to.contract]?.addresses ?? {}
+      ).filter(
+        (chainId) =>
+          protocol.contracts[from.contract]?.addresses[chainId] === undefined
+      );
+      expect(
+        [...rename.chainIds].sort(),
+        `${actionType} is aliased on some chains but not every chain where ${to.contract} resolves and ${from.contract} does not`
+      ).toEqual(derived.sort());
     });
   }
+});
+
+describe("resolveRenamedAction refuses a table entry it cannot honour", () => {
+  // The module has to be safe on its own terms. Step ROUTING is chosen from
+  // the requested slug (lib/step-registry.ts registers a read step and a write
+  // step per slug) while the contract and function come from the resolved one,
+  // so an entry that changed read to write would have protocolReadStep
+  // eth_call a state-changer, or hand protocolWriteStep a view function to
+  // broadcast. Every entry is read to read today; nothing but this guard keeps
+  // a future one from being otherwise.
+  const declared = {
+    slug: "vault-balance",
+    contract: "sUsds",
+    type: "read",
+    function: "balanceOf",
+    inputs: [],
+  } as unknown as ProtocolAction;
+  const replacement = {
+    slug: "get-susds-balance-l2",
+    contract: "sUsdsL2",
+    type: "write",
+    function: "balanceOf",
+    inputs: [],
+  } as unknown as ProtocolAction;
+  const protocol = {
+    contracts: {
+      sUsds: { addresses: { "1": "0x1" } },
+      sUsdsL2: { addresses: { "8453": "0x2" } },
+    },
+    actions: [declared, replacement],
+  } as unknown as ProtocolDefinition;
+
+  it("returns the declared action when the replacement flips read to write", () => {
+    expect(
+      resolveRenamedAction(protocol, "sky/vault-balance", declared, "8453")
+    ).toBe(declared);
+  });
+
+  it("does not throw on an action type that names an inherited property", () => {
+    // The table is a plain object literal and actionType is request-derived,
+    // so a key like "constructor" would otherwise answer with a function and
+    // throw on `.chainIds`.
+    const sky = getProtocol("sky");
+    const action = sky?.actions.find((a) => a.slug === "vault-balance");
+    if (!(sky && action)) {
+      throw new Error("sky/vault-balance is not registered");
+    }
+    for (const key of ["constructor", "toString", "__proto__"]) {
+      expect(resolveRenamedAction(sky, key, action, "8453")).toBe(action);
+    }
+  });
 });
 
 describe("the Network field offers the chains the alias covers", () => {

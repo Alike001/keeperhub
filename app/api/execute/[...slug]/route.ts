@@ -19,7 +19,10 @@ import { getProtocol, resolveContractAddress } from "@/lib/protocol-registry";
 import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { PLUGIN_STEP_IMPORTERS } from "@/lib/step-registry";
-import { resolveProtocolMeta } from "@/plugins/protocol/steps/resolve-protocol-meta";
+import {
+  type ProtocolMeta,
+  resolveProtocolMeta,
+} from "@/plugins/protocol/steps/resolve-protocol-meta";
 import {
   type ReadContractCoreInput,
   readContractCore,
@@ -47,6 +50,7 @@ import { requireWallet } from "../_lib/wallet-check";
 
 async function executeProtocolAction(
   actionType: string,
+  chainFreeMeta: ProtocolMeta,
   body: Record<string, unknown>,
   organizationId: string,
   apiKeyId: string,
@@ -93,19 +97,16 @@ async function executeProtocolAction(
   // before the action type can be resolved: an integration still calling a
   // slug the wstETH/sUSDS L2 split renamed binds the L2 contract key here,
   // matching what the workflow read/write steps do.
-  const meta = resolveProtocolMeta({ _actionType: actionType, network });
-  if (!meta) {
-    return recordIdempotentResponse(
-      idem,
-      NextResponse.json(
-        {
-          success: false,
-          error: `Could not resolve protocol metadata for: ${actionType}`,
-        },
-        { status: HttpStatus.BAD_REQUEST }
-      )
-    );
-  }
+  //
+  // The `??` never fires. The caller only dispatches here after resolving the
+  // same action type without a chain, and the chain steers nothing but
+  // resolveRenamedAction, which returns the declared action unchanged when no
+  // alias applies. Adding a network cannot turn a resolvable action type into
+  // an unresolvable one, so there is no unresolvable case left to answer with
+  // a 400 - an action type that names nothing is already rejected with a 501
+  // by the handler below.
+  const meta =
+    resolveProtocolMeta({ _actionType: actionType, network }) ?? chainFreeMeta;
 
   const protocol = getProtocol(meta.protocolSlug);
   if (!protocol) {
@@ -440,6 +441,7 @@ export async function POST(
     if (meta) {
       const response = await executeProtocolAction(
         actionType,
+        meta,
         body,
         apiKeyCtx.organizationId,
         apiKeyCtx.apiKeyId,

@@ -1,4 +1,5 @@
-import { logInfo } from "@/lib/logging";
+import { getMetricsCollector } from "@/lib/metrics";
+import { MetricNames } from "@/lib/metrics/types";
 import { resolveRenamedAction } from "@/lib/protocol-action-aliases";
 import { getProtocol } from "@/lib/protocol-registry";
 
@@ -40,13 +41,14 @@ function deriveFromActionType(
 
   const resolved = resolveRenamedAction(protocol, actionType, action, network);
   if (resolved !== action) {
-    // The only signal that an alias is still load-bearing. A redirect that is
-    // never logged cannot be counted, and a table entry that is never counted
-    // cannot be retired with evidence.
-    logInfo("[Protocol] Renamed L2 action slug redirected", {
+    // The only signal that an alias entry is still load-bearing. A counter
+    // rather than a log line: this fires once per aliased node execution (a
+    // minutely schedule is roughly 1.4k a day from one node), and the question
+    // it has to answer - "has anything entered on this slug since we last
+    // looked?" - is a time series, not a breadcrumb.
+    getMetricsCollector().incrementCounter(MetricNames.PROTOCOL_ALIAS_REDIRECT, {
       action_type: actionType,
       chain_id: network ?? "",
-      resolved_action_type: `${protocolSlug}/${resolved.slug}`,
     });
   }
 

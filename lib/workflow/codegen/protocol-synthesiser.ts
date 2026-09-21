@@ -195,9 +195,16 @@ function applyEncodeTransform(
   ctx: ProtocolActionContext,
   fieldName: string
 ): string {
+  // `ctx.action.slug`, not `ctx.actionSlug`: a transform is registered against
+  // the action that declares the input, and the runtime looks it up with the
+  // slug of the action it resolved (protocol-read.ts and
+  // protocol-write.ts both find the action by function + contract key, then
+  // pass its slug to applyEncodeTransformsNamed). For an aliased slug the two
+  // differ, and keying off the requested one would emit SDK source that
+  // encodes an argument differently from the step.
   const kind = getEncodeTransformKind(
     ctx.protocolSlug,
-    ctx.actionSlug,
+    ctx.action.slug,
     fieldName
   );
   if (!kind) {
@@ -228,7 +235,7 @@ function applyEncodeTransform(
     // and it would move the SDK and the runtime together rather than only
     // the SDK.
     throw new Error(
-      `The weiToEther transform reached the SDK args builder for "${ctx.protocolSlug}/${ctx.actionSlug}/${fieldName}". That kind is only valid on the virtual ethValue field, which never reaches this builder, so the registration guard in lib/protocol-encode-transforms.ts has been removed or bypassed.`
+      `The weiToEther transform reached the SDK args builder for "${ctx.protocolSlug}/${ctx.action.slug}/${fieldName}". That kind is only valid on the virtual ethValue field, which never reaches this builder, so the registration guard in lib/protocol-encode-transforms.ts has been removed or bypassed.`
     );
   }
   // Exhaustive over EncodeTransformKind, enforced at compile time: adding a

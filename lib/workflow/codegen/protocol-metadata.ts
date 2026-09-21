@@ -149,8 +149,13 @@ function resolveAbiFragment(
  *
  * Only `action`/`contract`/`contractKey` follow the redirect. `actionId` and
  * `actionSlug` stay as asked, because they name the action the user selected
- * and key both the generated function name and the encode-transform lookup;
- * the alias is argument-compatible by invariant (see
+ * and key the generated function name. The encode-transform lookup is NOT
+ * keyed off them - it must use `action.slug`, the resolved slug, because that
+ * is what the runtime uses: the read and write steps find the action by
+ * function name plus contract key and pass THAT action's slug to
+ * applyEncodeTransformsNamed. Keying generated code off the requested slug
+ * would make it disagree with the step for any aliased pair carrying a
+ * transform. The alias is argument-compatible by invariant (see
  * tests/unit/resolve-protocol-meta.test.ts).
  */
 export function getProtocolActionContext(

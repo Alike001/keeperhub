@@ -1,3 +1,8 @@
+import type {
+  ProtocolAction,
+  ProtocolDefinition,
+} from "@/lib/protocol-registry";
+
 /**
  * Action slugs that moved to a new contract key on specific chains, keyed by
  * the old `<protocol>/<slug>` action type.
@@ -22,6 +27,12 @@
  * still validate and still render its chain), and the codegen context in
  * lib/workflow/codegen. A second copy of the redirect rule is a second
  * chance for them to disagree.
+ *
+ * Nothing in here may acquire a VALUE import. lib/protocol-registry.ts is in
+ * the client graph (components/hub/protocol-detail.tsx), so a runtime import
+ * of, say, @/lib/logging from here would drag Sentry and the metrics client
+ * into the browser bundle. The `import type` above is erased at compile time
+ * and does not close a runtime cycle.
  */
 export const L2_RENAMED_ACTIONS: Record<
   string,
@@ -45,15 +56,18 @@ export const L2_RENAMED_ACTIONS: Record<
   },
 };
 
-// Structural on purpose: lib/protocol-registry.ts imports this module, so
-// importing ProtocolDefinition/ProtocolAction back from it would close a
-// cycle. These are the only fields the redirect rule reads.
-type AliasContract = { addresses: Record<string, string> };
-type AliasAction = { slug: string; contract: string };
-type AliasProtocol<TAction extends AliasAction> = {
-  contracts: Record<string, AliasContract>;
-  actions: TAction[];
-};
+type RenameEntry = (typeof L2_RENAMED_ACTIONS)[string];
+
+/**
+ * Own-property lookup. `actionType` is request-derived, and a plain object
+ * literal answers `"constructor"` or `"toString"` with an inherited function
+ * that has no `chainIds` to read.
+ */
+function lookupRename(actionType: string): RenameEntry | undefined {
+  return Object.hasOwn(L2_RENAMED_ACTIONS, actionType)
+    ? L2_RENAMED_ACTIONS[actionType]
+    : undefined;
+}
 
 /**
  * Redirect a renamed action to its `-l2` replacement, or return it unchanged.
@@ -66,24 +80,36 @@ type AliasProtocol<TAction extends AliasAction> = {
  *
  * Returns the argument by identity when nothing is redirected, so a caller
  * can test `resolved !== action` to detect that an alias fired.
+ *
+ * A redirect may never change `type`. Step ROUTING is chosen from the
+ * REQUESTED slug - lib/step-registry.ts registers a read step and a write step
+ * per slug - while the contract and function come from the RESOLVED one, so a
+ * type-changing entry would hand protocolWriteStep a view function to
+ * broadcast, or have protocolReadStep eth_call a state-changer. Refusing such
+ * an entry here leaves the pre-alias behaviour, which fails loudly with
+ * `contract "..." is not deployed on network "..."`.
  */
-export function resolveRenamedAction<TAction extends AliasAction>(
-  protocol: AliasProtocol<TAction>,
+export function resolveRenamedAction(
+  protocol: ProtocolDefinition,
   actionType: string,
-  action: TAction,
+  action: ProtocolAction,
   network: string | undefined
-): TAction {
+): ProtocolAction {
   if (network === undefined) {
     return action;
   }
-  const rename = L2_RENAMED_ACTIONS[actionType];
+  const rename = lookupRename(actionType);
   if (!rename?.chainIds.includes(network)) {
     return action;
   }
   if (protocol.contracts[action.contract]?.addresses[network] !== undefined) {
     return action;
   }
-  return protocol.actions.find((a) => a.slug === rename.slug) ?? action;
+  const replacement = protocol.actions.find((a) => a.slug === rename.slug);
+  if (!replacement || replacement.type !== action.type) {
+    return action;
+  }
+  return replacement;
 }
 
 /**
@@ -98,12 +124,12 @@ export function resolveRenamedAction<TAction extends AliasAction>(
  * from the table directly, so the offered chains are exactly the chains the
  * runtime redirect fires on.
  */
-export function aliasedChainIds<TAction extends AliasAction>(
-  protocol: AliasProtocol<TAction>,
+export function aliasedChainIds(
+  protocol: ProtocolDefinition,
   actionType: string,
-  action: TAction
+  action: ProtocolAction
 ): string[] {
-  const rename = L2_RENAMED_ACTIONS[actionType];
+  const rename = lookupRename(actionType);
   if (!rename) {
     return [];
   }
