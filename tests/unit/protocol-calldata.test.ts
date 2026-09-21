@@ -47,6 +47,10 @@ const GOLDEN_DIR = join(
 const UPDATE = process.env.UPDATE_GOLDENS === "1";
 // Fixed so goldens are stable across machines and runs.
 const WALLET = "0x1111111111111111111111111111111111111111";
+// Trailing parenthetical qualifier on a skip reason's chain list, e.g. the
+// "(bridged)" in "only on Base/Arbitrum (bridged)". Stripped before the list
+// is split so the qualifier is prose, not a chain name.
+const TRAILING_PARENTHETICAL_REGEX = /\s*\([^()]*\)\s*$/;
 
 type GoldenEntry = { to: string; data: string; skipped: boolean };
 type GoldenFile = Record<string, Record<string, GoldenEntry>>;
@@ -196,13 +200,22 @@ describe("protocol calldata: skips that name where a contract does live", () => 
             `${protocol.slug}/${slug} is skipped on chain ${chainId} as "${reason}", but ${contractKey} resolves there`
           ).toBeUndefined();
           const named = (reason.split("only on ").pop() ?? "")
+            // A reason may qualify the chain list with a trailing
+            // parenthetical -- "only on Base/Arbitrum (bridged)" names the
+            // same two chains as "only on Base/Arbitrum". Without this the
+            // last chain parses as "Arbitrum (bridged)" and the failure
+            // message tells the author to write a list they already wrote.
+            // The invariant is unchanged: the named set must equal the set
+            // the registry carries.
+            .replace(TRAILING_PARENTHETICAL_REGEX, "")
             .split("/")
             .map((part) => part.trim())
+            .filter((part) => part !== "")
             .sort();
           const actual = Object.keys(addresses).map(getChainName).sort();
           expect(
             named,
-            `${protocol.slug}/${slug} is skipped as "${reason}" but ${contractKey} resolves on ${actual.join("/")}; the reason must end with "only on ${Object.keys(addresses).map(getChainName).join("/")}"`
+            `${protocol.slug}/${slug} is skipped as "${reason}" but ${contractKey} resolves on ${actual.join("/")}; the chain list after "only on" must be "${Object.keys(addresses).map(getChainName).join("/")}", optionally followed by a parenthetical`
           ).toEqual(actual);
         }
       });

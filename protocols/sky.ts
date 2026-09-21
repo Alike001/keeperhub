@@ -345,9 +345,9 @@ export default defineAbiProtocol({
       },
       skipped: {
         "get-susds-balance-l2":
-          "L2 action - sUsdsL2 contract only on Base/Arbitrum",
+          "L2 action - sUsdsL2 contract only on Base/Arbitrum (bridged, ERC-20 only)",
         "get-susds-total-supply-l2":
-          "L2 action - sUsdsL2 contract only on Base/Arbitrum",
+          "L2 action - sUsdsL2 contract only on Base/Arbitrum (bridged, ERC-20 only)",
       },
       // approve-dai and approve-usds run the app's real approve-token path,
       // which fans out cold token state on a fresh fork and runs past the
