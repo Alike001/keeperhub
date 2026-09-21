@@ -111,6 +111,20 @@ export const PUBLIC_RPCS = {
   // rpc.hypurrscan.io answered 405, stakely and thirdweb 302). So a deployed
   // environment that cannot tolerate a single public socket should set a
   // keyed WSS URL through CHAIN_RPC_CONFIG, which takes priority over this.
+  //
+  // The primary is not an archive node, and it does not say so: a historical
+  // block tag is answered with present-day state, HTTP 200 and no error,
+  // which is the one failure shape failover cannot detect. eth_getCode for
+  // the seeded USDC at block 0x1 returns the deployed proxy bytecode on
+  // rpc.hyperliquid.xyz/evm and "0x" on the dRPC fallback, which is the
+  // correct answer for a block predating the contract. eth_getLogs is served
+  // a million blocks deep on both, so event and block triggers are
+  // unaffected, and no step today pins a historical state block tag. A
+  // workflow that needs one should set a keyed archive URL through
+  // CHAIN_RPC_CONFIG rather than trusting this default. The order is left as
+  // it is deliberately: the fallback is the more capable endpoint, but it is
+  // a free third-party tier, and making it the default would route every
+  // HyperEVM call through it.
   HYPEREVM_MAINNET: "https://rpc.hyperliquid.xyz/evm",
   HYPEREVM_MAINNET_FALLBACK: "https://hyperliquid.drpc.org",
   HYPEREVM_MAINNET_WSS: "wss://hyperliquid.drpc.org",

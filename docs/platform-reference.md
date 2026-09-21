@@ -178,6 +178,15 @@ on HyperEVM require an opt-in made on HyperCore. HyperEVM also carries USDT0 at
 `0xb8ce59fc3717ada4c02eadf9682a9e934f625ebb`. Mainnet only; the testnet has no
 working explorer API.
 
+The 1.5x multiplier is a workaround, not a ceiling: an estimate above roughly
+2,000,000 gas can still exceed the block limit once the multiplier is applied,
+and blocks already run well over half full. Size such a transaction down rather
+than relying on the multiplier.
+
+Chain id 999 is registered as HyperEVM by Etherscan and the node itself, but
+`chainid.network` still lists 999 as Wanchain Testnet, so third-party tooling
+keyed off that registry may label the chain Wanchain.
+
 Arc's USDC is also its native gas token. The address above is the fixed
 ERC-20-interface precompile Circle documents for programmatic balance and
 transfer access; it reports balances at 6 decimals, distinct from the

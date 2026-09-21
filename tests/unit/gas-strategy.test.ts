@@ -51,6 +51,7 @@ import {
 import {
   AdaptiveGasStrategy,
   getGasStrategy,
+  HARDCODED_CHAIN_OVERRIDES,
   resetGasStrategy,
 } from "@/lib/web3/gas-strategy";
 
@@ -504,23 +505,19 @@ describe("AdaptiveGasStrategy", () => {
       // getHardcodedOverrides here, and the two are kept in sync by hand
       // because that module must stay ethers-free. Nothing enforced it.
       //
-      // Iterates the display table itself, so a chain added there is checked
-      // automatically instead of depending on someone also adding it here.
-      const chainIds = Object.keys(CHAIN_GAS_DEFAULTS).map(Number);
-      expect(chainIds.length).toBeGreaterThan(0);
-      for (const chainId of chainIds) {
-        const strategy = new AdaptiveGasStrategy();
-        const overrides = (
-          strategy as unknown as {
-            getHardcodedOverrides: (id: number) => {
-              gasLimitMultiplier?: number;
-            };
-          }
-        ).getHardcodedOverrides(chainId);
+      // Iterates both tables, so a chain added to either one alone fails
+      // here instead of depending on someone remembering the other.
+      const chainIds = new Set([
+        ...Object.keys(CHAIN_GAS_DEFAULTS),
+        ...Object.keys(HARDCODED_CHAIN_OVERRIDES),
+      ]);
+      expect(chainIds.size).toBeGreaterThan(0);
+      for (const key of chainIds) {
+        const chainId = Number(key);
         expect(
           getChainGasDefaults(chainId).multiplier,
           `chain ${chainId}`
-        ).toBe(overrides.gasLimitMultiplier);
+        ).toBe(HARDCODED_CHAIN_OVERRIDES[chainId]?.gasLimitMultiplier);
       }
     });
   });
