@@ -211,6 +211,18 @@ describe("Renzo Protocol Definition (ABI-driven)", () => {
     ]);
   });
 
+  // `deriveOutput` looks an output override up by the raw ABI output name and
+  // falls back to `camelToTitle(rawName)` when the key does not match, so a
+  // drifted key degrades to "Paused" / "Deposit Paused" without failing
+  // anything. The two bool outputs carry no `decimals` to pin them the way the
+  // ezETH reads are pinned, so pin the label text instead.
+  it("both bool outputs keep their overridden labels", () => {
+    expect(findAction("paused").outputs?.[0].label).toBe("Manager Paused");
+    expect(findAction("deposit-paused").outputs?.[0].label).toBe(
+      "Risk Oracle Deposits Paused"
+    );
+  });
+
   // Both halves must be readable by a workflow, so both must be enrolled in the
   // fork sweep and both must carry a chain expectation. A half that is declared
   // but never exercised is how the single-condition gate got this far.
