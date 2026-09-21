@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import "@/protocols";
 import {
+  type AbiDrivenProtocolInput,
   getRegisteredProtocols,
   type ProtocolAction,
   type ProtocolDefinition,
@@ -31,8 +32,8 @@ import {
  * value lands either - it asks `structureAbiOutputs`, by probe.
  *
  * The path is resolved by handing it to `processTemplate`, so the rules are
- * the executor's and not a restatement of them, in both the spellings a
- * binding can carry. That resolver is more forgiving in one direction and
+ * the executor's and not a restatement of them, in all three of the spellings
+ * a binding can carry. That resolver is more forgiving in one direction and
  * stricter in another than a naive walk: it maps a field access over an array
  * cursor, so any path at all under an array-typed value "resolves", to an
  * array of `undefined`; and it aborts on `null` as well as `undefined`. The
@@ -52,8 +53,17 @@ function sampleValue(output: AbiOutputParam): unknown {
   // Tuple before array: a `tuple[]` is both, and sampling it as an empty
   // array would leave structureAbiValue's element branch unexercised.
   if (type.startsWith("tuple")) {
-    const element = (output.components ?? []).map((c) => sampleValue(c));
-    return type.endsWith("]") ? [element] : element;
+    if (type.endsWith("]")) {
+      // One nesting level per array dimension, because structureAbiValue
+      // strips one per recursion: a `tuple[][]` sampled as `[components]`
+      // would hand structureTuple a component value instead of a tuple, and
+      // the component names would be dropped from a shape this file then
+      // asks paths of.
+      return [
+        sampleValue({ ...output, type: type.replace(ARRAY_DIMENSION, "") }),
+      ];
+    }
+    return (output.components ?? []).map((c) => sampleValue(c));
   }
   if (type.endsWith("]")) {
     // One element, not none. An empty array renders as the empty string, and
@@ -76,23 +86,26 @@ function sampleValue(output: AbiOutputParam): unknown {
 }
 
 /**
- * The two spellings of a binding the executor resolves, walked by two
+ * The three spellings of a binding the executor resolves, walked by three
  * near-identical but separate functions. `{{@nodeId:Label.field}}` is what a
  * saved workflow stores and goes through `resolveFieldPath`; `{{$nodeId.field}}`
- * is the legacy spelling still accepted at runtime and goes through
- * `resolveExpressionById`. Both are exercised rather than one taken as proof
- * of the other, which is what lets them drift.
+ * is the legacy id spelling and goes through `resolveExpressionById`; a token
+ * starting with neither sigil is read as a node label and goes through
+ * `resolveExpression`. All three are exercised rather than one taken as proof
+ * of the others, which is what lets them drift.
  */
 const BINDING_FORMATS = [
   { name: "stored", token: (path: string): string => `{{@step:Step.${path}}}` },
-  { name: "legacy", token: (path: string): string => `{{$step.${path}}}` },
+  { name: "legacy id", token: (path: string): string => `{{$step.${path}}}` },
+  { name: "legacy label", token: (path: string): string => `{{Step.${path}}}` },
 ];
 
 /**
  * A render carrying no value at all. Mapping a field access over an array
  * cursor yields an array of `undefined`, which formats to nothing but the
- * separators between its elements. Every sampled leaf is a non-empty string,
- * number or boolean, so nothing that did resolve can render this way.
+ * separators between its elements. An empty array renders the same way, and so
+ * would an empty-string leaf: the sampler above happens to produce neither,
+ * which is a property of the sampler and not something anything enforces.
  */
 const EMPTY_RENDER = /^[\s,]*$/;
 
@@ -108,11 +121,19 @@ const EMPTY_RENDER = /^[\s,]*$/;
  *
  * The tracker alone is not the answer. It reports a path under an array
  * cursor as resolved, because an array of `undefined` is neither `undefined`
- * nor `null` - which would let a suggestion naming a component that does not
- * exist pass, on exactly the tuple-array shapes where a suggestion is hardest
- * to eyeball. So the render has to be non-empty too.
+ * nor `null`. So the render has to be non-empty too, which catches the phantom
+ * paths that map to `undefined` on every element - the tuple-array shapes
+ * where a suggestion is hardest to eyeball, and the case this was written for.
  *
- * Returns one entry per spelling that produced no value; empty means both
+ * Necessary, not sufficient. A phantom whose name is a real property of the
+ * elements renders a value and passes: advertising `<array path>.length` on
+ * any of the plain-array reads maps to each element's own `length` and renders
+ * "42" off a sampled address. So does a component path that became addressable
+ * for the wrong reason, such as the `tuple[]` components that would appear if
+ * `appendTupleComponentPaths` stopped refusing them. What this rules out is a
+ * path with no counterpart in the value at all.
+ *
+ * Returns one entry per spelling that produced no value; empty means all three
  * resolved.
  */
 function unresolvedBindings(stepOutput: unknown, path: string): string[] {
@@ -127,7 +148,11 @@ function unresolvedBindings(stepOutput: unknown, path: string): string[] {
     if (tracker.unresolved.length > 0) {
       failures.push(`${format.name}: no such path`);
     } else if (EMPTY_RENDER.test(rendered)) {
-      failures.push(`${format.name}: resolved to an array of undefined`);
+      // The render itself, not an inference about why it is empty: an array of
+      // `undefined` and an empty array are both spelled "" here.
+      failures.push(
+        `${format.name}: resolved to an empty render (${JSON.stringify(rendered)})`
+      );
     }
   }
   return failures;
@@ -214,6 +239,61 @@ function findRead(slug: string): {
     throw new Error(`${slug} is not a registered read`);
   }
   return { def, action };
+}
+
+/** The parsed ABI entries an override map has to be keyed against. */
+type AbiJsonEntry = {
+  type?: string;
+  name?: string;
+  outputs?: AbiOutputParam[];
+};
+
+/**
+ * Every input the ABI-driven protocol modules hand `defineAbiProtocol`,
+ * recorded as they hand it over.
+ *
+ * The registry cannot answer this. `defineAbiProtocol` consumes the override
+ * maps to derive the actions and keeps only the result, so an override that
+ * was never applied leaves no trace on the definition. The one place the raw
+ * input exists is the call itself, so the protocol module graph is loaded a
+ * second time with that function wrapped. The reload is isolated to this file
+ * and the definitions it produces are thrown away; only the inputs are kept.
+ */
+async function captureAbiProtocolInputs(): Promise<AbiDrivenProtocolInput[]> {
+  const captured: AbiDrivenProtocolInput[] = [];
+  vi.resetModules();
+  vi.doMock("@/lib/protocol-registry", async () => {
+    const actual = await vi.importActual<
+      typeof import("@/lib/protocol-registry")
+    >("@/lib/protocol-registry");
+    return {
+      ...actual,
+      defineAbiProtocol: (input: AbiDrivenProtocolInput) => {
+        captured.push(input);
+        return actual.defineAbiProtocol(input);
+      },
+    };
+  });
+  await import("@/protocols");
+  vi.doUnmock("@/lib/protocol-registry");
+  vi.resetModules();
+  return captured;
+}
+
+/**
+ * The keys an `outputs:` override map on a function may use: each ABI output
+ * param's own name, or the `result` / `result<index>` stand-in the derivation
+ * substitutes for an unnamed one, as `AbiFunctionOverride` documents.
+ *
+ * Restated here because the derivation's fallback is private. A drift in it
+ * fails this test on a key that is in fact valid - visible and wrong in the
+ * safe direction, rather than a key quietly going unchecked.
+ */
+function outputOverrideKeys(outputs: AbiOutputParam[]): string[] {
+  return outputs.map(
+    (param, index) =>
+      param.name?.trim() || (outputs.length === 1 ? "result" : `result${index}`)
+  );
 }
 
 const reads = getRegisteredProtocols().flatMap((def) =>
@@ -364,31 +444,56 @@ describe("the shapes named in review", () => {
 
 describe("curated output labels", () => {
   /**
-   * The rule, stated rather than left as a side effect of the sweep below:
-   * every registered read action declares one `action.outputs` entry per
-   * top-level ABI output, in ABI order.
+   * Where a curated label is actually lost: the `outputs:` map in a protocol's
+   * function override is keyed by ABI output param name, and a key that names
+   * nothing is not an error anywhere. The derivation finds no override for the
+   * param, keeps the generic title-cased ABI name as the label, and the
+   * wording the author wrote is simply gone.
    *
-   * `outputs` is optional on `ProtocolAction`, so this is a policy the type
-   * does not carry. Two things rest on it. The positional join below is only
-   * sound while the two lists line up - with `outputs` shorter, the label for
-   * ABI output 2 would be read off entry 2 of a list that never described it.
-   * And a read with no curated labels is a read whose template suggestions
-   * cannot say which of six uint256s is the health factor, which is the whole
-   * point of the field.
+   * Neither the sweep below nor the path sweep above can see that. Both read
+   * the advertised description and the curated label off the same derived
+   * action, so a label that was never applied is missing from both sides and
+   * they agree. Only the override map as written catches it, which is why this
+   * test goes back to the protocol modules for it.
    */
-  it("declares one curated label per top-level ABI output", () => {
-    const mismatched = reads
-      .map(({ def, action }) => ({
-        id: `${def.slug}/${action.slug}`,
-        declared: (action.outputs ?? []).length,
-        abi: (abiOutputsOf(def, action) ?? []).length,
-      }))
-      .filter(({ declared, abi }) => declared !== abi)
-      .map(
-        ({ id, declared, abi }) =>
-          `${id}: declares ${declared} curated output label(s) for ${abi} ABI output(s). Add one \`outputs\` entry per top-level ABI output, in ABI order, each carrying the wording a user should see for that value.`
-      );
-    expect(mismatched).toEqual([]);
+  it("keys every outputs override by an ABI output the function has", async () => {
+    const problems: string[] = [];
+    let checkedKeys = 0;
+
+    for (const input of await captureAbiProtocolInputs()) {
+      for (const [contractKey, contract] of Object.entries(input.contracts)) {
+        const abi = JSON.parse(contract.abi) as AbiJsonEntry[];
+        for (const [fnName, override] of Object.entries(
+          contract.overrides ?? {}
+        )) {
+          if (!override.outputs) {
+            continue;
+          }
+          const fn = abi.find(
+            (entry) => entry.type === "function" && entry.name === fnName
+          );
+          if (!fn) {
+            problems.push(
+              `${input.slug}/${contractKey}: overrides "${fnName}", which is not a function in that contract's ABI, so none of it applies`
+            );
+            continue;
+          }
+          const valid = outputOverrideKeys(fn.outputs ?? []);
+          for (const key of Object.keys(override.outputs)) {
+            checkedKeys++;
+            if (!valid.includes(key)) {
+              problems.push(
+                `${input.slug}/${contractKey}/${fnName}: outputs override key "${key}" names no ABI output of that function, so its wording is silently dropped and the generic derived label is what a user sees. Valid keys: ${valid.length > 0 ? valid.join(", ") : "(the function returns nothing)"}`
+              );
+            }
+          }
+        }
+      }
+    }
+
+    expect(problems).toEqual([]);
+    // A sweep that matched nothing would pass vacuously.
+    expect(checkedKeys).toBeGreaterThan(0);
   });
 
   it("puts every curated label on the path the runtime actually uses", () => {
