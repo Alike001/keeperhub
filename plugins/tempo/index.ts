@@ -152,6 +152,7 @@ const tempoPlugin: IntegrationPlugin = {
           key: "payouts",
           label: "Payouts",
           type: "template-textarea",
+          format: "json",
           placeholder:
             '[{"recipient":"0x...","amount":"100.50","memo":"INV-1042"}] or {{NodeName.payouts}}',
           helpTip:

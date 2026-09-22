@@ -235,6 +235,22 @@ export function canBeautifyLanguage(language: string): boolean {
   return JSON_LANGUAGES.has(normalized) || JAVASCRIPT_LANGUAGES.has(normalized);
 }
 
+/**
+ * One line naming what the action will produce, for the control's tooltip.
+ * Says the target format and the indent, which is the part a user cannot
+ * guess from the label alone.
+ */
+export function describeBeautifyTarget(language: string): string {
+  const normalized = language.toLowerCase();
+  if (JSON_LANGUAGES.has(normalized)) {
+    return `Reformat as JSON, ${INDENT_WIDTH}-space indent. Workflow references are kept as they are.`;
+  }
+  if (JAVASCRIPT_LANGUAGES.has(normalized)) {
+    return `Reformat as JavaScript, ${INDENT_WIDTH}-space indent. Workflow references are kept as they are.`;
+  }
+  return "No formatter is available for this field.";
+}
+
 export function beautifySource(
   source: string,
   language: string

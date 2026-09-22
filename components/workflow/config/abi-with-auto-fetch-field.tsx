@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { ChainResponse } from "@/app/api/chains/route";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { BeautifyButton } from "@/components/ui/beautify-button";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
@@ -13,6 +14,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { TemplateBadgeTextarea } from "@/components/ui/template-badge-textarea";
 import { toChecksumAddress, truncateAddress } from "@/lib/address-utils";
 import { buildAddressUrl } from "@/lib/build-explorer-url";
+import { useBeautify } from "@/lib/hooks/use-beautify";
 import type { ActionConfigFieldBase } from "@/plugins/registry";
 
 const AUTO_FETCH_DEBOUNCE_MS = 600;
@@ -472,6 +474,14 @@ export function AbiWithAutoFetchField({
   const useManualAbi = String(config.useManualAbi) === "true";
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const readAbi = useCallback((): string => value, [value]);
+  const { pending: abiBeautifyPending, beautify: beautifyAbi } = useBeautify({
+    apply: onChange,
+    disabled,
+    language: "json",
+    read: readAbi,
+  });
   const [isProxy, setIsProxy] = useState(false);
   const [implementationAddress, setImplementationAddress] = useState<
     string | null
@@ -869,6 +879,17 @@ export function AbiWithAutoFetchField({
           proxyWarning={proxyWarning}
           useProxyAbi={useProxyAbi}
         />
+      )}
+
+      {useManualAbi && (
+        <div className="flex justify-end">
+          <BeautifyButton
+            disabled={disabled || isLoading}
+            language="json"
+            onBeautify={beautifyAbi}
+            pending={abiBeautifyPending}
+          />
+        </div>
       )}
 
       <TemplateBadgeTextarea

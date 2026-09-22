@@ -109,6 +109,12 @@ export type ActionConfigFieldBase = {
   // Number of rows (for textarea)
   rows?: number;
 
+  // For template-textarea fields whose value is JSON: offers a Beautify
+  // action above the field. Set it only where the value is always JSON -
+  // a message body or a line-oriented format has nothing to reformat, and
+  // the action would only ever report a parse error on it.
+  format?: "json";
+
   // Min value (for number fields)
   min?: number;
 

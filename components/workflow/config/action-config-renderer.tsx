@@ -1,7 +1,8 @@
 "use client";
 
 import { ChevronDown, Info } from "lucide-react";
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
+import { BeautifyButton } from "@/components/ui/beautify-button";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,6 +24,7 @@ import {
 } from "@/components/ui/select";
 import { TemplateBadgeInput } from "@/components/ui/template-badge-input";
 import { TemplateBadgeTextarea } from "@/components/ui/template-badge-textarea";
+import { useBeautify } from "@/lib/hooks/use-beautify";
 import { SaveAddressBookmark } from "@/components/address-book/save-address-bookmark";
 import type { AbiComponent } from "@/components/workflow/config/abi-types";
 import { ArrayInputField } from "@/components/workflow/config/array-input-field";
@@ -117,15 +119,35 @@ function TemplateTextareaField({
   onChange,
   disabled,
 }: FieldProps) {
+  const readValue = useCallback((): string => value, [value]);
+  const { pending, beautify } = useBeautify({
+    apply: onChange,
+    disabled,
+    language: "json",
+    read: readValue,
+  });
+
   return (
-    <TemplateBadgeTextarea
-      disabled={disabled}
-      id={field.key}
-      onChange={onChange}
-      placeholder={field.placeholder}
-      rows={field.rows || 4}
-      value={value}
-    />
+    <div className="space-y-1">
+      {field.format === "json" && (
+        <div className="flex justify-end">
+          <BeautifyButton
+            disabled={disabled}
+            language="json"
+            onBeautify={beautify}
+            pending={pending}
+          />
+        </div>
+      )}
+      <TemplateBadgeTextarea
+        disabled={disabled}
+        id={field.key}
+        onChange={onChange}
+        placeholder={field.placeholder}
+        rows={field.rows || 4}
+        value={value}
+      />
+    </div>
   );
 }
 

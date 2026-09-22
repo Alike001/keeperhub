@@ -4,6 +4,7 @@ import {
   beautifyJson,
   beautifySource,
   canBeautifyLanguage,
+  describeBeautifyTarget,
 } from "@/lib/utils/beautify";
 
 function expectOk(outcome: { ok: boolean }): asserts outcome is {
@@ -137,5 +138,20 @@ describe("beautifySource", () => {
   it("refuses a language it cannot format", async () => {
     const outcome = await beautifySource("select 1", "sql");
     expect(outcome.ok).toBe(false);
+  });
+});
+
+describe("describeBeautifyTarget", () => {
+  it("names JSON and the indent", () => {
+    expect(describeBeautifyTarget("json")).toContain("JSON");
+    expect(describeBeautifyTarget("json")).toContain("2-space");
+  });
+
+  it("names JavaScript for the code fields", () => {
+    expect(describeBeautifyTarget("javascript")).toContain("JavaScript");
+  });
+
+  it("says so when no formatter applies", () => {
+    expect(describeBeautifyTarget("sql")).toContain("No formatter");
   });
 });

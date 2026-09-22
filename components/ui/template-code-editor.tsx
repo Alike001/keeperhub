@@ -3,12 +3,12 @@
 import type { EditorProps, Monaco, OnMount } from "@monaco-editor/react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { AlertTriangle } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { toast } from "sonner";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { BeautifyButton } from "@/components/ui/beautify-button";
 import { CodeEditor } from "@/components/ui/code-editor";
 import { api } from "@/lib/api-client";
-import { beautifySource, canBeautifyLanguage } from "@/lib/utils/beautify";
+import { useBeautify } from "@/lib/hooks/use-beautify";
+import { canBeautifyLanguage } from "@/lib/utils/beautify";
 import { getInputSchemaFields } from "@/lib/workflow/editor/input-schema-fields";
 import {
   buildExecutionLogsMap,
@@ -84,7 +84,6 @@ export function TemplateCodeEditor({
   editorOptions,
   showBeautify = true,
 }: TemplateCodeEditorProps): React.ReactElement {
-  const [beautifyPending, setBeautifyPending] = useState(false);
   const nodes = useAtomValue(nodesAtom);
   const edges = useAtomValue(edgesAtom);
   const selectedNodeId = useAtomValue(selectedNodeAtom);
@@ -496,31 +495,17 @@ export function TemplateCodeEditor({
    * handleEditorChange re-expands every `{{Label.field}}` into its stored
    * `{{@nodeId:Label.field}}` form using the same mapping typing does.
    */
-  const handleBeautify = useCallback(async (): Promise<void> => {
-    if (disabled || beautifyPending) {
-      return;
-    }
-    const current = editorRef.current?.getModel()?.getValue() ?? displayValue;
-    setBeautifyPending(true);
-    try {
-      const outcome = await beautifySource(current, language);
-      if (outcome.ok) {
-        if (outcome.value !== current) {
-          handleEditorChange(outcome.value);
-        }
-        return;
-      }
-      toast.error("Could not beautify", { description: outcome.error });
-    } finally {
-      setBeautifyPending(false);
-    }
-  }, [
-    beautifyPending,
+  const readDisplayValue = useCallback(
+    (): string => editorRef.current?.getModel()?.getValue() ?? displayValue,
+    [displayValue]
+  );
+
+  const { pending: beautifyPending, beautify } = useBeautify({
+    apply: handleEditorChange,
     disabled,
-    displayValue,
-    handleEditorChange,
     language,
-  ]);
+    read: readDisplayValue,
+  });
 
   const beautifyAvailable = showBeautify && canBeautifyLanguage(language);
 
@@ -531,9 +516,8 @@ export function TemplateCodeEditor({
           <div className="flex items-center justify-end border-b bg-muted/30 px-1.5 py-1">
             <BeautifyButton
               disabled={disabled}
-              onBeautify={() => {
-                handleBeautify();
-              }}
+              language={language}
+              onBeautify={beautify}
               pending={beautifyPending}
             />
           </div>
