@@ -47,6 +47,7 @@ import { withBackstopCapture } from "../lib/security/backstop-capture";
 import { buildAttribution } from "../lib/security/request-attribution";
 import { verifySqsMessageSignature } from "../lib/sqs-message-auth";
 import { generateId } from "../lib/utils/id";
+import { ErrorCategory, logSystemError } from "../lib/logging";
 import { checkConcurrencyLimit } from "../lib/workflow/concurrency";
 import { hashWorkflowDefinition } from "../lib/workflow/content-hash";
 import { SHUTDOWN_TIMEOUT_MS } from "../lib/workflow/executor/runner-constants";
@@ -61,7 +62,7 @@ import { resolveDispatchTarget } from "./execution-mode";
 import { checkWorkflowFeaturesForExecutor } from "./feature-guard";
 import { executeInProcess } from "./in-process";
 import { createWorkflowJob } from "./k8s-job";
-import { trackLatency } from "./lib/correlation-map";
+import { takeLatency, trackLatency } from "./lib/correlation-map";
 import { enableBroadcastMarkers, sweepBroadcastMarkers } from "./lib/broadcast-marker";
 import {
   claimPendingForExecution,
@@ -321,7 +322,23 @@ async function dispatchExecution(params: {
       break;
     }
     case "api": {
-      await executeViaApi({ workflowId, executionId, input, triggerType });
+      // Correlation map (issue #2289): an api-target run executes inside the
+      // Next app pod via executeViaApi - no runner pod, no metrics ingest -
+      // so nothing will ever post a received-completed observation to free
+      // this entry. Take it as soon as the hand-off settles, success or
+      // failure; holding it made the 1024-slot ring turn over on message
+      // volume and cost slow k8s-job runs their own entries.
+      try {
+        await executeViaApi({ workflowId, executionId, input, triggerType });
+      } finally {
+        if (latency !== undefined) {
+          try {
+            takeLatency(latency.correlationId);
+          } catch {
+            // Cleanup must not mask the dispatch outcome.
+          }
+        }
+      }
       break;
     }
     case "in-process": {
@@ -385,7 +402,12 @@ async function dispatchExecution(params: {
         dispatchTarget: target,
       });
     } catch (latencyError) {
-      console.error(
+      // logSystemError, not console.error: a swallowed instrumentation failure
+      // must still produce an error metric and a Sentry event, or the three
+      // throw paths this catch turned into swallow paths would degrade the
+      // headline histograms to zero samples with nothing anywhere saying so.
+      logSystemError(
+        ErrorCategory.WORKFLOW_ENGINE,
         "[Executor] Latency instrumentation failed (dispatch unaffected):",
         latencyError
       );
@@ -1150,7 +1172,10 @@ async function listen(): Promise<void> {
               obsApplied = obs.applied;
               obsSkipped = obs.skipped;
             } catch (observationError) {
-              console.error(
+              // Same reasoning as the dispatch-side catch: this is now a
+              // swallow path, so it must be visible to metrics and Sentry.
+              logSystemError(
+                ErrorCategory.INFRASTRUCTURE,
                 "[Executor] Latency observation ingest failed (counters unaffected):",
                 observationError
               );

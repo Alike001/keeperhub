@@ -147,8 +147,9 @@ export function markBroadcast(
     // First write wins (`wx`), matching ExecutionLatency.mark's first-wins
     // semantics. Without it a multi-write run keeps its *last* broadcast, and
     // `observed -> last broadcast` would carry the later step's full
-    // confirmation wait into the headline interval. EEXIST is swallowed by the
-    // catch below, which is the intended outcome: the earlier mark stands.
+    // confirmation wait into the headline interval. EEXIST is the intended
+    // outcome here - the earlier mark stands - and is swallowed below like
+    // every other write failure, because the write path must never notice.
     writeFileSync(
       getBroadcastMarkerPath(executionId),
       JSON.stringify({
@@ -157,10 +158,29 @@ export function markBroadcast(
       } satisfies BroadcastMarker),
       { encoding: "utf-8", flag: "wx" }
     );
-  } catch {
+  } catch (error) {
+    // EEXIST is the first-wins race working as designed, not a failure.
+    // Everything else (ENOSPC, EACCES) means the sidecar is unavailable and
+    // every later write will fail the same way, so count it: the registered
+    // broadcast counter still records that a broadcast happened, and this
+    // counter records that the histogram will not see its timestamp.
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    if (code !== "EEXIST") {
+      broadcastWriteFailures++;
+    }
     // Sidecar unavailable (read-only fs, sandbox): the registered broadcast
     // counter still records that a broadcast happened this run.
   }
+}
+
+/**
+ * How many broadcast marker writes failed for a reason other than the
+ * first-wins EEXIST. Diagnostic only; a sustained rise means the sidecar
+ * filesystem is unavailable and the observed -> broadcast histogram is
+ * silently losing every sample.
+ */
+export function getBroadcastWriteFailures(): number {
+  return broadcastWriteFailures;
 }
 
 /** Process-local count of broadcasts this pod has performed (diagnostic). */
@@ -299,6 +319,18 @@ function parseMarker(raw: string): BroadcastMarker | undefined {
 // exact no matter when the collector appears. Where the collector never
 // becomes available (tests without the server-only shim) this stays a
 // no-op - observability must not be able to fail a transaction.
+/**
+ * Broadcasts whose sidecar write failed with something other than the
+ * expected EEXIST. The only expected failure is the first-wins race (the
+ * marker already exists), so any other code - ENOSPC on a full emptyDir,
+ * EACCES on a read-only fs - means the sidecar is down for this process and
+ * every subsequent marker write will fail the same way. Exported through
+ * getBroadcastWriteFailures so a scrape or test can tell "no broadcasts
+ * happened" apart from "broadcasts happened and none could be recorded" -
+ * the second is the silent zero-sample histogram the review flagged.
+ */
+let broadcastWriteFailures = 0;
+
 let broadcastCount = 0;
 let broadcastCounter: import("prom-client").Counter<string> | undefined;
 let broadcastCounterRequested = false;

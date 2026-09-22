@@ -74,6 +74,10 @@ vi.mock("../lib/logging", () => ({
   logInfo: vi.fn(),
   logWarn: vi.fn(),
   logError: vi.fn(),
+  logSystemError: vi.fn(),
+  // in-process.ts reads ErrorCategory.WORKFLOW_ENGINE for the swallow-path
+  // logSystemError call; the real enum value is just the string.
+  ErrorCategory: { WORKFLOW_ENGINE: "workflow_engine" },
 }));
 
 const { executeInProcess } = await import("./in-process");
@@ -170,6 +174,104 @@ describe("executeInProcess broadcast marker cleanup (issue #2289 blocking item)"
       );
     expect(recorded).toHaveLength(3);
     expect(recorded.some((ms) => ms > 1_000_000)).toBe(true);
+  });
+
+  it("a recordLatency throw cannot fail a run that succeeded (instrumentation cannot fail a run)", async () => {
+    // The headline guarantee of the try/catch increment: the wrapper around
+    // recordInProcessLatency sits inside the try and before applyExecutionResult,
+    // so before it landed a throw there reached the catch and wrote status
+    // "error" for a run that completed (and updateScheduleStatus has no
+    // terminal-state filter, so a scheduled run was recorded failed with
+    // runCount never incremented). The collector stub's recordLatency is
+    // replaced once so the first recordLatency call throws the way an
+    // unregistered label does - the throw lands inside the wrapper, not at
+    // the collector lookup, which is the surface production throws on.
+    const { getMetricsCollector } = await import("../lib/metrics");
+    const throwingCollector = {
+      recordLatency: vi.fn(() => {
+        throw new Error("histogram label not registered");
+      }),
+    };
+    vi.mocked(getMetricsCollector).mockImplementationOnce(
+      () => throwingCollector as never
+    );
+    vi.mocked(
+      (await import("../lib/workflow/executor/executor.workflow"))
+        .executeWorkflow
+    ).mockImplementationOnce(async () => ({
+      success: true,
+      results: {},
+      outputs: {},
+    }));
+
+    await executeInProcess({
+      workflowId: "wf-1",
+      executionId: "exec-instr-throw",
+      input: {},
+      triggerType: "schedule",
+      scheduleId: "sched-1",
+      db: {} as never,
+    });
+
+    // The run reached its authoritative terminal write, not the error catch.
+    expect(dbHelpers.applyExecutionResult).toHaveBeenCalledWith(
+      expect.anything(),
+      "exec-instr-throw",
+      expect.objectContaining({ success: true }),
+      expect.objectContaining({ scheduleId: "sched-1" })
+    );
+    expect(dbHelpers.updateExecutionStatus).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "exec-instr-throw",
+      "error",
+      expect.anything()
+    );
+    expect(dbHelpers.updateScheduleStatus).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "sched-1",
+      "error",
+      expect.anything()
+    );
+    // The swallow path is visible: an error metric + Sentry event, not stdout only.
+    const { logSystemError } = await import("../lib/logging");
+    expect(logSystemError).toHaveBeenCalledTimes(1);
+  });
+
+  it("frees its correlation-map entry at run end (in-process ships nothing)", async () => {
+    // The executor tracks every message under its correlation id at SQS
+    // receive; only the k8s-job ingest ever freed an entry, so in-process
+    // entries sat until the ring turned over on volume and cost slow k8s-job
+    // runs their slots (the blocking leak). The finally in executeInProcess
+    // takes the entry when the run ends, whatever the outcome.
+    const { trackLatency, peekLatency, clearLatencyMap } = await import("./lib/correlation-map");
+    const { ExecutionLatency } = await import("./latency");
+    // The cap test in correlation-map.test.ts runs the age scan in this
+    // shared worker only at 60 s intervals; a reset here guarantees this
+    // test's first track performs the scan regardless of order.
+    clearLatencyMap();
+    const latency = new ExecutionLatency("corr-free");
+    latency.mark("received", Date.now() - 5);
+    trackLatency(latency);
+    expect(peekLatency("corr-free")).toBe(latency);
+
+    vi.mocked(
+      (await import("../lib/workflow/executor/executor.workflow"))
+        .executeWorkflow
+    ).mockImplementationOnce(async () => {
+      throw new Error("boom on the freeing path");
+    });
+
+    await executeInProcess({
+      workflowId: "wf-1",
+      executionId: "exec-free",
+      input: {},
+      triggerType: "manual",
+      db: {} as never,
+      correlationId: "corr-free",
+    });
+
+    // Freed even though the run failed: no observation will ever arrive.
+    expect(peekLatency("corr-free")).toBeUndefined();
   });
 
   it("a failing run with no broadcast marker cleans up nothing and still reports the error", async () => {

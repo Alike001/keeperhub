@@ -29,6 +29,14 @@ function isEphemeralNonceError(err: unknown): boolean {
  * an artifact of the shared wallet, not a property of the code under
  * test, so it must not fail an emit loop that exists to tolerate missed
  * events. Any other error propagates immediately.
+ *
+ * Known tradeoff, accepted deliberately: "nonce too low" can also mean
+ * the transaction already landed, in which case a retry emits the event a
+ * second time. Every call site in these suites tolerates that (the
+ * tracker dedupes by tx hash / log id, and a duplicate fixture event
+ * exercises the same code path), so the retry is duplicate-side-effect
+ * rather than idempotent by design. Revisit before reusing this helper
+ * anywhere a repeated write is not tolerated.
  */
 export async function emitWithNonceRetry<T>(
   emit: () => Promise<T>,
@@ -43,8 +51,12 @@ export async function emitWithNonceRetry<T>(
       }
       lastErr = err;
       // Anvil auto-mines, so by the next tick the account nonce has
-      // advanced past the lost race; a short backoff is enough.
-      await new Promise((r) => setTimeout(r, 150 * (attempt + 1)));
+      // advanced past the lost race; a short backoff is enough. No sleep
+      // after the final attempt: the caller is about to see the throw,
+      // and the backoff exists only to give the next attempt a chance.
+      if (attempt < MAX_NONCE_RETRIES) {
+        await new Promise((r) => setTimeout(r, 150 * (attempt + 1)));
+      }
     }
   }
   throw lastErr;

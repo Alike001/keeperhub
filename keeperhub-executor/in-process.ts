@@ -8,8 +8,13 @@ import { executeWorkflow } from "../lib/workflow/executor/executor.workflow";
 import type { WorkflowEdge, WorkflowNode } from "../lib/workflow/store";
 import { loadWorkflowForExecution } from "../lib/workflow/load-for-execution";
 import type { ApiExecuteTriggerType } from "./api-execute";
+// Correlation map (issue #2289): the executor tracks every message's timeline
+// under its correlation id before dispatch; this target's entries are freed
+// here at run end because no observation will ever arrive to free them.
+import { takeLatency } from "./lib/correlation-map";
 import { ExecutionLatency } from "./latency";
 import type { DbSchema } from "./lib/db-helpers";
+import { ErrorCategory, logSystemError } from "../lib/logging";
 import {
   applyExecutionResult,
   initializeExecutionProgress,
@@ -146,7 +151,10 @@ export async function executeInProcess(params: {
         triggerType,
       });
     } catch (latencyError) {
-      console.error(
+      // logSystemError, not console.error: this catch is a swallow path now,
+      // so the failure must reach the error metric and Sentry, not just stdout.
+      logSystemError(
+        ErrorCategory.WORKFLOW_ENGINE,
         "[Executor:InProcess] Latency instrumentation failed (run unaffected):",
         latencyError
       );
@@ -209,6 +217,20 @@ export async function executeInProcess(params: {
         "[Executor:InProcess] Failed to update execution status:",
         updateError
       );
+    }
+  } finally {
+    // Correlation map (issue #2289): the timeline was tracked under this
+    // correlation id at SQS receive, but no runner will ever ingest an
+    // observation for an in-process run, so waiting for one held the slot
+    // for the map's whole turnover window (the leak the review flagged:
+    // only k8s-job entries were ever freed). Freeing in a finally covers
+    // every exit - success, throw, and the cancelled early return alike.
+    if (params.correlationId !== undefined) {
+      try {
+        takeLatency(params.correlationId);
+      } catch {
+        // Never let map cleanup mask the run's own outcome.
+      }
     }
   }
 }

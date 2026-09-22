@@ -252,8 +252,13 @@ export class ExecutionLatency {
         extras[key] = String(value);
       }
     }
-    const obsToBroadcast = this.broadcastMs();
-    if (obsToBroadcast !== undefined) {
+    const obsToBroadcast = this.rawStageMs("observed", "broadcast");
+    if (obsToBroadcast !== undefined && obsToBroadcast >= 0) {
+      // Raw, non-negative delta - the same guard the recording sites apply
+      // before writing a sample. A skewed run logs no interval at all,
+      // matching the histogram that (correctly) has no sample; with the
+      // clamped stageMs() the log said 0 ms for exactly the run whose sample
+      // was dropped, and the two disagreed on the skew case.
       extras.observed_to_broadcast_ms = String(obsToBroadcast);
     }
     logInfo("execution latency stages", { ...labels, ...extras });

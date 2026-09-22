@@ -45,52 +45,72 @@ export function applyObservations(
   let skipped = 0;
 
   for (const o of observations) {
-    const latency = peekLatency(o.correlationId);
-    const labels = {
-      [LabelKeys.TRIGGER_TYPE]: o.triggerType,
-      [LabelKeys.DISPATCH_TARGET]: o.dispatchTarget,
-    };
-
-    if (o.stage === "observed-broadcast") {
-      // Self-contained interval: the pod measured observedAt -> broadcast.
-      // Even without the correlation entry the sample is placeable.
-      recordSample(MetricNames.EXECUTOR_BROADCAST_LATENCY, o.durationMs, labels);
-      // Reconstruct the broadcast epoch on the timeline so the per-run log
-      // line carries the same interval the histogram recorded.
-      const observedAt = latency?.at("observed");
-      latency?.mark(
-        "broadcast",
-        observedAt !== undefined ? observedAt + o.durationMs : Date.now()
+    // Per-observation isolation: the only thing in the loop that can throw is
+    // the collector (recordLatency throws on an unregistered label). Without
+    // this guard a throw on observation k answered the ingest with
+    // obsApplied = 0 / obsSkipped = N even though 0..k-1 were recorded - and
+    // anyone alerting on obsSkipped read a total failure for a partial one.
+    // One bad observation now costs itself and the batch continues.
+    try {
+      if (applyOne(o)) {
+        applied++;
+      } else {
+        skipped++;
+      }
+    } catch (error) {
+      skipped++;
+      console.error(
+        `[Executor] Latency observation ${o.stage} for correlation ${o.correlationId} failed to apply (skipped):`,
+        error
       );
-      applied++;
-    } else {
-      // received-completed: the executor's own received stamp anchors the
-      // start, so only the completion offset is taken from the pod.
-      if (!latency) {
-        skipped++;
-        continue;
-      }
-      const receivedAt = latency.at("received");
-      if (receivedAt === undefined) {
-        skipped++;
-        continue;
-      }
-      latency.mark("completed", receivedAt + o.durationMs);
-      const totalMs = latency.totalMs();
-      if (totalMs === undefined) {
-        skipped++;
-        continue;
-      }
-      recordSample(MetricNames.EXECUTOR_EXECUTION_LATENCY, totalMs, {
-        ...labels,
-        [LabelKeys.STAGE]: "completed",
-      });
-      takeLatency(o.correlationId); // timeline fully observed; free the entry
-      applied++;
     }
   }
 
   return { applied, skipped };
+}
+
+/** Apply one observation; false means it was not placeable (skip, not error). */
+function applyOne(o: LatencyObservation): boolean {
+  const latency = peekLatency(o.correlationId);
+  const labels = {
+    [LabelKeys.TRIGGER_TYPE]: o.triggerType,
+    [LabelKeys.DISPATCH_TARGET]: o.dispatchTarget,
+  };
+
+  if (o.stage === "observed-broadcast") {
+    // Self-contained interval: the pod measured observedAt -> broadcast.
+    // Even without the correlation entry the sample is placeable.
+    recordSample(MetricNames.EXECUTOR_BROADCAST_LATENCY, o.durationMs, labels);
+    // Reconstruct the broadcast epoch on the timeline so the per-run log
+    // line carries the same interval the histogram recorded.
+    const observedAt = latency?.at("observed");
+    latency?.mark(
+      "broadcast",
+      observedAt !== undefined ? observedAt + o.durationMs : Date.now()
+    );
+    return true;
+  }
+
+  // received-completed: the executor's own received stamp anchors the
+  // start, so only the completion offset is taken from the pod.
+  if (!latency) {
+    return false;
+  }
+  const receivedAt = latency.at("received");
+  if (receivedAt === undefined) {
+    return false;
+  }
+  latency.mark("completed", receivedAt + o.durationMs);
+  const totalMs = latency.totalMs();
+  if (totalMs === undefined) {
+    return false;
+  }
+  recordSample(MetricNames.EXECUTOR_EXECUTION_LATENCY, totalMs, {
+    ...labels,
+    [LabelKeys.STAGE]: "completed",
+  });
+  takeLatency(o.correlationId); // timeline fully observed; free the entry
+  return true;
 }
 
 /**

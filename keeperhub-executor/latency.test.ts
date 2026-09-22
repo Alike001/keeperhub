@@ -163,6 +163,33 @@ describe("ExecutionLatency", () => {
     expect(latency.broadcastMs()).toBe(3_250);
   });
 
+  it("emits no observed_to_broadcast_ms for a skewed clock, matching the histogram", () => {
+    // A tracker clock running ahead of the executor stamps observed after
+    // broadcast in wall-clock terms, so the raw delta is negative. The
+    // recording sites drop it (the rawStageMs guard) and the log must agree:
+    // with the clamped stageMs() the log said 0 ms for exactly the run whose
+    // sample was dropped, and the two disagreed on the skew case.
+    const latency = new ExecutionLatency("corr-skew");
+    latency.mark("observed", 2_000);
+    latency.mark("broadcast", 1_500); // 500 ms before "observed"
+
+    expect(latency.rawStageMs("observed", "broadcast")).toBe(-500);
+    expect(latency.stageMs("observed", "broadcast")).toBe(0); // clamped
+
+    latency.emitLog({
+      workflowId: "wf-1",
+      executionId: "exec-1",
+      triggerType: "event",
+      dispatchTarget: "in-process",
+    });
+
+    const [, labels] = logInfoMock.mock.calls[0];
+    expect(labels?.observed_to_broadcast_ms).toBeUndefined();
+    // Both stamps are still individually present and valid.
+    expect(labels?.observedAt).toBe(new Date(2_000).toISOString());
+    expect(labels?.broadcastAt).toBe(new Date(1_500).toISOString());
+  });
+
   it("keeps the ordering contract: skipped stages are simply absent", () => {
     const latency = new ExecutionLatency();
     latency.mark("received", 0);
