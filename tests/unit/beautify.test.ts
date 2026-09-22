@@ -216,3 +216,36 @@ describe("beautifyJson preserves literals exactly", () => {
     ).toBeUndefined();
   });
 });
+
+// A template can fill a user's string entirely. That reads back from the
+// formatter exactly like a template we quoted ourselves to make the document
+// parse, so the mask has to remember which is which - otherwise a string-valued
+// reference silently becomes a bare one and the resolver substitutes the wrong
+// shape.
+describe("beautifyJson and the user's own quotes", () => {
+  it("keeps the quotes when a template is the whole string value", () => {
+    const outcome = beautifyJson('{"recipient":"{{Roster.next}}"}');
+    expectOk(outcome);
+    expect(outcome.value).toBe('{\n  "recipient": "{{Roster.next}}"\n}');
+  });
+
+  it("still drops the quotes it added itself in value position", () => {
+    const outcome = beautifyJson('{"n":{{A.count}}}');
+    expectOk(outcome);
+    expect(outcome.value).toBe('{\n  "n": {{A.count}}\n}');
+  });
+
+  it("handles both shapes in one document", () => {
+    const outcome = beautifyJson('{"a":"{{X.s}}","b":{{X.n}}}');
+    expectOk(outcome);
+    expect(outcome.value).toBe('{\n  "a": "{{X.s}}",\n  "b": {{X.n}}\n}');
+  });
+
+  it("is idempotent across both shapes", () => {
+    const once = beautifyJson('{"a":"{{X.s}}","b":{{X.n}}}');
+    expectOk(once);
+    const twice = beautifyJson(once.value);
+    expectOk(twice);
+    expect(twice.value).toBe(once.value);
+  });
+});

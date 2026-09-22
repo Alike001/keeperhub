@@ -30,6 +30,15 @@ export type BeautifyOutcome =
 type MaskResult = {
   masked: string;
   templates: string[];
+  /**
+   * Per template, whether the placeholder we substituted supplied its own
+   * quotes. Restoring cannot infer this from the formatted text: a template
+   * that filled a user's string entirely (`"{{A.b}}"`) and one that stood in
+   * value position (`{"n": {{A.b}}}`) both read back as a quoted placeholder,
+   * and stripping the quotes off the first would turn a string into a bare
+   * reference.
+   */
+  quoted: boolean[];
   prefix: string;
 };
 
@@ -60,6 +69,7 @@ function placeholderAt(prefix: string, index: number): string {
 function maskJavaScript(source: string): MaskResult {
   const prefix = resolvePrefix(source);
   const templates: string[] = [];
+  const quoted: boolean[] = [];
   let masked = "";
   let index = 0;
 
@@ -68,6 +78,7 @@ function maskJavaScript(source: string): MaskResult {
       const end = source.indexOf(TEMPLATE_CLOSE, index + TEMPLATE_OPEN.length);
       if (end !== -1) {
         masked += placeholderAt(prefix, templates.length);
+        quoted.push(false);
         templates.push(source.slice(index, end + TEMPLATE_CLOSE.length));
         index = end + TEMPLATE_CLOSE.length;
         continue;
@@ -77,7 +88,7 @@ function maskJavaScript(source: string): MaskResult {
     index += 1;
   }
 
-  return { masked, templates, prefix };
+  return { masked, quoted, templates, prefix };
 }
 
 /**
@@ -92,6 +103,7 @@ function maskJavaScript(source: string): MaskResult {
 function maskJson(source: string): MaskResult {
   const prefix = resolvePrefix(source);
   const templates: string[] = [];
+  const quoted: boolean[] = [];
   let masked = "";
   let index = 0;
   let inString = false;
@@ -123,6 +135,7 @@ function maskJson(source: string): MaskResult {
       if (end !== -1) {
         const placeholder = placeholderAt(prefix, templates.length);
         masked += inString ? placeholder : `"${placeholder}"`;
+        quoted.push(!inString);
         templates.push(source.slice(index, end + TEMPLATE_CLOSE.length));
         index = end + TEMPLATE_CLOSE.length;
         continue;
@@ -133,32 +146,37 @@ function maskJson(source: string): MaskResult {
     index += 1;
   }
 
-  return { masked, templates, prefix };
+  return { masked, quoted, templates, prefix };
 }
 
 /**
  * Swap placeholders back for their original template text.
  *
- * The quoted form is restored first: a template that was masked into value
- * position comes back out of the formatter still wrapped in quotes, and those
- * quotes were ours, not the user's. `split`/`join` is used rather than
- * `String.replace` so that `$&` and friends inside a template are treated as
- * literal text.
+ * Whether a quoted placeholder gives its quotes back is decided by the mask,
+ * not by the formatted text, because the two cases are indistinguishable
+ * there. A replacer function is used rather than a replacement string so that
+ * `$&` and friends inside a template stay literal.
  */
 function restoreTemplates(formatted: string, mask: MaskResult): string {
   if (mask.templates.length === 0) {
     return formatted;
   }
   const prefix = mask.prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  // The quoted alternative is first so it wins: a template masked into value
-  // position comes back still wrapped in quotes that were ours, not the
-  // user's. One pass keeps this linear in the field's size - replacing each
-  // placeholder in turn walked the whole document once per template, which on
-  // a field carrying thousands of references stalled the tab for seconds.
+  // One pass keeps this linear in the field's size: replacing each placeholder
+  // in turn walked the whole document once per template, which on a field
+  // carrying thousands of references stalled the tab for seconds.
   const pattern = new RegExp(`"${prefix}(\\d+)__"|${prefix}(\\d+)__`, "g");
-  return formatted.replace(pattern, (match, quoted, bare) => {
-    const index = Number(quoted ?? bare);
-    return mask.templates[index] ?? match;
+  return formatted.replace(pattern, (match, quotedHit, bare) => {
+    const index = Number(quotedHit ?? bare);
+    const template = mask.templates[index];
+    if (template === undefined) {
+      return match;
+    }
+    if (quotedHit === undefined) {
+      return template;
+    }
+    // The quotes around this one are ours only if we added them.
+    return mask.quoted[index] ? template : `"${template}"`;
   });
 }
 
