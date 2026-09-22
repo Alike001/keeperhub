@@ -165,7 +165,7 @@ const dataPlugin: IntegrationPlugin = {
           key: "source",
           label: "Source",
           type: "template-textarea",
-          format: "json",
+          valueFormat: "json",
           required: true,
           rows: 3,
           placeholder:
@@ -255,7 +255,7 @@ const dataPlugin: IntegrationPlugin = {
           key: "sources",
           label: "Sources",
           type: "template-textarea",
-          format: "json",
+          valueFormat: "json",
           required: true,
           rows: 8,
           placeholder:

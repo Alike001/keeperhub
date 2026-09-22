@@ -61,7 +61,7 @@ const EXPECTED_JSON_FIELDS = [
 describe("format: json marking", () => {
   it("is only ever set on template-textarea fields", () => {
     const wrong = allConfigFields()
-      .filter(({ field }) => field.format === "json")
+      .filter(({ field }) => field.valueFormat === "json")
       .filter(({ field }) => field.type !== "template-textarea")
       .map(({ actionType, field }) => `${actionType}.${field.key}`);
 
@@ -70,7 +70,7 @@ describe("format: json marking", () => {
 
   it("covers exactly the fields it is meant to", () => {
     const marked = allConfigFields()
-      .filter(({ field }) => field.format === "json")
+      .filter(({ field }) => field.valueFormat === "json")
       .map(({ actionType, field }) => `${actionType}.${field.key}`)
       .sort();
 
@@ -80,7 +80,7 @@ describe("format: json marking", () => {
   it("leaves every other textarea field unmarked", () => {
     const unmarked = allConfigFields()
       .filter(({ field }) => field.type === "template-textarea")
-      .filter(({ field }) => field.format !== "json")
+      .filter(({ field }) => field.valueFormat !== "json")
       .map(({ actionType, field }) => `${actionType}.${field.key}`);
 
     // Sanity: the prose fields are the majority, so an accidental blanket

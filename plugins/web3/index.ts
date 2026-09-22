@@ -1070,7 +1070,7 @@ const web3Plugin: IntegrationPlugin = {
               key: "abi",
               label: "ABI Override",
               type: "template-textarea",
-              format: "json",
+              valueFormat: "json",
               placeholder: "Paste ABI JSON to use instead of auto-fetching",
               rows: 4,
             },

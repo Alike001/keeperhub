@@ -72,11 +72,16 @@ export function BeautifiableField({
   // `overflow-hidden` clipped it away and left the field with no focus
   // indicator at all, and the dimming stopped reaching the border once the
   // border moved out here. The callers cancel the input's own copies.
+  //
+  // The ring keys off the input specifically rather than `focus-within`: the
+  // button is inside the frame too, so tabbing to it would otherwise ring the
+  // whole field as though the editor had focus.
   return (
     <div
       className={cn(
         "overflow-hidden rounded-md border transition-colors",
-        "focus-within:ring-1 focus-within:ring-ring",
+        "has-[[data-beautify-input]:focus-within]:ring-1",
+        "has-[[data-beautify-input]:focus-within]:ring-ring",
         disabled && "opacity-50",
         className
       )}
@@ -92,7 +97,7 @@ export function BeautifiableField({
           />
         </div>
       )}
-      {children}
+      <div data-beautify-input>{children}</div>
     </div>
   );
 }

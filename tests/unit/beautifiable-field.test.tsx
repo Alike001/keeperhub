@@ -87,8 +87,23 @@ describe("BeautifiableField", () => {
   it("carries the focus ring itself, since it clips one drawn inside", () => {
     render();
     expect(frame().className).toContain("overflow-hidden");
-    expect(frame().className).toContain("focus-within:ring-1");
-    expect(frame().className).toContain("focus-within:ring-ring");
+    expect(frame().className).toContain(
+      "has-[[data-beautify-input]:focus-within]:ring-1"
+    );
+    expect(frame().className).toContain(
+      "has-[[data-beautify-input]:focus-within]:ring-ring"
+    );
+  });
+
+  // The button sits inside the frame, so a plain focus-within would ring the
+  // whole field when the button takes focus, as though the editor had it.
+  it("keys the ring off the input rather than any descendant", () => {
+    render();
+    const marked = container.querySelector("[data-beautify-input]");
+    expect(marked).not.toBeNull();
+    expect(marked?.querySelector('[data-testid="input"]')).not.toBeNull();
+    expect(marked?.querySelector("button")).toBeNull();
+    expect(frame().className).not.toMatch(/(^|\s)focus-within:ring-1/);
   });
 
   it("dims itself when disabled", () => {

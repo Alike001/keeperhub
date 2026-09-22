@@ -124,6 +124,17 @@ function placeholderAt(prefix: string, index: number): string {
  * that whole span unformatted. Bounding on `{` alone was not enough: a gap
  * with no brace in it, `"{{ oops", "b": "x}}y"`, still swallowed.
  */
+/**
+ * These are stricter than the resolvers, deliberately.
+ *
+ * `lib/utils/template.ts` and the executor read a body as `[^}]+`, so a label
+ * holding a quote or a semicolon resolves at run time, and
+ * `lib/mcp/validate-workflow-web3.ts` records a decision to permit `{` there
+ * for that reason. Formatting is not resolution: a candidate that reaches
+ * past a string boundary here swallows the rest of the field, so the bound is
+ * tighter. The cost is a field that cannot be formatted, never one that is
+ * formatted wrongly - `withReferencesIntact` is what makes that true.
+ */
 const JSON_FORBIDDEN_IN_BODY = new Set(["{", '"', "\n", "\r", ";"]);
 /**
  * JavaScript additionally rejects the quote characters. Prettier decides a

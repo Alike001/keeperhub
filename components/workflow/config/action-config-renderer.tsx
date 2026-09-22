@@ -155,7 +155,7 @@ function BeautifiableTextareaField({
 }
 
 function TemplateTextareaField(props: FieldProps) {
-  if (props.field.format === "json") {
+  if (props.field.valueFormat === "json") {
     return <BeautifiableTextareaField {...props} />;
   }
   const { field, value, onChange, disabled } = props;
