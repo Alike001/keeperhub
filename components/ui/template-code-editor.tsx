@@ -4,7 +4,7 @@ import type { EditorProps, Monaco, OnMount } from "@monaco-editor/react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { AlertTriangle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { BeautifiableField } from "@/components/ui/beautifiable-field";
+import { BeautifiableField } from "@/components/workflow/config/beautifiable-field";
 import { CodeEditor } from "@/components/ui/code-editor";
 import { api } from "@/lib/api-client";
 import { getInputSchemaFields } from "@/lib/workflow/editor/input-schema-fields";

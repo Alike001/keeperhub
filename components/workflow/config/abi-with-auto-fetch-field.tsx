@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { ChainResponse } from "@/app/api/chains/route";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { BeautifiableField } from "@/components/ui/beautifiable-field";
+import { BeautifiableField } from "@/components/workflow/config/beautifiable-field";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";

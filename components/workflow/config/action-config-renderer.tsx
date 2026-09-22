@@ -1,8 +1,8 @@
 "use client";
 
 import { ChevronDown, Info } from "lucide-react";
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import { BeautifiableField } from "@/components/ui/beautifiable-field";
+import React, { useEffect, useState } from "react";
+import { BeautifiableField } from "@/components/workflow/config/beautifiable-field";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";

@@ -7,10 +7,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { describeBeautifyTarget } from "@/lib/utils/beautify";
 import { cn } from "@/lib/utils";
+import { describeBeautifyTarget } from "@/lib/utils/beautify";
 
-export type BeautifyButtonProps = {
+type BeautifyButtonProps = {
   onBeautify: () => void;
   language: string;
   disabled?: boolean;

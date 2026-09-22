@@ -1,12 +1,12 @@
 "use client";
 
 import { useCallback, useRef } from "react";
-import { BeautifyButton } from "@/components/ui/beautify-button";
+import { BeautifyButton } from "@/components/workflow/config/beautify-button";
 import { useBeautify } from "@/lib/hooks/use-beautify";
-import { canBeautifyLanguage } from "@/lib/utils/beautify";
 import { cn } from "@/lib/utils";
+import { canBeautifyLanguage } from "@/lib/utils/beautify";
 
-export type BeautifiableFieldProps = {
+type BeautifiableFieldProps = {
   /** The field's stored text. Formatting preserves whichever form it is in. */
   value: string;
   onChange: (value: string) => void;
