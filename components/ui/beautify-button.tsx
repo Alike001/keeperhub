@@ -35,25 +35,30 @@ export function BeautifyButton({
 }: BeautifyButtonProps): React.ReactElement {
   return (
     <Tooltip>
+      {/* A disabled button receives no pointer events, so the trigger wraps it
+          rather than being it - otherwise the tooltip explaining the action is
+          unreachable in exactly the state a user is most likely to hover. */}
       <TooltipTrigger asChild>
-        <Button
-          className={cn(
-            "h-6 gap-1.5 px-2 font-normal text-muted-foreground text-xs hover:text-foreground",
-            className
-          )}
-          disabled={disabled || pending}
-          onClick={onBeautify}
-          size="sm"
-          type="button"
-          variant="ghost"
-        >
-          {pending ? (
-            <Loader2 className="size-3 animate-spin" />
-          ) : (
-            <AlignLeft className="size-3" />
-          )}
-          Beautify
-        </Button>
+        <span className="inline-flex">
+          <Button
+            className={cn(
+              "h-6 gap-1.5 px-2 font-normal text-muted-foreground text-xs hover:text-foreground",
+              className
+            )}
+            disabled={disabled || pending}
+            onClick={onBeautify}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            {pending ? (
+              <Loader2 className="size-3 animate-spin" />
+            ) : (
+              <AlignLeft className="size-3" />
+            )}
+            Beautify
+          </Button>
+        </span>
       </TooltipTrigger>
       <TooltipContent className="max-w-64">
         {describeBeautifyTarget(language)}

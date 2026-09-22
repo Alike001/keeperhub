@@ -90,6 +90,8 @@ const STRINGS = [
   '"br {{ and }} ce"',
   '"{{@n1:Read Hat.result}}"',
   '"__KH_TPL_0__"',
+  '"KH_TPL__KH_TPL_0__"',
+  '"KH_TPL___KH_TPL_0__"',
   '"{{not{a}ref}}"',
   '"colon: comma, brace }"',
 ];
@@ -143,6 +145,18 @@ function generate(random: () => number, depth: number): string {
   return pick([...STRINGS, ...SCALARS]);
 }
 
+/**
+ * The strongest oracle in the file, and the simplest: if formatting only
+ * changes whitespace then removing all whitespace from both sides leaves
+ * identical text. It needs no grammar and no tokenizer, so unlike `tokensOf`
+ * it cannot restate a rule the implementation also gets wrong - which is how
+ * a prefix collision that rewrote the user's text slipped past the other
+ * assertions here.
+ */
+function withoutWhitespace(text: string): string {
+  return text.replace(/[ \t\n\r]/g, "");
+}
+
 describe("beautifyJson only ever changes whitespace", () => {
   it.each([1, 2, 3, 4, 5])(
     "holds across generated documents, seed %i",
@@ -159,6 +173,9 @@ describe("beautifyJson only ever changes whitespace", () => {
           continue;
         }
         formatted += 1;
+        expect(withoutWhitespace(outcome.value), `source: ${source}`).toBe(
+          withoutWhitespace(source)
+        );
         expect(tokensOf(outcome.value), `source: ${source}`).toEqual(
           tokensOf(source)
         );
@@ -192,6 +209,8 @@ describe("valid JSON is not refused", () => {
     "back \\ slash",
     "line\nbreak",
     "__KH_TPL_0__",
+    "KH_TPL__KH_TPL_0__",
+    "KH_TPL___KH_TPL_0__",
   ];
 
   function value(random: () => number, depth: number): unknown {

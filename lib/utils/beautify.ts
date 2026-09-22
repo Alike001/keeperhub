@@ -49,18 +49,28 @@ type MaskResult = {
  * placeholders are swapped back out.
  */
 function resolvePrefix(source: string): string {
-  // One scan for every `KH_TPL_` already in the field, taking the longest run
-  // of underscores in front of any of them: one more than that cannot occur.
-  // Escalating by re-scanning the whole source per attempt was quadratic, and
-  // a pasted blob of underscores could hold the UI thread for a second.
-  let longestRun = 1;
-  for (const match of source.matchAll(/_*KH_TPL_/g)) {
-    const run = match[0].length - PLACEHOLDER_STEM.length;
-    if (run >= longestRun) {
-      longestRun = run + 1;
+  let underscores = MIN_PLACEHOLDER_UNDERSCORES;
+  let at = source.indexOf(PLACEHOLDER_STEM);
+  while (at !== -1) {
+    let run = 0;
+    while (at - run > 0 && source[at - run - 1] === "_") {
+      run += 1;
     }
+    if (run + 1 > underscores) {
+      underscores = run + 1;
+    }
+    // Step by one, not by the stem's length: `KH_TPL__KH_TPL_` overlaps, and
+    // a scan that skipped past the first stem would undercount the second's
+    // underscores and hand back a prefix the source already contains.
+    at = source.indexOf(PLACEHOLDER_STEM, at + 1);
   }
-  return `${"_".repeat(Math.max(MIN_PLACEHOLDER_UNDERSCORES, longestRun))}${PLACEHOLDER_STEM}`;
+  let prefix = `${"_".repeat(underscores)}${PLACEHOLDER_STEM}`;
+  // The scan above is the fast path; this is the guarantee. It costs one more
+  // pass and, unlike the scan, cannot be wrong.
+  while (source.includes(prefix)) {
+    prefix = `_${prefix}`;
+  }
+  return prefix;
 }
 
 function placeholderAt(prefix: string, index: number): string {
@@ -79,18 +89,34 @@ function placeholderAt(prefix: string, index: number): string {
  * that whole span unformatted. Bounding on `{` alone was not enough: a gap
  * with no brace in it, `"{{ oops", "b": "x}}y"`, still swallowed.
  */
-function referenceEndAt(source: string, index: number): number {
+const JSON_FORBIDDEN_IN_BODY = new Set(["{", '"', "\n", "\r", ";"]);
+/**
+ * JavaScript additionally rejects the quote characters. Prettier decides a
+ * string's quote style by counting the quotes it can see, and it cannot see
+ * one hidden inside a placeholder - so a node named `Bob's Check` produced
+ * `'Hello {{Bob's Check.name}}'`, which does not parse. Leaving such a
+ * reference unmasked lets Prettier see the apostrophe and quote correctly
+ * when it sits in a string, and fail honestly when it sits in expression
+ * position, where the field was never going to run anyway.
+ */
+const JS_FORBIDDEN_IN_BODY = new Set(["{", '"', "'", "`", "\n", "\r", ";"]);
+
+function referenceEndAt(
+  source: string,
+  index: number,
+  forbidden: Set<string>
+): number {
   if (!source.startsWith(TEMPLATE_OPEN, index)) {
     return -1;
   }
   let cursor = index + TEMPLATE_OPEN.length;
   while (cursor < source.length) {
     const char = source[cursor];
-    if (char === "{" || char === '"' || char === "\n" || char === "\r") {
-      return -1;
-    }
     if (char === "}") {
       return source[cursor + 1] === "}" ? cursor + TEMPLATE_CLOSE.length : -1;
+    }
+    if (forbidden.has(char)) {
+      return -1;
     }
     cursor += 1;
   }
@@ -113,7 +139,7 @@ function maskJavaScript(source: string): MaskResult {
   let index = 0;
 
   while (index < source.length) {
-    const jsEnd = referenceEndAt(source, index);
+    const jsEnd = referenceEndAt(source, index, JS_FORBIDDEN_IN_BODY);
     if (jsEnd !== -1) {
       masked += placeholderAt(prefix, templates.length);
       quoted.push(false);
@@ -167,7 +193,7 @@ function maskJson(source: string): MaskResult {
       continue;
     }
 
-    const jsonEnd = referenceEndAt(source, index);
+    const jsonEnd = referenceEndAt(source, index, JSON_FORBIDDEN_IN_BODY);
     if (jsonEnd !== -1) {
       const placeholder = placeholderAt(prefix, templates.length);
       masked += inString ? placeholder : `"${placeholder}"`;
@@ -364,8 +390,15 @@ export function beautifyJson(source: string): BeautifyOutcome {
 
   try {
     JSON.parse(mask.masked);
-  } catch (error) {
-    return { ok: false, error: describeError(error) };
+  } catch {
+    // Deliberately not the parser's own message: V8 puts a slice of the
+    // source on its first line, which would show the user's field - a line
+    // holding a key, say - in a toast, in its masked form with our
+    // placeholders where their references were.
+    return {
+      ok: false,
+      error: "This is not valid JSON, so the field was left unchanged.",
+    };
   }
 
   const formatted = printJsonTokens(tokenizeJson(mask.masked));

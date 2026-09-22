@@ -255,3 +255,88 @@ describe("a failure message stays a single line", () => {
     }
   });
 });
+
+// Formatted JavaScript has to parse. Comparing the `{{...}}` runs on each side
+// cannot see this: the reference survives intact while the quotes around it
+// break, and re-beautifying hides it, because the second pass masks the
+// reference again and the parser never meets the apostrophe.
+const AsyncFunction = Object.getPrototypeOf(async () =>
+  Promise.resolve()
+).constructor;
+
+function expectParses(code: string): void {
+  expect(() => new AsyncFunction(code)).not.toThrow();
+}
+
+describe("beautifyJavaScript emits JavaScript that parses", () => {
+  it.each([
+    [
+      "apostrophe in a reference, in a string",
+      'const m = "Hi {{Bob\'s Check.name}}";',
+    ],
+    [
+      "apostrophe in a reference, as an argument",
+      'f({ text: "Owner: {{Dave\'s Node.owner}}" });',
+    ],
+    ["apostrophe in a reference, as a key", 'const o = {"{{Bob\'s N.k}}": 1};'],
+    ["backtick in a reference", 'const m = "x {{Weird `N`.k}} y";'],
+    [
+      "mixed quotes around a reference",
+      'const s = "he said \\"hi\\" {{Bob\'s N.x}}";',
+    ],
+    ["plain reference in a string", 'const m = "Hi {{Check.name}}";'],
+    ["reference in expression position", "const c = {{Setup.result}};"],
+  ])("%s", async (_name, source) => {
+    const outcome = await beautifyJavaScript(source);
+    if (outcome.ok) {
+      expectParses(outcome.value.replace(/\{\{[^{}]*\}\}/g, "REF"));
+      return;
+    }
+    // Failing is acceptable; emitting something that will not parse is not.
+    expect(outcome.error.length).toBeGreaterThan(0);
+  });
+
+  it("formats a block that only looks like a reference", async () => {
+    const value = expectValue(
+      await beautifyJavaScript("function f() {{ return 1; }}")
+    );
+    expect(value).toContain("return 1;");
+    expectParses(value);
+  });
+});
+
+// The placeholder prefix has to be absent from the source. Deriving it from a
+// non-overlapping scan undercounted `KH_TPL__KH_TPL_`, so the prefix collided
+// with the user's own text and a reference was written over it.
+describe("the placeholder prefix never collides with the field", () => {
+  it.each([
+    '{"note":"see KH_TPL__KH_TPL_0__ in docs","to":{{W.address}}}',
+    '{"note":"KH_TPL___KH_TPL_0__","to":{{W.address}}}',
+    '{"note":"__KH_TPL_0__ and KH_TPL__KH_TPL_1__","to":{{W.address}}}',
+  ])("leaves %s alone", (source) => {
+    const value = expectValue(beautifyJson(source));
+    const stripped = (text: string): string => text.replace(/[ \t\n\r]/g, "");
+    expect(stripped(value)).toBe(stripped(source));
+  });
+
+  it("does not collide on the JavaScript path either", async () => {
+    const source = "const KH_TPL__KH_TPL_0__ = 1;\nconst c = {{A.b}};";
+    const value = expectValue(await beautifyJavaScript(source));
+    expect(value).toContain("KH_TPL__KH_TPL_0__");
+  });
+});
+
+describe("a JSON failure does not echo the field back", () => {
+  it.each([
+    ["a key beside the error", '{"apiKey":"sk-live-SUPERSECRET","b":}'],
+    ["a masked reference", "[1,{{My Node.value}},]"],
+  ])("%s", (_name, source) => {
+    const outcome = beautifyJson(source);
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.error).not.toContain("SUPERSECRET");
+      expect(outcome.error).not.toContain("__KH_TPL_");
+      expect(outcome.error.split("\n")).toHaveLength(1);
+    }
+  });
+});

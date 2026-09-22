@@ -475,7 +475,11 @@ export function AbiWithAutoFetchField({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const readAbi = useCallback((): string => value, [value]);
+  // Read through a ref so the hook sees the field's current text, not the
+  // value frozen into the closure at click time.
+  const abiValueRef = useRef(value);
+  abiValueRef.current = value;
+  const readAbi = useCallback((): string => abiValueRef.current, []);
   const { pending: abiBeautifyPending, beautify: beautifyAbi } = useBeautify({
     apply: onChange,
     // Matches the button's own disabled state rather than trusting the DOM

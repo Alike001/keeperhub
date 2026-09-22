@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDown, Info } from "lucide-react";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { BeautifyButton } from "@/components/ui/beautify-button";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -113,32 +113,44 @@ function TemplateInputField({
   return input;
 }
 
-function TemplateTextareaField({
+/**
+ * The textarea variant for a field declared `format: "json"`.
+ *
+ * Split out so the hook and the wrapper exist only where the action can be
+ * reached: constructing them for every template-textarea put a beautify hook
+ * on message bodies where no button is rendered, and wrapped fields the
+ * feature does not touch in an extra layout div.
+ */
+function BeautifiableTextareaField({
   field,
   value,
   onChange,
   disabled,
 }: FieldProps) {
-  const readValue = useCallback((): string => value, [value]);
+  // The field's text lives in the config, so the click-time closure would
+  // freeze it and the hook's "did this move while formatting?" check could
+  // never fire. A ref keeps it current.
+  const valueRef = useRef(value);
+  valueRef.current = value;
+  const read = useCallback((): string => valueRef.current, []);
+
   const { pending, beautify } = useBeautify({
     apply: onChange,
     disabled,
     language: "json",
-    read: readValue,
+    read,
   });
 
   return (
     <div className="space-y-1">
-      {field.format === "json" && (
-        <div className="flex justify-end">
-          <BeautifyButton
-            disabled={disabled}
-            language="json"
-            onBeautify={beautify}
-            pending={pending}
-          />
-        </div>
-      )}
+      <div className="flex justify-end">
+        <BeautifyButton
+          disabled={disabled}
+          language="json"
+          onBeautify={beautify}
+          pending={pending}
+        />
+      </div>
       <TemplateBadgeTextarea
         disabled={disabled}
         id={field.key}
@@ -148,6 +160,23 @@ function TemplateTextareaField({
         value={value}
       />
     </div>
+  );
+}
+
+function TemplateTextareaField(props: FieldProps) {
+  if (props.field.format === "json") {
+    return <BeautifiableTextareaField {...props} />;
+  }
+  const { field, value, onChange, disabled } = props;
+  return (
+    <TemplateBadgeTextarea
+      disabled={disabled}
+      id={field.key}
+      onChange={onChange}
+      placeholder={field.placeholder}
+      rows={field.rows || 4}
+      value={value}
+    />
   );
 }
 
