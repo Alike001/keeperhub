@@ -4,7 +4,11 @@ import { useCallback, useRef } from "react";
 import { BeautifyButton } from "@/components/workflow/config/beautify-button";
 import { useBeautify } from "@/lib/hooks/use-beautify";
 import { cn } from "@/lib/utils";
-import { canBeautifyLanguage } from "@/lib/utils/beautify";
+import {
+  canBeautifyLanguage,
+  isWithinBeautifySize,
+  TOO_LARGE_REASON,
+} from "@/lib/utils/beautify";
 
 type BeautifiableFieldProps = {
   /** The field's stored text. Formatting preserves whichever form it is in. */
@@ -57,6 +61,10 @@ export function BeautifiableField({
   });
 
   const actionVisible = showAction && canBeautifyLanguage(language);
+  // Formatting a field this large would leave the workflow too big for the
+  // import route to accept, and nothing in the product puts it back. The
+  // control stays visible and says why rather than disappearing.
+  const tooLarge = !isWithinBeautifySize(value);
 
   // The frame owns the border, and with it the two states the border carries:
   // the focus ring and the disabled dimming. Both used to live on the input,
@@ -76,10 +84,11 @@ export function BeautifiableField({
       {actionVisible && (
         <div className="flex items-center justify-end border-b bg-muted/30 px-1.5 py-1">
           <BeautifyButton
-            disabled={disabled}
+            disabled={disabled || tooLarge}
             language={language}
             onBeautify={beautify}
             pending={pending}
+            reason={tooLarge ? TOO_LARGE_REASON : undefined}
           />
         </div>
       )}

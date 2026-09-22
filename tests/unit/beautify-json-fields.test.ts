@@ -48,6 +48,7 @@ function allConfigFields(): FoundField[] {
  * clerk is absent from plugins/plugin-allowlist.json so it never registers.
  */
 const EXPECTED_JSON_FIELDS = [
+  "data/extract-fields.source",
   "data/flatten-findings.sources",
   "pagerduty/send-change-event.customDetails",
   "pagerduty/trigger-incident.customDetails",

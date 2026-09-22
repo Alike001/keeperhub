@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("sonner", () => ({ toast: { error: vi.fn() } }));
 
 import { BeautifiableField } from "@/components/workflow/config/beautifiable-field";
+import { MAX_BEAUTIFY_BYTES } from "@/lib/utils/beautify";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -104,5 +105,41 @@ describe("BeautifiableField", () => {
     render({ disabled: true });
     const button = container.querySelector("button");
     expect(button?.hasAttribute("disabled")).toBe(true);
+  });
+});
+
+// Formatting inflates a value about 1.7x and the import route caps a payload
+// at 1 MB, so a large enough field can be formatted into a workflow that will
+// not import - and nothing puts it back. The control stays visible and says
+// why rather than disappearing.
+describe("BeautifiableField above the size budget", () => {
+  function renderLarge(): void {
+    const huge = `{"a":"${"x".repeat(MAX_BEAUTIFY_BYTES)}"}`;
+    act(() => {
+      root.render(
+        <BeautifiableField
+          language="json"
+          onChange={() => {
+            // not exercised here
+          }}
+          value={huge}
+        >
+          <textarea data-testid="input" readOnly value={huge} />
+        </BeautifiableField>
+      );
+    });
+  }
+
+  it("greys the action out rather than hiding it", () => {
+    renderLarge();
+    const button = container.querySelector("button");
+    expect(button).not.toBeNull();
+    expect(button?.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("keeps the field usable", () => {
+    renderLarge();
+    expect(container.querySelector('[data-testid="input"]')).not.toBeNull();
+    expect(frame().className).not.toContain("opacity-50");
   });
 });

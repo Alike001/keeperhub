@@ -2,7 +2,6 @@
 
 import { ChevronDown, Info } from "lucide-react";
 import React, { useEffect, useState } from "react";
-import { BeautifiableField } from "@/components/workflow/config/beautifiable-field";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,6 +23,7 @@ import {
 } from "@/components/ui/select";
 import { TemplateBadgeInput } from "@/components/ui/template-badge-input";
 import { TemplateBadgeTextarea } from "@/components/ui/template-badge-textarea";
+import { BeautifiableField } from "@/components/workflow/config/beautifiable-field";
 import { SaveAddressBookmark } from "@/components/address-book/save-address-bookmark";
 import type { AbiComponent } from "@/components/workflow/config/abi-types";
 import { ArrayInputField } from "@/components/workflow/config/array-input-field";
@@ -52,6 +52,9 @@ import {
   isFieldGroup,
 } from "@/plugins/registry";
 import { SchemaBuilder } from "./schema-builder";
+
+/** Rows a beautifiable textarea grows to before it starts scrolling. */
+const FORMATTED_FIELD_MAX_ROWS = 16;
 
 type FieldProps = {
   field: ActionConfigFieldBase;
@@ -138,6 +141,10 @@ function BeautifiableTextareaField({
         className="rounded-none border-0 opacity-100 shadow-none focus-within:ring-0"
         disabled={disabled}
         id={field.key}
+        // Formatting turns one line into hundreds - an ERC-20 ABI pasted into
+        // the override field goes to 224 - and this editor grows without limit
+        // unless it is given a ceiling. Past it the field scrolls.
+        maxRows={FORMATTED_FIELD_MAX_ROWS}
         onChange={onChange}
         placeholder={field.placeholder}
         rows={field.rows || 4}

@@ -882,7 +882,10 @@ export function AbiWithAutoFetchField({
 
       <BeautifiableField
         className="shadow-xs"
-        disabled={disabled || isLoading}
+        // Two different questions: whether the field is editable at all, and
+        // whether the action applies. Automatic mode is a disabled field, so
+        // the frame has to dim with it.
+        disabled={disabled || isLoading || !useManualAbi}
         language="json"
         // The same handler the textarea uses: beautifying has to clear a stale
         // parse error the way typing a character does.

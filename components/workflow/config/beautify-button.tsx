@@ -15,6 +15,11 @@ type BeautifyButtonProps = {
   language: string;
   disabled?: boolean;
   pending?: boolean;
+  /**
+   * Shown in place of the usual description when the action is unavailable,
+   * so a greyed-out control still says why.
+   */
+  reason?: string;
   className?: string;
 };
 
@@ -31,6 +36,7 @@ export function BeautifyButton({
   language,
   disabled,
   pending,
+  reason,
   className,
 }: BeautifyButtonProps): React.ReactElement {
   return (
@@ -61,7 +67,7 @@ export function BeautifyButton({
         </span>
       </TooltipTrigger>
       <TooltipContent className="max-w-64">
-        {describeBeautifyTarget(language)}
+        {reason ?? describeBeautifyTarget(language)}
       </TooltipContent>
     </Tooltip>
   );

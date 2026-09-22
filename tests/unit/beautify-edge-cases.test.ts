@@ -379,3 +379,54 @@ describe("references that differ only by node id stay distinct", () => {
     expect(value).toContain('"b": {{@node2:Read Hat.result}}');
   });
 });
+
+// A reference whose body holds a quote is deliberately left unmasked on the
+// JavaScript side, because Prettier has to see that quote to choose the
+// string's own. It then also escapes it, writing a backslash into the user's
+// reference: `{{Bob's N.x}}` came back `{{Bob\'s N.x}}`, which the display
+// resolver no longer matches and a node rename no longer rewrites.
+//
+// The parse-only block below cannot see this - it replaces every reference
+// with REF before checking - so the invariant is asserted here instead, on
+// the references themselves.
+describe("a reference is never altered, even when it cannot be masked", () => {
+  const QUOTE_BEARING = [
+    ['const s = "he said \\"hi\\" {{Bob\'s N.x}}";', "{{Bob's N.x}}"],
+    [
+      'const s = "he said \\"hi\\" {{@n1:Bob\'s Check.name}}";',
+      "{{@n1:Bob's Check.name}}",
+    ],
+    ['const m = "Hi {{Bob\'s Check.name}}";', "{{Bob's Check.name}}"],
+    ["const m = `x {{Weird `N`.k}} y`;", "{{Weird `N`.k}}"],
+  ] as const;
+
+  it.each(QUOTE_BEARING)(
+    "refuses rather than rewriting the reference in %s",
+    async (source, reference) => {
+      const outcome = await beautifyJavaScript(source);
+      if (outcome.ok) {
+        // Succeeding is fine, as long as the reference came back untouched.
+        expect(outcome.value).toContain(reference);
+        expect(outcome.value).not.toContain("\\'");
+        return;
+      }
+      expect(outcome.error.length).toBeGreaterThan(0);
+    }
+  );
+
+  it("says a reference would have changed rather than blaming syntax", async () => {
+    const outcome = await beautifyJavaScript(
+      'const s = "he said \\"hi\\" {{Bob\'s N.x}}";'
+    );
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.error).toContain("reference");
+    }
+  });
+
+  it("leaves the field alone rather than half-formatting it", async () => {
+    const source = 'const a=1;const s = "x \\"y\\" {{Bob\'s N.x}}";';
+    const outcome = await beautifyJavaScript(source);
+    expect(outcome.ok).toBe(false);
+  });
+});

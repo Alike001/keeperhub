@@ -110,7 +110,8 @@ export type ActionConfigFieldBase = {
   rows?: number;
 
   // For template-textarea fields whose value is JSON: offers a Beautify
-  // action above the field. Set it only where the value is always JSON -
+  // action in a strip along the top of the field. Set it only where the
+  // value is always JSON -
   // a message body or a line-oriented format has nothing to reformat, and
   // the action would only ever report a parse error on it.
   format?: "json";

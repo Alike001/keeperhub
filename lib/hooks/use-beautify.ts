@@ -56,6 +56,13 @@ export function useBeautify({
           return;
         }
         toast.error("Could not beautify", { description: outcome.error });
+      } catch {
+        // Nothing reachable throws today, but run() is fire-and-forget: an
+        // unhandled rejection would reach Sentry with whatever the formatter
+        // put in the message, and tell the user nothing.
+        toast.error("Could not beautify", {
+          description: "Something went wrong while formatting this field.",
+        });
       } finally {
         setPending(false);
       }

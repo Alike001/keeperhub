@@ -5,6 +5,9 @@ import {
   beautifySource,
   canBeautifyLanguage,
   describeBeautifyTarget,
+  isWithinBeautifySize,
+  MAX_BEAUTIFY_BYTES,
+  TOO_LARGE_REASON,
 } from "@/lib/utils/beautify";
 
 function expectOk(outcome: { ok: boolean }): asserts outcome is {
@@ -247,5 +250,65 @@ describe("beautifyJson and the user's own quotes", () => {
     const twice = beautifyJson(once.value);
     expectOk(twice);
     expect(twice.value).toBe(once.value);
+  });
+});
+
+describe("a JSON failure points at the problem", () => {
+  it("gives a line and a column", () => {
+    const outcome = beautifyJson('{\n  "a": 1\n  "b": 2\n}');
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.error).toContain("line 3");
+      expect(outcome.error).toContain("column");
+    }
+  });
+
+  // A placeholder is shorter than the reference it stands for, so every one
+  // before the error shifts the parser's offset away from what the user sees.
+  it("counts the position in the user's text, not the masked text", () => {
+    const withReference = beautifyJson(
+      '{"r":{{@n1:A Very Long Node Label Indeed.result}},\n"a":1,\n"b" 2}'
+    );
+    const withoutReference = beautifyJson('{"r":1,\n"a":1,\n"b" 2}');
+    expect(withReference.ok).toBe(false);
+    expect(withoutReference.ok).toBe(false);
+    if (!(withReference.ok || withoutReference.ok)) {
+      const line = /line (\d+)/;
+      expect(line.exec(withReference.error)?.[1]).toBe(
+        line.exec(withoutReference.error)?.[1]
+      );
+    }
+  });
+
+  it("still names no source text", () => {
+    const outcome = beautifyJson('{"apiKey":"sk-live-SECRET","b" 1}');
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.error).not.toContain("SECRET");
+      expect(outcome.error).not.toContain("__KH_TPL");
+    }
+  });
+});
+
+describe("the action is withheld above the import budget", () => {
+  it("refuses a value larger than the budget", async () => {
+    const huge = `{"a":"${"x".repeat(MAX_BEAUTIFY_BYTES)}"}`;
+    const outcome = await beautifySource(huge, "json");
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.error).toBe(TOO_LARGE_REASON);
+    }
+  });
+
+  it("accepts a value just inside it", async () => {
+    const outcome = await beautifySource('{"a":1}', "json");
+    expect(outcome.ok).toBe(true);
+  });
+
+  it("agrees with the predicate the button reads", () => {
+    expect(isWithinBeautifySize("x".repeat(MAX_BEAUTIFY_BYTES))).toBe(true);
+    expect(isWithinBeautifySize("x".repeat(MAX_BEAUTIFY_BYTES + 1))).toBe(
+      false
+    );
   });
 });

@@ -1,5 +1,6 @@
 /**
- * Formatting helpers for the Monaco-backed config editors.
+ * Formatting helpers for the config editors: the Monaco fields, the JSON
+ * textarea fields, and the ABI field.
  *
  * Config values are not plain JSON or plain JavaScript: they carry template
  * references such as `{{Read Hat.result}}`, which a JSON parser or a JS parser
@@ -7,10 +8,12 @@
  * inert placeholders, formats the masked source, then puts the original
  * template text back verbatim.
  *
- * The editors show templates in their display form (`{{Label.field}}`) rather
- * than the stored form (`{{@nodeId:Label.field}}`), so these functions operate
- * on whichever form they are given and preserve it byte for byte - callers can
- * round-trip the result through the editor's normal display-to-stored mapping.
+ * A reference reaches these functions in whichever form the caller holds -
+ * the stored `{{@nodeId:Label.field}}` for every field today, the display
+ * `{{Label.field}}` if one ever passes that - and comes back byte for byte.
+ * Callers pass the stored form and write the result straight back: routing it
+ * through the editor's display-to-stored mapping collapses two nodes that
+ * share a label onto one id.
  */
 
 const TEMPLATE_OPEN = "{{";
@@ -23,6 +26,32 @@ const MIN_PLACEHOLDER_UNDERSCORES = 2;
  * Tab in the same editor produces.
  */
 const INDENT_WIDTH = 2;
+
+/**
+ * The size above which the action is withheld.
+ *
+ * Formatting only adds whitespace, but whitespace has a cost: across ABIs of
+ * 1000 to 3000 entries it inflates a value about 1.7x. The import route
+ * refuses an export over 1 MB (`MAX_IMPORT_BYTES` in
+ * app/api/workflows/import/route.ts), so a large enough field can be formatted
+ * into a workflow that will not import - and there is no Minify action to put
+ * it back, only undo.
+ *
+ * The budget below leaves a formatted field at half the import limit, so the
+ * rest of the workflow still fits beside it. Sizes are in UTF-16 code units,
+ * which equals bytes for the ASCII that ABIs and JSON payloads are made of,
+ * and undercounts a little for text that is not - in the safe direction.
+ */
+const IMPORT_LIMIT_BYTES = 1_048_576;
+const FORMATTING_INFLATION = 1.7;
+const FIELD_SHARE_OF_IMPORT = 0.5;
+export const MAX_BEAUTIFY_BYTES = Math.floor(
+  (IMPORT_LIMIT_BYTES * FIELD_SHARE_OF_IMPORT) / FORMATTING_INFLATION
+);
+
+export function isWithinBeautifySize(source: string): boolean {
+  return source.length <= MAX_BEAUTIFY_BYTES;
+}
 
 export type BeautifyOutcome =
   | { ok: true; value: string }
@@ -40,6 +69,12 @@ type MaskResult = {
    * reference.
    */
   quoted: boolean[];
+  /**
+   * Where each placeholder sits in the masked text, and how long the
+   * reference it stands for was. A parser reports its position in the masked
+   * text; these let that be mapped back to the position the user can see.
+   */
+  spans: { maskedStart: number; maskedLength: number; sourceLength: number }[];
   prefix: string;
 };
 
@@ -95,9 +130,15 @@ const JSON_FORBIDDEN_IN_BODY = new Set(["{", '"', "\n", "\r", ";"]);
  * string's quote style by counting the quotes it can see, and it cannot see
  * one hidden inside a placeholder - so a node named `Bob's Check` produced
  * `'Hello {{Bob's Check.name}}'`, which does not parse. Leaving such a
- * reference unmasked lets Prettier see the apostrophe and quote correctly
- * when it sits in a string, and fail honestly when it sits in expression
- * position, where the field was never going to run anyway.
+ * reference unmasked lets Prettier account for the quote.
+ *
+ * The cost is that a field carrying one cannot be formatted at all: Prettier
+ * cannot parse a reference in expression position, and where it can parse one
+ * it may escape the quote, which the integrity check then refuses. Such a
+ * field runs perfectly well - the executor resolves the reference before the
+ * code is ever parsed - so this is the button declining, not the field being
+ * broken. Making it work needs masking that knows whether a reference sits
+ * inside a string literal, which this scanner does not track for JavaScript.
  */
 const JS_FORBIDDEN_IN_BODY = new Set(["{", '"', "'", "`", "\n", "\r", ";"]);
 
@@ -135,6 +176,7 @@ function maskJavaScript(source: string): MaskResult {
   const prefix = resolvePrefix(source);
   const templates: string[] = [];
   const quoted: boolean[] = [];
+  const spans: MaskResult["spans"] = [];
   let masked = "";
   let index = 0;
 
@@ -151,7 +193,7 @@ function maskJavaScript(source: string): MaskResult {
     index += 1;
   }
 
-  return { masked, quoted, templates, prefix };
+  return { masked, quoted, spans, templates, prefix };
 }
 
 /**
@@ -167,6 +209,7 @@ function maskJson(source: string): MaskResult {
   const prefix = resolvePrefix(source);
   const templates: string[] = [];
   const quoted: boolean[] = [];
+  const spans: MaskResult["spans"] = [];
   let masked = "";
   let index = 0;
   let inString = false;
@@ -196,7 +239,13 @@ function maskJson(source: string): MaskResult {
     const jsonEnd = referenceEndAt(source, index, JSON_FORBIDDEN_IN_BODY);
     if (jsonEnd !== -1) {
       const placeholder = placeholderAt(prefix, templates.length);
-      masked += inString ? placeholder : `"${placeholder}"`;
+      const written = inString ? placeholder : `"${placeholder}"`;
+      spans.push({
+        maskedStart: masked.length,
+        maskedLength: written.length,
+        sourceLength: jsonEnd - index,
+      });
+      masked += written;
       quoted.push(!inString);
       templates.push(source.slice(index, jsonEnd));
       index = jsonEnd;
@@ -207,7 +256,7 @@ function maskJson(source: string): MaskResult {
     index += 1;
   }
 
-  return { masked, quoted, templates, prefix };
+  return { masked, quoted, spans, templates, prefix };
 }
 
 /**
@@ -247,6 +296,65 @@ function restoreTemplates(formatted: string, mask: MaskResult): string {
  * that line - into a toast, and show it in its masked form with our
  * placeholders where their references were.
  */
+/**
+ * The rule the integrity check reads references by.
+ *
+ * Deliberately not the masker's rule. The JavaScript masker excludes a body
+ * holding a quote, which is exactly the class that gets altered - checking
+ * with that rule would look straight past the thing it exists to catch. It is
+ * still tighter than "anything between braces", because prose like
+ * `"{{ oops", "b": "x}}"` would otherwise read as a reference whose whitespace
+ * legitimately moved, and a correctly formatted field would be refused.
+ */
+const REFERENCE_CHECK_FORBIDDEN = new Set(["{", '"', "\n", "\r", ";"]);
+
+/** Every reference in the text, by the rule above. */
+function collectReferences(source: string, forbidden: Set<string>): string[] {
+  const found: string[] = [];
+  let index = 0;
+  while (index < source.length) {
+    const end = referenceEndAt(source, index, forbidden);
+    if (end === -1) {
+      index += 1;
+      continue;
+    }
+    found.push(source.slice(index, end));
+    index = end;
+  }
+  return found;
+}
+
+export const REFERENCES_CHANGED_REASON =
+  "Formatting would have altered a workflow reference in this field, so it was left unchanged.";
+
+/**
+ * The last word on whether a formatted value may be handed back.
+ *
+ * Masking keeps a formatter away from a reference, but not every reference can
+ * be masked: one whose body holds a quote is left in place on the JavaScript
+ * side, because Prettier has to see that quote to pick the string's own. It
+ * then also escapes it - `{{Bob's N.x}}` came back `{{Bob\'s N.x}}`, which the
+ * display resolver no longer matches and a node rename no longer rewrites.
+ *
+ * Rather than enumerate the ways a formatter might reach a reference, this
+ * compares the references in the result against the ones that went in and
+ * refuses if they differ. A refusal is recoverable; a field that silently
+ * stopped pointing at the right node is not.
+ */
+function withReferencesIntact(
+  source: string,
+  formatted: string
+): BeautifyOutcome {
+  const before = collectReferences(source, REFERENCE_CHECK_FORBIDDEN);
+  const after = collectReferences(formatted, REFERENCE_CHECK_FORBIDDEN);
+  const same =
+    before.length === after.length &&
+    before.every((run, index) => run === after[index]);
+  return same
+    ? { ok: true, value: formatted }
+    : { ok: false, error: REFERENCES_CHANGED_REASON };
+}
+
 function describeError(error: unknown): string {
   if (error instanceof Error && error.message) {
     return (
@@ -381,6 +489,63 @@ function printJsonTokens(tokens: string[]): string {
  * no-op. The output is built from the source text instead, so numbers, string
  * escapes and duplicate keys come through exactly as the user wrote them.
  */
+const JSON_POSITION = /at position (\d+)/;
+
+/** A masked offset, moved back to the offset the user can see. */
+function toSourceOffset(maskedOffset: number, mask: MaskResult): number {
+  let shift = 0;
+  for (const span of mask.spans) {
+    if (span.maskedStart + span.maskedLength > maskedOffset) {
+      break;
+    }
+    shift += span.sourceLength - span.maskedLength;
+  }
+  return maskedOffset + shift;
+}
+
+/**
+ * Where the parser gave up, in line and column the user can count to.
+ *
+ * The parser reads the masked text, so its offset has to be mapped back
+ * before it means anything - a placeholder is shorter than the reference it
+ * stands for, and every one before the error moves the number. The message
+ * itself is not reused: V8 quotes a slice of the source on its first line,
+ * which here would be the masked source, placeholders and all.
+ */
+function lineAndColumn(
+  source: string,
+  offset: number
+): { line: number; column: number } {
+  let line = 1;
+  let lastBreak = -1;
+  const limit = Math.min(offset, source.length);
+  for (let index = 0; index < limit; index += 1) {
+    if (source[index] === "\n") {
+      line += 1;
+      lastBreak = index;
+    }
+  }
+  return { line, column: offset - lastBreak };
+}
+
+function describeJsonFailure(
+  error: unknown,
+  mask: MaskResult,
+  source: string
+): string {
+  const base = "This is not valid JSON, so the field was left unchanged.";
+  const raw = error instanceof Error ? error.message : "";
+  const at = JSON_POSITION.exec(raw);
+  if (!at) {
+    return base;
+  }
+  const { line, column } = lineAndColumn(
+    source,
+    toSourceOffset(Number(at[1]), mask)
+  );
+  return `${base} The parser stopped at line ${line}, column ${column}.`;
+}
+
 export function beautifyJson(source: string): BeautifyOutcome {
   if (source.trim() === "") {
     return { ok: true, value: source };
@@ -390,19 +555,12 @@ export function beautifyJson(source: string): BeautifyOutcome {
 
   try {
     JSON.parse(mask.masked);
-  } catch {
-    // Deliberately not the parser's own message: V8 puts a slice of the
-    // source on its first line, which would show the user's field - a line
-    // holding a key, say - in a toast, in its masked form with our
-    // placeholders where their references were.
-    return {
-      ok: false,
-      error: "This is not valid JSON, so the field was left unchanged.",
-    };
+  } catch (error) {
+    return { ok: false, error: describeJsonFailure(error, mask, source) };
   }
 
   const formatted = printJsonTokens(tokenizeJson(mask.masked));
-  return { ok: true, value: restoreTemplates(formatted, mask) };
+  return withReferencesIntact(source, restoreTemplates(formatted, mask));
 }
 
 /**
@@ -442,13 +600,14 @@ export async function beautifyJavaScript(
       quoteProps: "preserve",
     });
 
-    return { ok: true, value: restoreTemplates(formatted, mask) };
+    return withReferencesIntact(source, restoreTemplates(formatted, mask));
   } catch (error) {
     return { ok: false, error: describeError(error) };
   }
 }
 
-const JSON_LANGUAGES = new Set(["json", "jsonc"]);
+// Not jsonc: the validation step is JSON.parse, which rejects comments.
+const JSON_LANGUAGES = new Set(["json"]);
 const JAVASCRIPT_LANGUAGES = new Set(["javascript", "js", "typescript", "ts"]);
 
 /**
@@ -466,6 +625,9 @@ export function canBeautifyLanguage(language: string): boolean {
  * Says the target format and the indent, which is the part a user cannot
  * guess from the label alone.
  */
+export const TOO_LARGE_REASON =
+  "This field is too large to reformat. Formatting it would leave the workflow too big to import.";
+
 export function describeBeautifyTarget(language: string): string {
   const normalized = language.toLowerCase();
   if (JSON_LANGUAGES.has(normalized)) {
@@ -481,6 +643,12 @@ export function beautifySource(
   source: string,
   language: string
 ): Promise<BeautifyOutcome> {
+  if (!isWithinBeautifySize(source)) {
+    return Promise.resolve({
+      ok: false,
+      error: TOO_LARGE_REASON,
+    });
+  }
   const normalized = language.toLowerCase();
   if (JSON_LANGUAGES.has(normalized)) {
     return Promise.resolve(beautifyJson(source));
