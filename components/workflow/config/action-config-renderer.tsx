@@ -115,14 +115,6 @@ function TemplateInputField({
 /**
  * The textarea variant for a field declared `format: "json"`.
  *
- * Split out so the hook and the wrapper exist only where the action can be
- * reached: constructing them for every template-textarea put a beautify hook
- * on message bodies where no button is rendered, and wrapped fields the
- * feature does not touch in an extra layout div.
- */
-/**
- * The textarea variant for a field declared `format: "json"`.
- *
  * Split out so the frame and its hook exist only where the action can be
  * reached, and so the markup is the shared one rather than a second copy of
  * it. The badge editor draws its own border, which is suppressed here and
@@ -136,14 +128,14 @@ function BeautifiableTextareaField({
 }: FieldProps) {
   return (
     <BeautifiableField
-      className="border-input shadow-xs"
+      className="shadow-xs"
       disabled={disabled}
       language="json"
       onChange={onChange}
       value={value}
     >
       <TemplateBadgeTextarea
-        className="rounded-none border-0 shadow-none"
+        className="rounded-none border-0 opacity-100 shadow-none focus-within:ring-0"
         disabled={disabled}
         id={field.key}
         onChange={onChange}

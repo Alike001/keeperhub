@@ -811,6 +811,14 @@ export function AbiWithAutoFetchField({
     }
   };
 
+  const handleAbiChange = useCallback(
+    (next: string): void => {
+      onChange(next);
+      setError(null);
+    },
+    [onChange]
+  );
+
   const handleManualToggle = (checked: boolean) => {
     onUpdateConfig("useManualAbi", String(checked));
     setError(null);
@@ -873,15 +881,17 @@ export function AbiWithAutoFetchField({
       )}
 
       <BeautifiableField
-        className="border-input shadow-xs"
+        className="shadow-xs"
         disabled={disabled || isLoading}
         language="json"
-        onChange={onChange}
+        // The same handler the textarea uses: beautifying has to clear a stale
+        // parse error the way typing a character does.
+        onChange={handleAbiChange}
         showAction={useManualAbi}
         value={value}
       >
         <TemplateBadgeTextarea
-          className="max-h-40 overflow-y-auto rounded-none border-0 shadow-none"
+          className="max-h-40 overflow-y-auto rounded-none border-0 opacity-100 shadow-none focus-within:ring-0"
           disabled={disabled || isLoading || !useManualAbi}
           id={field.key}
           // Do not include `value.length` in the key: it remounts the textarea
@@ -890,10 +900,7 @@ export function AbiWithAutoFetchField({
           // the field is blurred.
           key={`${field.key}-${useProxyAbi ? "proxy" : "impl"}${isDiamond ? `-${useDiamondAbi ? "diamond" : "proxy"}` : ""}`}
           maxRows={4}
-          onChange={(val) => {
-            onChange(val);
-            setError(null);
-          }}
+          onChange={handleAbiChange}
           placeholder={
             useManualAbi
               ? "Paste your ABI here"

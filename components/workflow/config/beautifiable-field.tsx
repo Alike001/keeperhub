@@ -58,8 +58,21 @@ export function BeautifiableField({
 
   const actionVisible = showAction && canBeautifyLanguage(language);
 
+  // The frame owns the border, and with it the two states the border carries:
+  // the focus ring and the disabled dimming. Both used to live on the input,
+  // which still draws them - a ring is a box-shadow outside the border box, so
+  // `overflow-hidden` clipped it away and left the field with no focus
+  // indicator at all, and the dimming stopped reaching the border once the
+  // border moved out here. The callers cancel the input's own copies.
   return (
-    <div className={cn("overflow-hidden rounded-md border", className)}>
+    <div
+      className={cn(
+        "overflow-hidden rounded-md border transition-colors",
+        "focus-within:ring-1 focus-within:ring-ring",
+        disabled && "opacity-50",
+        className
+      )}
+    >
       {actionVisible && (
         <div className="flex items-center justify-end border-b bg-muted/30 px-1.5 py-1">
           <BeautifyButton

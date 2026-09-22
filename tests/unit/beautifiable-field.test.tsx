@@ -1,0 +1,108 @@
+// @vitest-environment jsdom
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("sonner", () => ({ toast: { error: vi.fn() } }));
+
+import { BeautifiableField } from "@/components/workflow/config/beautifiable-field";
+
+let container: HTMLDivElement;
+let root: Root;
+
+beforeEach(() => {
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+});
+
+afterEach(() => {
+  act(() => root.unmount());
+  container.remove();
+});
+
+type Options = {
+  language?: string;
+  showAction?: boolean;
+  disabled?: boolean;
+};
+
+function render({
+  language = "json",
+  showAction,
+  disabled,
+}: Options = {}): void {
+  act(() => {
+    root.render(
+      <BeautifiableField
+        disabled={disabled}
+        language={language}
+        onChange={() => {
+          // not exercised here
+        }}
+        showAction={showAction}
+        value='{"a":1}'
+      >
+        <textarea data-testid="input" readOnly value='{"a":1}' />
+      </BeautifiableField>
+    );
+  });
+}
+
+function frame(): HTMLElement {
+  const found = container.firstElementChild;
+  if (!(found instanceof HTMLElement)) {
+    throw new Error("no frame rendered");
+  }
+  return found;
+}
+
+describe("BeautifiableField", () => {
+  it("frames the input and offers the action", () => {
+    render();
+    expect(container.querySelector("button")?.textContent).toContain(
+      "Beautify"
+    );
+    expect(container.querySelector('[data-testid="input"]')).not.toBeNull();
+  });
+
+  it("keeps the frame but drops the action when showAction is false", () => {
+    render({ showAction: false });
+    expect(container.querySelector("button")).toBeNull();
+    expect(container.querySelector('[data-testid="input"]')).not.toBeNull();
+    expect(frame().className).toContain("rounded-md");
+    expect(frame().className).toContain("border");
+  });
+
+  it("drops the action for a language with no formatter", () => {
+    render({ language: "sql" });
+    expect(container.querySelector("button")).toBeNull();
+    expect(container.querySelector('[data-testid="input"]')).not.toBeNull();
+  });
+
+  // The frame owns the border, so it has to own the states the border carries.
+  // `overflow-hidden` clips a ring drawn on the input, and the input's own
+  // dimming stopped reaching the border once the border moved out here.
+  it("carries the focus ring itself, since it clips one drawn inside", () => {
+    render();
+    expect(frame().className).toContain("overflow-hidden");
+    expect(frame().className).toContain("focus-within:ring-1");
+    expect(frame().className).toContain("focus-within:ring-ring");
+  });
+
+  it("dims itself when disabled", () => {
+    render({ disabled: true });
+    expect(frame().className).toContain("opacity-50");
+  });
+
+  it("is not dimmed when enabled", () => {
+    render();
+    expect(frame().className).not.toContain("opacity-50");
+  });
+
+  it("disables the action when the field is disabled", () => {
+    render({ disabled: true });
+    const button = container.querySelector("button");
+    expect(button?.hasAttribute("disabled")).toBe(true);
+  });
+});
