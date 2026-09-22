@@ -16,6 +16,7 @@ import "server-only";
 import { ErrorCategory, logInfo, logSystemWarn } from "@/lib/logging";
 import {
   claimHeldPayment,
+  deferBroadcastReconcile,
   expireDueHeldPayments,
   markBroadcast,
   markConfirmed,
@@ -109,6 +110,9 @@ async function reconcileBroadcastRows(limit: number): Promise<{
         );
         failed += 1;
       } else {
+        // Keep unknown outcomes open, but rotate them behind newer rows so a
+        // bounded batch cannot be pinned forever by the same 25 hashes.
+        await deferBroadcastReconcile(row.id);
         stillPending += 1;
       }
     } catch (error) {
@@ -118,6 +122,9 @@ async function reconcileBroadcastRows(limit: number): Promise<{
         error,
         { payment_id: row.id }
       );
+      // A read failure is still not evidence that the send failed. Rotate the
+      // row rather than terminalising it or letting it starve the queue.
+      await deferBroadcastReconcile(row.id);
       stillPending += 1;
     }
   }

@@ -12,6 +12,7 @@ vi.mock("@/lib/utils", async () =>
 
 const broker = {
   expireDueHeldPayments: vi.fn(),
+  deferBroadcastReconcile: vi.fn(),
   selectDueHeldPayments: vi.fn(),
   claimHeldPayment: vi.fn(),
   markBroadcast: vi.fn(),
@@ -22,6 +23,8 @@ const broker = {
 vi.mock("@/lib/tempo/held-payments", () => ({
   expireDueHeldPayments: (...a: unknown[]) =>
     broker.expireDueHeldPayments(...a),
+  deferBroadcastReconcile: (...a: unknown[]) =>
+    broker.deferBroadcastReconcile(...a),
   selectDueHeldPayments: (...a: unknown[]) =>
     broker.selectDueHeldPayments(...a),
   claimHeldPayment: (...a: unknown[]) => broker.claimHeldPayment(...a),
@@ -62,6 +65,7 @@ beforeEach(() => {
   broker.claimHeldPayment.mockImplementation((id: string) =>
     Promise.resolve(row({ id, status: "broadcasting" }))
   );
+  broker.deferBroadcastReconcile.mockResolvedValue({});
   broker.markBroadcast.mockResolvedValue({});
   broker.markConfirmed.mockResolvedValue({});
   broker.markFailed.mockResolvedValue({});
@@ -158,6 +162,18 @@ describe("processDueHeldPayments - reconcile phase", () => {
 
     const res = await processDueHeldPayments();
     expect(broker.markConfirmed).not.toHaveBeenCalled();
+    expect(broker.markFailed).not.toHaveBeenCalled();
+    expect(broker.deferBroadcastReconcile).toHaveBeenCalledWith("p2");
+    expect(res.stillPending).toBe(1);
+  });
+
+  it("rotates an unreadable receipt behind newer broadcast rows", async () => {
+    broker.selectBroadcastToReconcile.mockResolvedValue([
+      row({ id: "p2", status: "broadcast", broadcastTxHash: "0xsent" }),
+    ]);
+    mockCheckReceipt.mockRejectedValue(new Error("rpc unavailable"));
+    const res = await processDueHeldPayments();
+    expect(broker.deferBroadcastReconcile).toHaveBeenCalledWith("p2");
     expect(broker.markFailed).not.toHaveBeenCalled();
     expect(res.stillPending).toBe(1);
   });

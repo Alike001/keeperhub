@@ -347,8 +347,29 @@ describe("submitSignedTransactionWithFailover", () => {
 
     await expect(
       submitSignedTransactionWithFailover(signer, TEST_TX_REQUEST, rpcManager)
-    ).rejects.toBe(populateError);
+    ).rejects.toMatchObject({
+      name: "PreBroadcastNetworkError",
+      kind: "pre-broadcast",
+      cause: populateError,
+    });
     expect(sign).not.toHaveBeenCalled();
+    expect(executeWithFailover).not.toHaveBeenCalled();
+  });
+
+  it("tags a signing failure as pre-broadcast and never calls rpc", async () => {
+    const signError = new Error("wallet signing refused");
+    const signer = {
+      populateTransaction: vi.fn().mockResolvedValue(TEST_TX_REQUEST),
+      signTransaction: vi.fn().mockRejectedValue(signError),
+    } as unknown as ethers.Signer;
+    const { rpcManager, executeWithFailover } = makeMockRpcManager({});
+    await expect(
+      submitSignedTransactionWithFailover(signer, TEST_TX_REQUEST, rpcManager)
+    ).rejects.toMatchObject({
+      name: "PreBroadcastNetworkError",
+      kind: "pre-broadcast",
+      cause: signError,
+    });
     expect(executeWithFailover).not.toHaveBeenCalled();
   });
 

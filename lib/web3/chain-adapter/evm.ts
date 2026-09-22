@@ -345,22 +345,17 @@ export class EvmChainAdapter implements ChainAdapter {
     };
 
     const deadline = Date.now() + TEMPO_RECEIPT_TIMEOUT_MS;
+    let lastReadError: unknown;
     while (Date.now() < deadline) {
-      let receipt: ethers.TransactionReceipt | null;
+      let receipt: ethers.TransactionReceipt | null = null;
       try {
         receipt = await fetchReceipt();
+        lastReadError = undefined;
       } catch (error) {
-        // The poll itself failed (e.g. every endpoint refused the receipt
-        // read). That is post-broadcast exactly like the timeout below: the
-        // transaction is on the network, we just could not read it back, so
-        // the hash rides on the error and the row settles unconfirmed for the
-        // reconciler. Letting the raw error out here would drop the hash, and
-        // its failover-rendered ECONNREFUSED text reads identically to a
-        // refused send downstream.
-        throw new OnChainPendingError({
-          message: `Could not read Tempo transaction receipt (${tx.hash}): ${getErrorMessage(error)}`,
-          transactionHash: tx.hash,
-        });
+        // A transient read failure is post-broadcast, but it should not throw
+        // away the rest of the confirmation window. Keep polling until the
+        // deadline; only the exhausted case below settles as pending.
+        lastReadError = error;
       }
       if (receipt) {
         return receipt;
@@ -373,7 +368,9 @@ export class EvmChainAdapter implements ChainAdapter {
     // message text, so the finalizer can settle the row as `unconfirmed` and
     // hand it to the reconciler.
     throw new OnChainPendingError({
-      message: `Timed out waiting for Tempo transaction receipt (${tx.hash})`,
+      message: lastReadError
+        ? `Timed out waiting for Tempo transaction receipt (${tx.hash}); last read failed: ${getErrorMessage(lastReadError)}`
+        : `Timed out waiting for Tempo transaction receipt (${tx.hash})`,
       transactionHash: tx.hash,
     });
   }

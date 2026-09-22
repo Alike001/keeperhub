@@ -523,11 +523,28 @@ const NODE_ENVELOPE_REJECTION_PATTERNS: readonly RegExp[] = [
   /intrinsic gas/i,
 ];
 
-function isNodeEnvelopeRejection(message: string): boolean {
+function isSingleNodeEnvelopeRejection(message: string): boolean {
   return (
     isFundingShortfall(message) ||
     NODE_ENVELOPE_REJECTION_PATTERNS.some((pattern) => pattern.test(message))
   );
+}
+
+function isNodeEnvelopeRejection(message: string): boolean {
+  // executeWithFailover renders endpoint failures into one composite message.
+  // Treat the send as terminal only when every endpoint independently gave a
+  // definite envelope rejection. A timeout on one endpoint plus insufficient
+  // funds on the other is unknown because the timed-out endpoint may have
+  // accepted the transaction.
+  const endpointFailures = message
+    .split(/\b(?:primary|fallback):\s*/i)
+    .slice(1)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (endpointFailures.length > 0) {
+    return endpointFailures.every(isSingleNodeEnvelopeRejection);
+  }
+  return isSingleNodeEnvelopeRejection(message);
 }
 
 /**

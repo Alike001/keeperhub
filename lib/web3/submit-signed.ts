@@ -112,8 +112,16 @@ export async function submitSignedTransactionWithFailover(
   txRequest: ethers.TransactionRequest,
   rpcManager: RpcProviderManager
 ): Promise<BroadcastResult> {
-  const populated = await signer.populateTransaction(txRequest);
-  const signedHex = await signer.signTransaction(populated);
+  let populated: ethers.TransactionRequest;
+  let signedHex: string;
+  try {
+    populated = await signer.populateTransaction(txRequest);
+    signedHex = await signer.signTransaction(populated);
+  } catch (error) {
+    // No broadcast call has started. Preserve that provenance structurally so
+    // callers can release an idempotency key without matching error text.
+    throw new PreBroadcastNetworkError(errorMessage(error), error);
+  }
   const expectedHash = computeTxHash(signedHex);
 
   try {
