@@ -67,11 +67,6 @@ export type TemplateCodeEditorProps = {
    * by `disabled`). Lets variants keep their exact editor configuration.
    */
   editorOptions?: EditorProps["options"];
-  /**
-   * Hides the beautify control on fields where re-indenting is unwanted.
-   * Defaults to on for the languages that have a formatter behind them.
-   */
-  showBeautify?: boolean;
 };
 
 export function TemplateCodeEditor({
@@ -82,7 +77,6 @@ export function TemplateCodeEditor({
   height = "320px",
   placeholder,
   editorOptions,
-  showBeautify = true,
 }: TemplateCodeEditorProps): React.ReactElement {
   const nodes = useAtomValue(nodesAtom);
   const edges = useAtomValue(edgesAtom);
@@ -507,7 +501,7 @@ export function TemplateCodeEditor({
     read: readDisplayValue,
   });
 
-  const beautifyAvailable = showBeautify && canBeautifyLanguage(language);
+  const beautifyAvailable = canBeautifyLanguage(language);
 
   return (
     <>

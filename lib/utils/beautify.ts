@@ -15,7 +15,8 @@
 
 const TEMPLATE_OPEN = "{{";
 const TEMPLATE_CLOSE = "}}";
-const BASE_PLACEHOLDER_PREFIX = "__KH_TPL_";
+const PLACEHOLDER_STEM = "KH_TPL_";
+const MIN_PLACEHOLDER_UNDERSCORES = 2;
 /**
  * Two spaces, matching the repository's own sources and the `tabSize` the
  * Monaco options already set, so a formatted field looks like what pressing
@@ -48,11 +49,18 @@ type MaskResult = {
  * placeholders are swapped back out.
  */
 function resolvePrefix(source: string): string {
-  let prefix = BASE_PLACEHOLDER_PREFIX;
-  while (source.includes(prefix)) {
-    prefix = `_${prefix}`;
+  // One scan for every `KH_TPL_` already in the field, taking the longest run
+  // of underscores in front of any of them: one more than that cannot occur.
+  // Escalating by re-scanning the whole source per attempt was quadratic, and
+  // a pasted blob of underscores could hold the UI thread for a second.
+  let longestRun = 1;
+  for (const match of source.matchAll(/_*KH_TPL_/g)) {
+    const run = match[0].length - PLACEHOLDER_STEM.length;
+    if (run >= longestRun) {
+      longestRun = run + 1;
+    }
   }
-  return prefix;
+  return `${"_".repeat(Math.max(MIN_PLACEHOLDER_UNDERSCORES, longestRun))}${PLACEHOLDER_STEM}`;
 }
 
 function placeholderAt(prefix: string, index: number): string {
@@ -62,12 +70,14 @@ function placeholderAt(prefix: string, index: number): string {
 /**
  * The index just past a well-formed reference starting at `index`, or -1.
  *
- * A reference's body carries neither brace: the resolver's own pattern is
- * `\{\{([^}]+)\}\}`, and no label or field path produced by the editor
- * contains `{`. Bounding the search this way is what keeps a stray `{{` in
- * prose - a comment mentioning another templating syntax, an unbalanced brace
- * inside a string - from swallowing everything up to the next unrelated `}}`
- * and silently leaving that whole span unformatted.
+ * A reference's body is a label and a field path: `Label.field` or
+ * `@nodeId:Label.field`. It carries no brace, no quote and no line break, and
+ * the resolver's own `\{\{([^}]+)\}\}` already forbids `}`. Bounding the
+ * search on all four is what keeps a stray `{{` in prose - a comment about
+ * another templating syntax, an unbalanced brace inside a string - from
+ * swallowing everything up to the next unrelated `}}` and silently leaving
+ * that whole span unformatted. Bounding on `{` alone was not enough: a gap
+ * with no brace in it, `"{{ oops", "b": "x}}y"`, still swallowed.
  */
 function referenceEndAt(source: string, index: number): number {
   if (!source.startsWith(TEMPLATE_OPEN, index)) {
@@ -76,7 +86,7 @@ function referenceEndAt(source: string, index: number): number {
   let cursor = index + TEMPLATE_OPEN.length;
   while (cursor < source.length) {
     const char = source[cursor];
-    if (char === "{") {
+    if (char === "{" || char === '"' || char === "\n" || char === "\r") {
       return -1;
     }
     if (char === "}") {
@@ -205,9 +215,17 @@ function restoreTemplates(formatted: string, mask: MaskResult): string {
   });
 }
 
+/**
+ * The first line only. Prettier attaches a code frame to a syntax error, which
+ * would put a slice of the user's own field - a key, a token, whatever sat on
+ * that line - into a toast, and show it in its masked form with our
+ * placeholders where their references were.
+ */
 function describeError(error: unknown): string {
   if (error instanceof Error && error.message) {
-    return error.message;
+    return (
+      error.message.split("\n")[0].trim() || "Could not format this value."
+    );
   }
   return "Could not format this value.";
 }
@@ -377,11 +395,18 @@ export async function beautifyJavaScript(
     ]);
 
     const formatted = await standalone.format(mask.masked, {
-      parser: "babel",
+      // babel-ts is a superset of babel, so a field declared as typescript
+      // formats rather than failing on its first annotation.
+      parser: "babel-ts",
       plugins: [babel, estree],
       semi: true,
       singleQuote: true,
       tabWidth: INDENT_WIDTH,
+      // A placeholder is a valid identifier, so the default "as-needed" would
+      // unquote an object key that is nothing but a reference - putting back
+      // `{ {{A.k}}: 1 }` where the user wrote `{ "{{A.k}}": 1 }`. That is the
+      // same class of change as stripping a reference's quotes in JSON.
+      quoteProps: "preserve",
     });
 
     return { ok: true, value: restoreTemplates(formatted, mask) };

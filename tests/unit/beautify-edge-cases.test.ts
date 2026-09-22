@@ -186,3 +186,72 @@ describe("a stray opening brace does not swallow the rest of the field", () => {
     );
   });
 });
+
+// A reference's body carries no quote or line break either. Bounding only on
+// `{` left a gap with no brace in it still able to swallow.
+describe("the reference bound is tight enough", () => {
+  it("formats every pair when the gap holds no brace", () => {
+    const outcome = beautifyJson('{"a": "{{ oops", "b": "x}}y", "c": 3}');
+    expect(expectValue(outcome)).toBe(
+      '{\n  "a": "{{ oops",\n  "b": "x}}y",\n  "c": 3\n}'
+    );
+  });
+
+  it("does not treat a span crossing a line break as a reference", () => {
+    const outcome = beautifyJson('{"a":"{{ x","b":"y}}z","c":1}');
+    expect(expectValue(outcome)).toBe(
+      '{\n  "a": "{{ x",\n  "b": "y}}z",\n  "c": 1\n}'
+    );
+  });
+});
+
+// Prettier's default quoteProps unquotes an object key that is a bare
+// identifier, and a placeholder is one - so a quoted reference in key position
+// came back unquoted. Same class of change as stripping quotes in JSON.
+describe("beautifyJavaScript keeps quotes on a reference in key position", () => {
+  it("keeps the quotes when the key is only a reference", async () => {
+    const value = expectValue(
+      await beautifyJavaScript('const o = {"{{A.k}}": 1};')
+    );
+    expect(value).toContain("'{{A.k}}': 1");
+  });
+
+  it("keeps the quotes when the key merely contains one", async () => {
+    const value = expectValue(
+      await beautifyJavaScript('const o = {"pre{{A.k}}": 1};')
+    );
+    expect(value).toContain("'pre{{A.k}}': 1");
+  });
+
+  it("leaves an unquoted key unquoted", async () => {
+    const value = expectValue(await beautifyJavaScript("const o = {k: 1};"));
+    expect(value).toContain("{ k: 1 }");
+  });
+});
+
+describe("beautifyJavaScript formats what canBeautifyLanguage advertises", () => {
+  it.each([
+    ["annotation", "const x: number = 1;"],
+    ["interface", "interface A { b: string }\nconst a: A = { b: 'c' };"],
+    ["type assertion", "const v = x as string;"],
+    ["typed function", "function f(a: string): string { return a; }"],
+  ])("formats TypeScript: %s", async (_name, source) => {
+    expect(
+      expectValue(await beautifyJavaScript(source)).length
+    ).toBeGreaterThan(0);
+  });
+});
+
+describe("a failure message stays a single line", () => {
+  it("does not carry Prettier's code frame into the message", async () => {
+    const outcome = await beautifyJavaScript(
+      "const API_KEY = 'sk-live-ABCDEF123456'; const b = ;"
+    );
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.error.split("\n")).toHaveLength(1);
+      expect(outcome.error).not.toContain("sk-live-ABCDEF123456");
+      expect(outcome.error).not.toContain("__KH_TPL_");
+    }
+  });
+});

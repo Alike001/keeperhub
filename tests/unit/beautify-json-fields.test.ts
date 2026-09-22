@@ -36,32 +36,25 @@ function allConfigFields(): FoundField[] {
   return found;
 }
 
-/** Fields whose value is prose or a line-oriented format, never JSON. */
-const NEVER_JSON = new Set([
-  "discordMessage",
-  "slackMessage",
-  "message",
-  "emailBody",
-  "system",
-  "details",
-  "links",
-  "paths",
-  "explicitValues",
-]);
-
 /**
- * Fields whose value is always JSON and should offer the action.
+ * The exact set of fields carrying the flag, as `<integration>/<action>.<key>`.
  *
- * Clerk's publicMetadata and privateMetadata are marked in the source too, but
- * clerk is absent from plugins/plugin-allowlist.json so it never registers -
- * asserting on it here would pin a plugin this deployment does not load.
+ * Pinned as an equality rather than as a denylist of prose keys: a denylist
+ * cannot catch the mistake it exists for, because a field added tomorrow is in
+ * neither list and passes either way. Any addition or removal fails here, so
+ * marking a message body is a decision someone has to write down.
+ *
+ * Clerk's publicMetadata and privateMetadata are marked in source too, but
+ * clerk is absent from plugins/plugin-allowlist.json so it never registers.
  */
-const ALWAYS_JSON = [
-  "webhookHeaders",
-  "webhookPayload",
-  "customDetails",
-  "payouts",
-  "sources",
+const EXPECTED_JSON_FIELDS = [
+  "data/flatten-findings.sources",
+  "pagerduty/send-change-event.customDetails",
+  "pagerduty/trigger-incident.customDetails",
+  "tempo/batch-payout.payouts",
+  "web3/decode-calldata.abi",
+  "webhook/send-webhook.webhookHeaders",
+  "webhook/send-webhook.webhookPayload",
 ];
 
 describe("format: json marking", () => {
@@ -74,24 +67,26 @@ describe("format: json marking", () => {
     expect(wrong).toEqual([]);
   });
 
-  it("is never set on a prose or line-oriented field", () => {
-    const wrong = allConfigFields()
+  it("covers exactly the fields it is meant to", () => {
+    const marked = allConfigFields()
       .filter(({ field }) => field.format === "json")
-      .filter(({ field }) => NEVER_JSON.has(field.key))
-      .map(({ actionType, field }) => `${actionType}.${field.key}`);
+      .map(({ actionType, field }) => `${actionType}.${field.key}`)
+      .sort();
 
-    expect(wrong).toEqual([]);
+    expect(marked).toEqual(EXPECTED_JSON_FIELDS);
   });
 
-  it.each(ALWAYS_JSON)("marks %s", (key) => {
-    const matches = allConfigFields().filter(({ field }) => field.key === key);
-    expect(matches.length).toBeGreaterThan(0);
-    for (const { actionType, field } of matches) {
-      expect(
-        field.format,
-        `${actionType}.${field.key} should be marked format: "json"`
-      ).toBe("json");
-    }
+  it("leaves every other textarea field unmarked", () => {
+    const unmarked = allConfigFields()
+      .filter(({ field }) => field.type === "template-textarea")
+      .filter(({ field }) => field.format !== "json")
+      .map(({ actionType, field }) => `${actionType}.${field.key}`);
+
+    // Sanity: the prose fields are the majority, so an accidental blanket
+    // marking would empty this list.
+    expect(unmarked.length).toBeGreaterThan(EXPECTED_JSON_FIELDS.length);
+    expect(unmarked).toContain("discord/send-message.discordMessage");
+    expect(unmarked).toContain("data/extract-fields.paths");
   });
 });
 

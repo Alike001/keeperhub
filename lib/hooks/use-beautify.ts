@@ -43,6 +43,13 @@ export function useBeautify({
       try {
         const outcome = await beautifySource(source, language);
         if (outcome.ok) {
+          // The editor stays typable while this runs, and the first JavaScript
+          // format waits on Prettier's chunks. Writing back unconditionally
+          // would replace anything typed in that window with the formatted
+          // pre-click text, so a field that moved is left alone.
+          if (read() !== source) {
+            return;
+          }
           if (outcome.value !== source) {
             apply(outcome.value);
           }
