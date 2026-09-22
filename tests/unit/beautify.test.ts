@@ -155,3 +155,64 @@ describe("describeBeautifyTarget", () => {
     expect(describeBeautifyTarget("sql")).toContain("No formatter");
   });
 });
+
+// Formatting must be a whitespace-only change. An earlier cut round-tripped
+// through JSON.parse/JSON.stringify, which turned a wei-scale integer into a
+// double and handed back a different number - a silent corruption triggered by
+// a button whose whole promise is that it only reindents.
+describe("beautifyJson preserves literals exactly", () => {
+  it("keeps a wei-scale integer", () => {
+    const outcome = beautifyJson('{"amount":12345678901234567890}');
+    expectOk(outcome);
+    expect(outcome.value).toContain("12345678901234567890");
+  });
+
+  it("keeps a uint256 without switching to exponent notation", () => {
+    const max =
+      "115792089237316195423570985008687907853269984665640564039457584007913129639935";
+    const outcome = beautifyJson(`{"v":${max}}`);
+    expectOk(outcome);
+    expect(outcome.value).toContain(max);
+    expect(outcome.value).not.toContain("e+");
+  });
+
+  it("does not rewrite 1.0 or 1e3", () => {
+    const outcome = beautifyJson('{"a":1.0,"b":1e3}');
+    expectOk(outcome);
+    expect(outcome.value).toContain("1.0");
+    expect(outcome.value).toContain("1e3");
+  });
+
+  it("keeps string escapes as written", () => {
+    const outcome = beautifyJson('{"a":"line\\nbreak \\u00e9"}');
+    expectOk(outcome);
+    expect(outcome.value).toContain('"line\\nbreak \\u00e9"');
+  });
+
+  it("keeps both of a duplicated key rather than silently dropping one", () => {
+    const outcome = beautifyJson('{"a":1,"a":2}');
+    expectOk(outcome);
+    expect(outcome.value).toContain('"a": 1');
+    expect(outcome.value).toContain('"a": 2');
+  });
+
+  it("expands a minified object rather than leaving it on one line", () => {
+    const outcome = beautifyJson('{"a":1}');
+    expectOk(outcome);
+    expect(outcome.value).toBe('{\n  "a": 1\n}');
+  });
+
+  it("keeps empty containers compact", () => {
+    const outcome = beautifyJson('{"a":{},"b":[]}');
+    expectOk(outcome);
+    expect(outcome.value).toBe('{\n  "a": {},\n  "b": []\n}');
+  });
+
+  it("does not pollute Object.prototype via a __proto__ key", () => {
+    const outcome = beautifyJson('{"__proto__":{"polluted":true}}');
+    expectOk(outcome);
+    expect(
+      (Object.prototype as Record<string, unknown>).polluted
+    ).toBeUndefined();
+  });
+});

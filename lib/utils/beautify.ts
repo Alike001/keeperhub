@@ -146,14 +146,20 @@ function maskJson(source: string): MaskResult {
  * literal text.
  */
 function restoreTemplates(formatted: string, mask: MaskResult): string {
-  let restored = formatted;
-  for (let i = 0; i < mask.templates.length; i += 1) {
-    const placeholder = placeholderAt(mask.prefix, i);
-    const template = mask.templates[i];
-    restored = restored.split(`"${placeholder}"`).join(template);
-    restored = restored.split(placeholder).join(template);
+  if (mask.templates.length === 0) {
+    return formatted;
   }
-  return restored;
+  const prefix = mask.prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // The quoted alternative is first so it wins: a template masked into value
+  // position comes back still wrapped in quotes that were ours, not the
+  // user's. One pass keeps this linear in the field's size - replacing each
+  // placeholder in turn walked the whole document once per template, which on
+  // a field carrying thousands of references stalled the tab for seconds.
+  const pattern = new RegExp(`"${prefix}(\\d+)__"|${prefix}(\\d+)__`, "g");
+  return formatted.replace(pattern, (match, quoted, bare) => {
+    const index = Number(quoted ?? bare);
+    return mask.templates[index] ?? match;
+  });
 }
 
 function describeError(error: unknown): string {
@@ -163,12 +169,130 @@ function describeError(error: unknown): string {
   return "Could not format this value.";
 }
 
+const JSON_STRUCTURAL = new Set(["{", "}", "[", "]", ",", ":"]);
+
 /**
- * Re-indent JSON with two spaces, preserving templates.
+ * Split JSON into structural characters and verbatim literals.
  *
- * `JSON.parse` doubles as validation, which is the point: a field that cannot
- * be formatted is a field that will not parse at execution time either, so the
- * caller gets a message worth surfacing rather than a silent no-op.
+ * Literals are carried as the exact source text, never as parsed values. That
+ * is the whole point: `JSON.parse` turns `12345678901234567890` into a double
+ * and hands back `12345678901234567000`, which would silently corrupt a wei
+ * amount the moment someone pressed Beautify. A formatter must change
+ * whitespace and nothing else.
+ */
+function tokenizeJson(source: string): string[] {
+  const tokens: string[] = [];
+  let index = 0;
+
+  while (index < source.length) {
+    const char = source[index];
+
+    if (char === " " || char === "\t" || char === "\n" || char === "\r") {
+      index += 1;
+      continue;
+    }
+
+    if (JSON_STRUCTURAL.has(char)) {
+      tokens.push(char);
+      index += 1;
+      continue;
+    }
+
+    if (char === '"') {
+      let end = index + 1;
+      while (end < source.length) {
+        if (source[end] === "\\") {
+          end += 2;
+          continue;
+        }
+        if (source[end] === '"') {
+          end += 1;
+          break;
+        }
+        end += 1;
+      }
+      tokens.push(source.slice(index, end));
+      index = end;
+      continue;
+    }
+
+    // A number, true, false or null: copied exactly as written.
+    let end = index;
+    while (end < source.length) {
+      const next = source[end];
+      if (
+        JSON_STRUCTURAL.has(next) ||
+        next === " " ||
+        next === "\t" ||
+        next === "\n" ||
+        next === "\r"
+      ) {
+        break;
+      }
+      end += 1;
+    }
+    tokens.push(source.slice(index, end));
+    index = end;
+  }
+
+  return tokens;
+}
+
+function indentOf(depth: number): string {
+  return " ".repeat(depth * INDENT_WIDTH);
+}
+
+/** Re-emit the token stream one value per line. */
+function printJsonTokens(tokens: string[]): string {
+  let out = "";
+  let depth = 0;
+
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    const next = tokens[i + 1];
+
+    if (token === "{" || token === "[") {
+      const closer = token === "{" ? "}" : "]";
+      if (next === closer) {
+        out += token + closer;
+        i += 1;
+        continue;
+      }
+      depth += 1;
+      out += `${token}\n${indentOf(depth)}`;
+      continue;
+    }
+
+    if (token === "}" || token === "]") {
+      depth -= 1;
+      out += `\n${indentOf(depth)}${token}`;
+      continue;
+    }
+
+    if (token === ",") {
+      out += `,\n${indentOf(depth)}`;
+      continue;
+    }
+
+    if (token === ":") {
+      out += ": ";
+      continue;
+    }
+
+    out += token;
+  }
+
+  return out;
+}
+
+/**
+ * Re-indent JSON with two spaces, preserving templates and every literal.
+ *
+ * `JSON.parse` runs for validation only and its result is discarded: a field
+ * that cannot be formatted is a field that will not parse at execution time
+ * either, so the caller gets a message worth surfacing rather than a silent
+ * no-op. The output is built from the source text instead, so numbers, string
+ * escapes and duplicate keys come through exactly as the user wrote them.
  */
 export function beautifyJson(source: string): BeautifyOutcome {
   if (source.trim() === "") {
@@ -178,12 +302,13 @@ export function beautifyJson(source: string): BeautifyOutcome {
   const mask = maskJson(source);
 
   try {
-    const parsed: unknown = JSON.parse(mask.masked);
-    const formatted = JSON.stringify(parsed, null, INDENT_WIDTH);
-    return { ok: true, value: restoreTemplates(formatted, mask) };
+    JSON.parse(mask.masked);
   } catch (error) {
     return { ok: false, error: describeError(error) };
   }
+
+  const formatted = printJsonTokens(tokenizeJson(mask.masked));
+  return { ok: true, value: restoreTemplates(formatted, mask) };
 }
 
 /**
