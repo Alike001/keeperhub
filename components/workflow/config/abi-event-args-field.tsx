@@ -275,7 +275,12 @@ export function AbiEventArgsField({
           fixed or cleared.
         </p>
         {!disabled && (
-          <Button onClick={() => onChange("")} size="sm" variant="outline">
+          <Button
+            onClick={() => onChange("")}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
             Clear filter
           </Button>
         )}
@@ -314,59 +319,60 @@ export function AbiEventArgsField({
       {params.map((param) => {
         const empty = isEmptyForStep(param, current[param.name]);
         return (
-        <div className="space-y-1" key={param.name}>
-          <Label
-            className="ml-1 font-normal text-xs"
-            htmlFor={`${field.key}-${param.name}`}
-          >
-            {param.name}{" "}
-            <span className="text-muted-foreground">{param.type}</span>
-          </Label>
-          <Input
-            aria-invalid={empty || undefined}
-            disabled={disabled || !param.filterable}
-            id={`${field.key}-${param.name}`}
-            onChange={(e) => update(param.name, e.target.value)}
-            placeholder={
-              param.filterable
-                ? placeholderFor(param)
-                : "Cannot be filtered at the RPC"
-            }
-            value={current[param.name] ?? ""}
-          />
-          {empty && (
-            <div className="ml-1 space-y-1">
-              <p className="text-destructive text-xs">
-                The saved filter holds an empty value for {param.name}, which
-                fails every run. An empty box here does not mean "any value" -
-                the parameter has to be absent for that.
+          <div className="space-y-1" key={param.name}>
+            <Label
+              className="ml-1 font-normal text-xs"
+              htmlFor={`${field.key}-${param.name}`}
+            >
+              {param.name}{" "}
+              <span className="text-muted-foreground">{param.type}</span>
+            </Label>
+            <Input
+              aria-invalid={empty || undefined}
+              disabled={disabled || !param.filterable}
+              id={`${field.key}-${param.name}`}
+              onChange={(e) => update(param.name, e.target.value)}
+              placeholder={
+                param.filterable
+                  ? placeholderFor(param)
+                  : "Cannot be filtered at the RPC"
+              }
+              value={current[param.name] ?? ""}
+            />
+            {empty && (
+              <div className="ml-1 space-y-1">
+                <p className="text-destructive text-xs">
+                  The saved filter holds an empty value for {param.name}, which
+                  fails every run. An empty box here does not mean "any value" -
+                  the parameter has to be absent for that.
+                </p>
+                {!disabled && (
+                  <Button
+                    onClick={() => remove(param.name)}
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    Match any value
+                  </Button>
+                )}
+              </div>
+            )}
+            {!param.filterable && (
+              <p className="ml-1 text-muted-foreground text-xs">
+                An indexed {param.type} is stored as a hash of its encoded
+                contents, so there is no value to match on. Filter it in a later
+                node instead.
               </p>
-              {!disabled && (
-                <Button
-                  onClick={() => remove(param.name)}
-                  size="sm"
-                  variant="outline"
-                >
-                  Match any value
-                </Button>
-              )}
-            </div>
-          )}
-          {!param.filterable && (
-            <p className="ml-1 text-muted-foreground text-xs">
-              An indexed {param.type} is stored as a hash of its encoded
-              contents, so there is no value to match on. Filter it in a later
-              node instead.
-            </p>
-          )}
-          {param.filterable && param.hashed && (
-            <p className="ml-1 text-muted-foreground text-xs">
-              An indexed {param.type} is stored as a hash, so this matches the
-              whole value exactly. Partial matches are not possible, and the
-              value cannot be read back from the log.
-            </p>
-          )}
-        </div>
+            )}
+            {param.filterable && param.hashed && (
+              <p className="ml-1 text-muted-foreground text-xs">
+                An indexed {param.type} is stored as a hash, so this matches the
+                whole value exactly. Partial matches are not possible, and the
+                value cannot be read back from the log.
+              </p>
+            )}
+          </div>
         );
       })}
       {state.unnamed > 0 && (
