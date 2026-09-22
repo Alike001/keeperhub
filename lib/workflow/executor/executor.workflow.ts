@@ -878,7 +878,8 @@ function replaceConfigTemplate(
   nodeId: string,
   rest: string,
   outputs: NodeOutputs,
-  tracker?: TemplateResolutionTracker
+  tracker?: TemplateResolutionTracker,
+  path?: string
 ): string {
   const trimmedNodeId = nodeId.trim();
   const sanitizedNodeId = trimmedNodeId.replace(/[^a-zA-Z0-9]/g, "_");
@@ -902,6 +903,7 @@ function replaceConfigTemplate(
       token: match,
       reason: "no-node",
       detail: `Node "${trimmedNodeId}" has no output yet.`,
+      path,
     });
     return "";
   }
@@ -914,6 +916,7 @@ function replaceConfigTemplate(
       token: match,
       reason: "no-data",
       detail: `Node "${trimmedNodeId}" produced no data.`,
+      path,
     });
     return "";
   }
@@ -942,6 +945,7 @@ function replaceConfigTemplate(
       token: match,
       reason: "no-path",
       detail: `Field "${fieldPath || "(whole output)"}" not found on node "${trimmedNodeId}".`,
+      path,
     });
     return "";
   }
@@ -1047,7 +1051,8 @@ const anyTemplateToken = (): RegExp => /\{\{[^}]+\}\}/g;
 function resolveConfigMatch(
   match: RegExpExecArray,
   outputs: NodeOutputs,
-  tracker?: TemplateResolutionTracker
+  tracker?: TemplateResolutionTracker,
+  path?: string
 ): string {
   const [full, storedNodeId, storedRest, displayRef] = match;
   if (storedNodeId !== undefined && storedRest !== undefined) {
@@ -1056,7 +1061,8 @@ function resolveConfigMatch(
       storedNodeId,
       storedRest,
       outputs,
-      tracker
+      tracker,
+      path
     );
   }
   if (displayRef === undefined) {
@@ -1068,11 +1074,20 @@ function resolveConfigMatch(
       token: full,
       reason: "no-path",
       detail: `Display reference "${displayRef}" did not resolve.`,
+      path,
     });
     return full;
   }
   return formatConfigValue(resolved);
 }
+
+/**
+ * Enough entries to diagnose the fault, bounded so a config holding thousands
+ * of tokens cannot grow the tracker without limit on every run. The error
+ * message quotes the first five and counts the rest either way; the old
+ * post-scan capped itself at the same order for the same reason.
+ */
+const MAX_TRACKED_LEFTOVERS = 50;
 
 /**
  * Report a `{{...}}` the reference patterns could not match, in a stretch of
@@ -1088,6 +1103,9 @@ function recordAuthoredLeftovers(
     return;
   }
   for (const leftover of authored.matchAll(anyTemplateToken())) {
+    if (tracker.unresolved.length >= MAX_TRACKED_LEFTOVERS) {
+      return;
+    }
     recordUnresolved(tracker, {
       token: leftover[0],
       reason: "literal-leftover",
@@ -1122,7 +1140,7 @@ function renderTemplateString(
   while (match !== null) {
     const authored = value.slice(cursor, match.index);
     recordAuthoredLeftovers(authored, tracker, path);
-    result += authored + resolveConfigMatch(match, outputs, tracker);
+    result += authored + resolveConfigMatch(match, outputs, tracker, path);
     cursor = match.index + match[0].length;
     match = pattern.exec(value);
   }
