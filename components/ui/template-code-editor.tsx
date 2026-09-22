@@ -3,9 +3,12 @@
 import type { EditorProps, Monaco, OnMount } from "@monaco-editor/react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { AlertTriangle } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
+import { BeautifyButton } from "@/components/ui/beautify-button";
 import { CodeEditor } from "@/components/ui/code-editor";
 import { api } from "@/lib/api-client";
+import { beautifySource, canBeautifyLanguage } from "@/lib/utils/beautify";
 import { getInputSchemaFields } from "@/lib/workflow/editor/input-schema-fields";
 import {
   buildExecutionLogsMap,
@@ -64,6 +67,11 @@ export type TemplateCodeEditorProps = {
    * by `disabled`). Lets variants keep their exact editor configuration.
    */
   editorOptions?: EditorProps["options"];
+  /**
+   * Hides the beautify control on fields where re-indenting is unwanted.
+   * Defaults to on for the languages that have a formatter behind them.
+   */
+  showBeautify?: boolean;
 };
 
 export function TemplateCodeEditor({
@@ -74,7 +82,9 @@ export function TemplateCodeEditor({
   height = "320px",
   placeholder,
   editorOptions,
+  showBeautify = true,
 }: TemplateCodeEditorProps): React.ReactElement {
+  const [beautifyPending, setBeautifyPending] = useState(false);
   const nodes = useAtomValue(nodesAtom);
   const edges = useAtomValue(edgesAtom);
   const selectedNodeId = useAtomValue(selectedNodeAtom);
@@ -480,9 +490,54 @@ export function TemplateCodeEditor({
     [displayValue, nodes]
   );
 
+  /**
+   * Formats what the editor is showing, not what is stored. The display form
+   * is the one the user is looking at, and routing the result back through
+   * handleEditorChange re-expands every `{{Label.field}}` into its stored
+   * `{{@nodeId:Label.field}}` form using the same mapping typing does.
+   */
+  const handleBeautify = useCallback(async (): Promise<void> => {
+    if (disabled || beautifyPending) {
+      return;
+    }
+    const current = editorRef.current?.getModel()?.getValue() ?? displayValue;
+    setBeautifyPending(true);
+    try {
+      const outcome = await beautifySource(current, language);
+      if (outcome.ok) {
+        if (outcome.value !== current) {
+          handleEditorChange(outcome.value);
+        }
+        return;
+      }
+      toast.error("Could not beautify", { description: outcome.error });
+    } finally {
+      setBeautifyPending(false);
+    }
+  }, [
+    beautifyPending,
+    disabled,
+    displayValue,
+    handleEditorChange,
+    language,
+  ]);
+
+  const beautifyAvailable = showBeautify && canBeautifyLanguage(language);
+
   return (
     <>
       <div className="overflow-hidden rounded-md border">
+        {beautifyAvailable && (
+          <div className="flex items-center justify-end border-b bg-muted/30 px-1.5 py-1">
+            <BeautifyButton
+              disabled={disabled}
+              onBeautify={() => {
+                handleBeautify();
+              }}
+              pending={beautifyPending}
+            />
+          </div>
+        )}
         <CodeEditor
           defaultLanguage={language}
           defaultValue={placeholder}
