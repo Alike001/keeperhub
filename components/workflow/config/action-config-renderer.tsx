@@ -141,9 +141,13 @@ function BeautifiableTextareaField({
     read,
   });
 
+  // The strip sits inside the field's own frame, the way it does on the
+  // Monaco fields: the badge editor draws its own border, so that border is
+  // suppressed here and redrawn around both parts. A row of its own between
+  // the label and the field cost a line of height on every marked field.
   return (
-    <div className="space-y-1">
-      <div className="flex justify-end">
+    <div className="overflow-hidden rounded-md border border-input shadow-xs">
+      <div className="flex items-center justify-end border-b bg-muted/30 px-1.5 py-1">
         <BeautifyButton
           disabled={disabled}
           language="json"
@@ -152,6 +156,7 @@ function BeautifiableTextareaField({
         />
       </div>
       <TemplateBadgeTextarea
+        className="rounded-none border-0 shadow-none"
         disabled={disabled}
         id={field.key}
         onChange={onChange}

@@ -887,39 +887,40 @@ export function AbiWithAutoFetchField({
         />
       )}
 
-      {useManualAbi && (
-        <div className="flex justify-end">
-          <BeautifyButton
-            disabled={disabled || isLoading}
-            language="json"
-            onBeautify={beautifyAbi}
-            pending={abiBeautifyPending}
+      <div className="overflow-hidden rounded-md border border-input shadow-xs">
+        {useManualAbi && (
+          <div className="flex items-center justify-end border-b bg-muted/30 px-1.5 py-1">
+            <BeautifyButton
+              disabled={disabled || isLoading}
+              language="json"
+              onBeautify={beautifyAbi}
+              pending={abiBeautifyPending}
+            />
+          </div>
+        )}
+        <TemplateBadgeTextarea
+          className="max-h-40 overflow-y-auto rounded-none border-0 shadow-none"
+          disabled={disabled || isLoading || !useManualAbi}
+          id={field.key}
+          // Do not include `value.length` in the key: it remounts the textarea
+          // on every keystroke and kills focus mid-word. Parent-driven value
+          // changes are already synced via TemplateBadgeTextarea's effect when
+          // the field is blurred.
+          key={`${field.key}-${useProxyAbi ? "proxy" : "impl"}${isDiamond ? `-${useDiamondAbi ? "diamond" : "proxy"}` : ""}`}
+          maxRows={4}
+          onChange={(val) => {
+            onChange(val);
+            setError(null);
+          }}
+          placeholder={
+            useManualAbi
+              ? "Paste your ABI here"
+              : "ABI will be fetched automatically when a contract address and network are set"
+          }
+          rows={4}
+          value={value}
           />
-        </div>
-      )}
-
-      <TemplateBadgeTextarea
-        className="max-h-40 overflow-y-auto"
-        disabled={disabled || isLoading || !useManualAbi}
-        id={field.key}
-        // Do not include `value.length` in the key: it remounts the textarea
-        // on every keystroke and kills focus mid-word. Parent-driven value
-        // changes are already synced via TemplateBadgeTextarea's effect when
-        // the field is blurred.
-        key={`${field.key}-${useProxyAbi ? "proxy" : "impl"}${isDiamond ? `-${useDiamondAbi ? "diamond" : "proxy"}` : ""}`}
-        maxRows={4}
-        onChange={(val) => {
-          onChange(val);
-          setError(null);
-        }}
-        placeholder={
-          useManualAbi
-            ? "Paste your ABI here"
-            : "ABI will be fetched automatically when a contract address and network are set"
-        }
-        rows={4}
-        value={value}
-      />
+      </div>
     </div>
   );
 }
