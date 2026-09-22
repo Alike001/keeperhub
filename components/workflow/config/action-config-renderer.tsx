@@ -2,7 +2,7 @@
 
 import { ChevronDown, Info } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { BeautifyButton } from "@/components/ui/beautify-button";
+import { BeautifiableField } from "@/components/ui/beautifiable-field";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,7 +24,6 @@ import {
 } from "@/components/ui/select";
 import { TemplateBadgeInput } from "@/components/ui/template-badge-input";
 import { TemplateBadgeTextarea } from "@/components/ui/template-badge-textarea";
-import { useBeautify } from "@/lib/hooks/use-beautify";
 import { SaveAddressBookmark } from "@/components/address-book/save-address-bookmark";
 import type { AbiComponent } from "@/components/workflow/config/abi-types";
 import { ArrayInputField } from "@/components/workflow/config/array-input-field";
@@ -121,40 +120,28 @@ function TemplateInputField({
  * on message bodies where no button is rendered, and wrapped fields the
  * feature does not touch in an extra layout div.
  */
+/**
+ * The textarea variant for a field declared `format: "json"`.
+ *
+ * Split out so the frame and its hook exist only where the action can be
+ * reached, and so the markup is the shared one rather than a second copy of
+ * it. The badge editor draws its own border, which is suppressed here and
+ * redrawn by the frame around the strip and the input together.
+ */
 function BeautifiableTextareaField({
   field,
   value,
   onChange,
   disabled,
 }: FieldProps) {
-  // The field's text lives in the config, so the click-time closure would
-  // freeze it and the hook's "did this move while formatting?" check could
-  // never fire. A ref keeps it current.
-  const valueRef = useRef(value);
-  valueRef.current = value;
-  const read = useCallback((): string => valueRef.current, []);
-
-  const { pending, beautify } = useBeautify({
-    apply: onChange,
-    disabled,
-    language: "json",
-    read,
-  });
-
-  // The strip sits inside the field's own frame, the way it does on the
-  // Monaco fields: the badge editor draws its own border, so that border is
-  // suppressed here and redrawn around both parts. A row of its own between
-  // the label and the field cost a line of height on every marked field.
   return (
-    <div className="overflow-hidden rounded-md border border-input shadow-xs">
-      <div className="flex items-center justify-end border-b bg-muted/30 px-1.5 py-1">
-        <BeautifyButton
-          disabled={disabled}
-          language="json"
-          onBeautify={beautify}
-          pending={pending}
-        />
-      </div>
+    <BeautifiableField
+      className="border-input shadow-xs"
+      disabled={disabled}
+      language="json"
+      onChange={onChange}
+      value={value}
+    >
       <TemplateBadgeTextarea
         className="rounded-none border-0 shadow-none"
         disabled={disabled}
@@ -164,7 +151,7 @@ function BeautifiableTextareaField({
         rows={field.rows || 4}
         value={value}
       />
-    </div>
+    </BeautifiableField>
   );
 }
 

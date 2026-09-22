@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { ChainResponse } from "@/app/api/chains/route";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { BeautifyButton } from "@/components/ui/beautify-button";
+import { BeautifiableField } from "@/components/ui/beautifiable-field";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
@@ -14,7 +14,6 @@ import { Spinner } from "@/components/ui/spinner";
 import { TemplateBadgeTextarea } from "@/components/ui/template-badge-textarea";
 import { toChecksumAddress, truncateAddress } from "@/lib/address-utils";
 import { buildAddressUrl } from "@/lib/build-explorer-url";
-import { useBeautify } from "@/lib/hooks/use-beautify";
 import type { ActionConfigFieldBase } from "@/plugins/registry";
 
 const AUTO_FETCH_DEBOUNCE_MS = 600;
@@ -474,20 +473,6 @@ export function AbiWithAutoFetchField({
   const useManualAbi = String(config.useManualAbi) === "true";
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // Read through a ref so the hook sees the field's current text, not the
-  // value frozen into the closure at click time.
-  const abiValueRef = useRef(value);
-  abiValueRef.current = value;
-  const readAbi = useCallback((): string => abiValueRef.current, []);
-  const { pending: abiBeautifyPending, beautify: beautifyAbi } = useBeautify({
-    apply: onChange,
-    // Matches the button's own disabled state rather than trusting the DOM
-    // attribute alone to keep a beautify out of an in-flight ABI fetch.
-    disabled: disabled || isLoading,
-    language: "json",
-    read: readAbi,
-  });
   const [isProxy, setIsProxy] = useState(false);
   const [implementationAddress, setImplementationAddress] = useState<
     string | null
@@ -887,17 +872,14 @@ export function AbiWithAutoFetchField({
         />
       )}
 
-      <div className="overflow-hidden rounded-md border border-input shadow-xs">
-        {useManualAbi && (
-          <div className="flex items-center justify-end border-b bg-muted/30 px-1.5 py-1">
-            <BeautifyButton
-              disabled={disabled || isLoading}
-              language="json"
-              onBeautify={beautifyAbi}
-              pending={abiBeautifyPending}
-            />
-          </div>
-        )}
+      <BeautifiableField
+        className="border-input shadow-xs"
+        disabled={disabled || isLoading}
+        language="json"
+        onChange={onChange}
+        showAction={useManualAbi}
+        value={value}
+      >
         <TemplateBadgeTextarea
           className="max-h-40 overflow-y-auto rounded-none border-0 shadow-none"
           disabled={disabled || isLoading || !useManualAbi}
@@ -919,8 +901,8 @@ export function AbiWithAutoFetchField({
           }
           rows={4}
           value={value}
-          />
-      </div>
+        />
+      </BeautifiableField>
     </div>
   );
 }

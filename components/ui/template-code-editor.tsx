@@ -4,11 +4,9 @@ import type { EditorProps, Monaco, OnMount } from "@monaco-editor/react";
 import { useAtomValue, useSetAtom } from "jotai";
 import { AlertTriangle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { BeautifyButton } from "@/components/ui/beautify-button";
+import { BeautifiableField } from "@/components/ui/beautifiable-field";
 import { CodeEditor } from "@/components/ui/code-editor";
 import { api } from "@/lib/api-client";
-import { useBeautify } from "@/lib/hooks/use-beautify";
-import { canBeautifyLanguage } from "@/lib/utils/beautify";
 import { getInputSchemaFields } from "@/lib/workflow/editor/input-schema-fields";
 import {
   buildExecutionLogsMap,
@@ -483,39 +481,14 @@ export function TemplateCodeEditor({
     [displayValue, nodes]
   );
 
-  /**
-   * Formats what the editor is showing, not what is stored. The display form
-   * is the one the user is looking at, and routing the result back through
-   * handleEditorChange re-expands every `{{Label.field}}` into its stored
-   * `{{@nodeId:Label.field}}` form using the same mapping typing does.
-   */
-  const readDisplayValue = useCallback(
-    (): string => editorRef.current?.getModel()?.getValue() ?? displayValue,
-    [displayValue]
-  );
-
-  const { pending: beautifyPending, beautify } = useBeautify({
-    apply: handleEditorChange,
-    disabled,
-    language,
-    read: readDisplayValue,
-  });
-
-  const beautifyAvailable = canBeautifyLanguage(language);
-
   return (
     <>
-      <div className="overflow-hidden rounded-md border">
-        {beautifyAvailable && (
-          <div className="flex items-center justify-end border-b bg-muted/30 px-1.5 py-1">
-            <BeautifyButton
-              disabled={disabled}
-              language={language}
-              onBeautify={beautify}
-              pending={beautifyPending}
-            />
-          </div>
-        )}
+      <BeautifiableField
+        disabled={disabled}
+        language={language}
+        onChange={onChange}
+        value={value}
+      >
         <CodeEditor
           defaultLanguage={language}
           defaultValue={placeholder}
@@ -528,7 +501,7 @@ export function TemplateCodeEditor({
           }}
           value={displayValue}
         />
-      </div>
+      </BeautifiableField>
       {duplicateLabelWarnings.length > 0 && (
         <div className="flex items-start gap-2 rounded-md border border-yellow-200 bg-yellow-50 p-2 text-xs text-yellow-800 dark:border-yellow-800 dark:bg-yellow-950 dark:text-yellow-200">
           <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
