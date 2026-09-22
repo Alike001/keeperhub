@@ -60,11 +60,40 @@ function placeholderAt(prefix: string, index: number): string {
 }
 
 /**
+ * The index just past a well-formed reference starting at `index`, or -1.
+ *
+ * A reference's body carries neither brace: the resolver's own pattern is
+ * `\{\{([^}]+)\}\}`, and no label or field path produced by the editor
+ * contains `{`. Bounding the search this way is what keeps a stray `{{` in
+ * prose - a comment mentioning another templating syntax, an unbalanced brace
+ * inside a string - from swallowing everything up to the next unrelated `}}`
+ * and silently leaving that whole span unformatted.
+ */
+function referenceEndAt(source: string, index: number): number {
+  if (!source.startsWith(TEMPLATE_OPEN, index)) {
+    return -1;
+  }
+  let cursor = index + TEMPLATE_OPEN.length;
+  while (cursor < source.length) {
+    const char = source[cursor];
+    if (char === "{") {
+      return -1;
+    }
+    if (char === "}") {
+      return source[cursor + 1] === "}" ? cursor + TEMPLATE_CLOSE.length : -1;
+    }
+    cursor += 1;
+  }
+  return -1;
+}
+
+/**
  * Mask templates for JavaScript.
  *
  * A bare identifier is valid everywhere a template can appear in JS - in
  * expression position (`const c = {{Setup.result}}`), inside a string literal,
- * inside a comment - so no string tracking is needed.
+ * inside a comment - so no string tracking is needed here. What a reference IS
+ * still has to be bounded, which `referenceEndAt` does.
  */
 function maskJavaScript(source: string): MaskResult {
   const prefix = resolvePrefix(source);
@@ -74,15 +103,13 @@ function maskJavaScript(source: string): MaskResult {
   let index = 0;
 
   while (index < source.length) {
-    if (source.startsWith(TEMPLATE_OPEN, index)) {
-      const end = source.indexOf(TEMPLATE_CLOSE, index + TEMPLATE_OPEN.length);
-      if (end !== -1) {
-        masked += placeholderAt(prefix, templates.length);
-        quoted.push(false);
-        templates.push(source.slice(index, end + TEMPLATE_CLOSE.length));
-        index = end + TEMPLATE_CLOSE.length;
-        continue;
-      }
+    const jsEnd = referenceEndAt(source, index);
+    if (jsEnd !== -1) {
+      masked += placeholderAt(prefix, templates.length);
+      quoted.push(false);
+      templates.push(source.slice(index, jsEnd));
+      index = jsEnd;
+      continue;
     }
     masked += source[index];
     index += 1;
@@ -130,16 +157,14 @@ function maskJson(source: string): MaskResult {
       continue;
     }
 
-    if (source.startsWith(TEMPLATE_OPEN, index)) {
-      const end = source.indexOf(TEMPLATE_CLOSE, index + TEMPLATE_OPEN.length);
-      if (end !== -1) {
-        const placeholder = placeholderAt(prefix, templates.length);
-        masked += inString ? placeholder : `"${placeholder}"`;
-        quoted.push(!inString);
-        templates.push(source.slice(index, end + TEMPLATE_CLOSE.length));
-        index = end + TEMPLATE_CLOSE.length;
-        continue;
-      }
+    const jsonEnd = referenceEndAt(source, index);
+    if (jsonEnd !== -1) {
+      const placeholder = placeholderAt(prefix, templates.length);
+      masked += inString ? placeholder : `"${placeholder}"`;
+      quoted.push(!inString);
+      templates.push(source.slice(index, jsonEnd));
+      index = jsonEnd;
+      continue;
     }
 
     masked += char;

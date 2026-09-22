@@ -478,7 +478,9 @@ export function AbiWithAutoFetchField({
   const readAbi = useCallback((): string => value, [value]);
   const { pending: abiBeautifyPending, beautify: beautifyAbi } = useBeautify({
     apply: onChange,
-    disabled,
+    // Matches the button's own disabled state rather than trusting the DOM
+    // attribute alone to keep a beautify out of an in-flight ABI fetch.
+    disabled: disabled || isLoading,
     language: "json",
     read: readAbi,
   });

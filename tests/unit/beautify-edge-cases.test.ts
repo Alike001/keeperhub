@@ -143,3 +143,46 @@ describe("beautifyJavaScript accepts a code node's own dialect", () => {
     expect(expectValue(await beautifyJavaScript("   \n  "))).toBe("   \n  ");
   });
 });
+
+// A stray `{{` in prose used to swallow everything up to the next unrelated
+// `}}`, masking it as one opaque span. Nothing was corrupted - the span came
+// back byte for byte - but the formatter silently skipped it and still
+// reported success, so part of the field stayed unformatted with no hint why.
+//
+// These assert the exact output rather than comparing reference runs against
+// each other: the naive `/\{\{[^}]*\}\}/g` oracle used above captures the same
+// over-wide span on both sides and would agree the swallow "round-tripped".
+describe("a stray opening brace does not swallow the rest of the field", () => {
+  it("formats every pair when prose contains an unmatched {{", () => {
+    const outcome = beautifyJson(
+      '{"a": "note {{ typo", "b": "{{Real.ref}}", "c": 5}'
+    );
+    expect(expectValue(outcome)).toBe(
+      '{\n  "a": "note {{ typo",\n  "b": "{{Real.ref}}",\n  "c": 5\n}'
+    );
+  });
+
+  it("formats code after a comment containing an unmatched {{", async () => {
+    const value = expectValue(
+      await beautifyJavaScript(
+        "const a=1;\n// TODO: implement {{ properly\nconst config = {a: {{Node.value}}};\nconst b=2;"
+      )
+    );
+    expect(value).toContain("const config = { a: {{Node.value}} };");
+    expect(value).toContain("const b = 2;");
+  });
+
+  it("treats a body containing a brace as text, not a reference", () => {
+    const outcome = beautifyJson('{"a":"x {{not{a}ref}} y","b":1}');
+    expect(expectValue(outcome)).toBe(
+      '{\n  "a": "x {{not{a}ref}} y",\n  "b": 1\n}'
+    );
+  });
+
+  it("still recognises a reference that follows a stray opener", () => {
+    const outcome = beautifyJson('{"a":"{{ oops","b":{{Real.ref}}}');
+    expect(expectValue(outcome)).toBe(
+      '{\n  "a": "{{ oops",\n  "b": {{Real.ref}}\n}'
+    );
+  });
+});
