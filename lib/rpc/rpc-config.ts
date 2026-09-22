@@ -113,6 +113,10 @@ export const PUBLIC_RPCS = {
   // API key required (unlike the Alchemy/QuickNode mirrors docs.arc.io
   // lists), so it serves as the WSS fallback rather than the sole source.
   ARC_MAINNET_WSS: "wss://rpc.mainnet.arc.io",
+  // Blockdaemon's socket idles out (code 1006) after ~61s of no outbound
+  // traffic, vs. 75s+ observed on Circle's. Consumers here send a ping at
+  // HEARTBEAT_INTERVAL_MS (30s), giving ~2x margin on both, but raising
+  // either keepalive above ~60s would make this fallback churn every minute.
   ARC_MAINNET_WSS_FALLBACK: "wss://rpc.blockdaemon.mainnet.arc.io/websocket",
 } as const;
 
