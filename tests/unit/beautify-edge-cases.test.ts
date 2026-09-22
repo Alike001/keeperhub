@@ -340,3 +340,42 @@ describe("a JSON failure does not echo the field back", () => {
     }
   });
 });
+
+// The Monaco fields format the stored value and write it straight back. They
+// used to format what the editor displays - `{{Label.field}}`, with the node
+// id stripped - and rebuild the stored form afterwards from a label-to-id map.
+// That map has one entry per label, so two nodes sharing a display name
+// collapsed onto whichever id was seen last, silently repointing a reference
+// at a different node. Masking treats each reference as opaque, so the ids
+// cannot be confused with each other.
+describe("references that differ only by node id stay distinct", () => {
+  it("keeps two nodes that share a display label apart", () => {
+    const source =
+      '{"a":{{@node1:Read Hat.result}},"b":{{@node2:Read Hat.result}}}';
+    const value = expectValue(beautifyJson(source));
+    expect(value).toContain("{{@node1:Read Hat.result}}");
+    expect(value).toContain("{{@node2:Read Hat.result}}");
+  });
+
+  it("keeps them apart in JavaScript too", async () => {
+    const source =
+      "const a = {{@node1:Read Hat.result}};\nconst b = {{@node2:Read Hat.result}};";
+    const value = expectValue(await beautifyJavaScript(source));
+    expect(value).toContain("{{@node1:Read Hat.result}}");
+    expect(value).toContain("{{@node2:Read Hat.result}}");
+  });
+
+  it("leaves a reference with no node id bare", () => {
+    // Formatting must not resolve a label to a node id that happens to exist.
+    const value = expectValue(beautifyJson('{"a":{{Read Hat.result}}}'));
+    expect(value).toContain("{{Read Hat.result}}");
+    expect(value).not.toContain("@");
+  });
+
+  it("keeps a bare and an attached reference to the same label apart", () => {
+    const source = '{"a":{{Read Hat.result}},"b":{{@node2:Read Hat.result}}}';
+    const value = expectValue(beautifyJson(source));
+    expect(value).toContain('"a": {{Read Hat.result}}');
+    expect(value).toContain('"b": {{@node2:Read Hat.result}}');
+  });
+});
