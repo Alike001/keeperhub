@@ -180,8 +180,8 @@ working explorer API.
 
 The 1.5x multiplier is a workaround, not a ceiling: an estimate above roughly
 2,000,000 gas can still exceed the block limit once the multiplier is applied,
-and blocks already run well over half full. Size such a transaction down rather
-than relying on the multiplier.
+and blocks routinely reach 0.7 to 0.9 of the limit. Size such a transaction down
+rather than relying on the multiplier.
 
 Chain id 999 is registered as HyperEVM by Etherscan and the node itself, but
 `chainid.network` still lists 999 as Wanchain Testnet, so third-party tooling

@@ -326,12 +326,15 @@ export const HARDCODED_CHAIN_OVERRIDES: Record<
     minPriorityFeeGwei: 0,
     maxPriorityFeeGwei: 1,
   },
-  // HyperEVM. Regular blocks carry a 3,000,000 gas limit (measured across
-  // 40 consecutive blocks on 2026-09-16, every one at 3,000,000), and the
+  // HyperEVM. Regular blocks carry a 3,000,000 gas limit, and the
   // node rejects a transaction above it at submission with
   // -32000 "exceeds block gas limit" before it checks the balance. The
   // larger 30,000,000 blocks require the sender to opt in on HyperCore,
-  // which KeeperHub does not do. The 2.0 default would therefore make any
+  // which KeeperHub does not do -- they are interleaved with the regular
+  // ones rather than absent, so a short sample can show only 3,000,000
+  // limits (one 30,000,000 block appeared in 80 consecutive blocks on
+  // 2026-09-22). What holds is the cap on a sender that has not opted in,
+  // not a single limit for the chain. The 2.0 default would therefore make any
   // estimate above 1,500,000 gas unsendable, so the multiplier drops to
   // 1.5, covering estimates up to 2,000,000. Above that, set an absolute
   // gas limit on the action. Priority fees keep the defaults: unlike

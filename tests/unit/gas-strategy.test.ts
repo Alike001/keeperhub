@@ -514,6 +514,15 @@ describe("AdaptiveGasStrategy", () => {
       expect(chainIds.size).toBeGreaterThan(0);
       for (const key of chainIds) {
         const chainId = Number(key);
+        // Asserted separately because getChainGasDefaults falls back to the
+        // global default, whose multiplier is 2.0. Comparing the values
+        // alone would pass for a chain present only in the overrides with a
+        // 2.0 multiplier -- six entries use 2.0 today -- so the membership
+        // is what makes this direction real rather than a coincidence.
+        expect(
+          Object.hasOwn(CHAIN_GAS_DEFAULTS, chainId),
+          `chain ${chainId}`
+        ).toBe(true);
         expect(
           getChainGasDefaults(chainId).multiplier,
           `chain ${chainId}`

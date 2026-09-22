@@ -92,9 +92,11 @@ export const CHAIN_GAS_DEFAULTS: Readonly<Record<number, ChainGasDefaults>> = {
   46630: { multiplier: 1.5 },
   // HyperEVM (3,000,000 block gas limit). 1.5x keeps a typical estimate
   // inside the limit where 2x would not; it is not a cap. An estimate above
-  // ~2,000,000 still multiplies past the limit, and blocks already run well
-  // over half full, so the headroom is real but finite. Clamping to the
-  // block gas limit would be the structural fix and no chain entry does that
+  // ~2,000,000 still multiplies past the limit, and blocks routinely reach
+  // 0.7 to 0.9 of it: across 80 consecutive blocks sampled on 2026-09-22 the
+  // median was 0.50, 26 blocks sat at 0.7 or above and the fullest used
+  // 2,977,796 gas. So the headroom is real but finite. Clamping to the block
+  // gas limit would be the structural fix and no chain entry does that
   // today, so it is left out of a chain add.
   999: { multiplier: 1.5 },
   // 0G Galileo testnet
