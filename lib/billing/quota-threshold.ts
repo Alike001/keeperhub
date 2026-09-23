@@ -10,6 +10,7 @@ import {
 } from "./execution-limit-core";
 import {
   getPlanLimits,
+  isValidPlanName,
   type PlanLimits,
   type PlanName,
   parsePlanName,
@@ -17,7 +18,7 @@ import {
   type TierKey,
 } from "./plans";
 import { buildQuotaStatus, type QuotaStatus } from "./quota-threshold-core";
-import { getOrgSubscription } from "./subscription-read";
+import { getOrgSubscription, readOrgSubscription } from "./subscription-read";
 
 export {
   buildQuotaStatus,
@@ -97,7 +98,34 @@ async function getActiveDebtForOrg(organizationId: string): Promise<number> {
 export async function confirmQuotaStatus(
   status: QuotaStatus
 ): Promise<QuotaStatus | null> {
-  const sub = await getOrgSubscription(status.organizationId);
+  const read = await readOrgSubscription(status.organizationId);
+
+  // An absent subscription only means "free" when the org itself came back.
+  // Without that, the read is untrustworthy and defaulting would mail the free
+  // plan's numbers to an org that may have no limit at all.
+  if (!read.orgExists) {
+    logSystemWarn(
+      ErrorCategory.BILLING,
+      "[QuotaThreshold] Organization did not resolve; not sending a quota warning",
+      undefined,
+      { organization_id: status.organizationId }
+    );
+    return null;
+  }
+
+  const sub = read.subscription;
+
+  // A stored plan that is not a plan we know is corrupt data, not a free org.
+  if (sub !== null && !isValidPlanName(sub.plan)) {
+    logSystemWarn(
+      ErrorCategory.BILLING,
+      "[QuotaThreshold] Stored plan is not a known plan; not sending a quota warning",
+      undefined,
+      { organization_id: status.organizationId, stored_plan: String(sub.plan) }
+    );
+    return null;
+  }
+
   const plan = parsePlanName(sub?.plan);
 
   // startOfCurrentMonthUtc(periodStart) is periodStart, so rebuilding against

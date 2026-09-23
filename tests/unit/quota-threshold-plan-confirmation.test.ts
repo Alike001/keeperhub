@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  getOrgSubscription: vi.fn(),
+  readOrgSubscription: vi.fn(),
   logSystemWarn: vi.fn(),
 }));
 
@@ -9,10 +9,12 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/db", () => ({ db: {} }));
 vi.mock("@/lib/db/schema", () => ({
   executionDebt: { organizationId: {}, status: {}, debtExecutions: {} },
+  organization: { id: {} },
   organizationSubscriptions: { organizationId: {}, plan: {}, tier: {} },
 }));
 vi.mock("@/lib/billing/subscription-read", () => ({
-  getOrgSubscription: mocks.getOrgSubscription,
+  getOrgSubscription: vi.fn(),
+  readOrgSubscription: mocks.readOrgSubscription,
 }));
 vi.mock("@/lib/logging", () => ({
   ErrorCategory: { BILLING: "BILLING" },
@@ -47,24 +49,29 @@ function countedAsFree(used: number): QuotaStatus {
   };
 }
 
+/** An org that resolved, carrying the stored subscription row. */
+function resolved(subscription: unknown): unknown {
+  return { orgExists: true, subscription };
+}
+
 function subscription(plan: string, tier: string | null = null): unknown {
-  return { plan, tier, planOverrides: null };
+  return resolved({ plan, tier, planOverrides: null });
 }
 
 beforeEach(() => {
-  mocks.getOrgSubscription.mockReset();
+  mocks.readOrgSubscription.mockReset();
   mocks.logSystemWarn.mockReset();
 });
 
 describe("confirmQuotaStatus", () => {
   it("drops an unlimited org that was counted against the free allowance", async () => {
-    mocks.getOrgSubscription.mockResolvedValue(subscription("enterprise"));
+    mocks.readOrgSubscription.mockResolvedValue(subscription("enterprise"));
 
     expect(await confirmQuotaStatus(countedAsFree(310_340))).toBeNull();
   });
 
   it("reports the plan mismatch that produced the wrong figures", async () => {
-    mocks.getOrgSubscription.mockResolvedValue(subscription("enterprise"));
+    mocks.readOrgSubscription.mockResolvedValue(subscription("enterprise"));
 
     await confirmQuotaStatus(countedAsFree(310_340));
 
@@ -90,13 +97,13 @@ describe("confirmQuotaStatus", () => {
   ])(
     "resolves $plan/$tier to its own limit instead of the free allowance",
     async ({ plan, tier, limit }) => {
-      mocks.getOrgSubscription.mockResolvedValue(subscription(plan, tier));
+      mocks.readOrgSubscription.mockResolvedValue(subscription(plan, tier));
 
       // Past the free allowance but inside this plan's, so the only way to
       // reach a threshold here is to still be using the free numbers.
       expect(await confirmQuotaStatus(countedAsFree(6000))).toBeNull();
 
-      mocks.getOrgSubscription.mockResolvedValue(subscription(plan, tier));
+      mocks.readOrgSubscription.mockResolvedValue(subscription(plan, tier));
       const atLimit = await confirmQuotaStatus(countedAsFree(limit));
 
       expect(atLimit).toMatchObject({
@@ -109,7 +116,7 @@ describe("confirmQuotaStatus", () => {
   );
 
   it("keeps a genuine free-plan org at its threshold", async () => {
-    mocks.getOrgSubscription.mockResolvedValue(subscription("free"));
+    mocks.readOrgSubscription.mockResolvedValue(subscription("free"));
 
     expect(await confirmQuotaStatus(countedAsFree(5000))).toMatchObject({
       plan: "free",
@@ -122,7 +129,7 @@ describe("confirmQuotaStatus", () => {
   });
 
   it("keeps an org that has no subscription row on the free allowance", async () => {
-    mocks.getOrgSubscription.mockResolvedValue(undefined);
+    mocks.readOrgSubscription.mockResolvedValue(resolved(null));
 
     expect(await confirmQuotaStatus(countedAsFree(5000))).toMatchObject({
       plan: "free",
@@ -132,27 +139,60 @@ describe("confirmQuotaStatus", () => {
   });
 
   it("honours a per-org limit override", async () => {
-    mocks.getOrgSubscription.mockResolvedValue({
-      plan: "business",
-      tier: null,
-      planOverrides: { maxExecutionsPerMonth: 2_000_000 },
-    });
+    mocks.readOrgSubscription.mockResolvedValue(
+      resolved({
+        plan: "business",
+        tier: null,
+        planOverrides: { maxExecutionsPerMonth: 2_000_000 },
+      })
+    );
 
     expect(await confirmQuotaStatus(countedAsFree(310_340))).toBeNull();
   });
 
   it("drops an org that an unlimited override took off every threshold", async () => {
-    mocks.getOrgSubscription.mockResolvedValue({
-      plan: "free",
-      tier: null,
-      planOverrides: { maxExecutionsPerMonth: -1 },
-    });
+    mocks.readOrgSubscription.mockResolvedValue(
+      resolved({
+        plan: "free",
+        tier: null,
+        planOverrides: { maxExecutionsPerMonth: -1 },
+      })
+    );
 
     expect(await confirmQuotaStatus(countedAsFree(310_340))).toBeNull();
   });
 
+  it("refuses to default to free when the org did not resolve", async () => {
+    mocks.readOrgSubscription.mockResolvedValue({
+      orgExists: false,
+      subscription: null,
+    });
+
+    expect(await confirmQuotaStatus(countedAsFree(310_340))).toBeNull();
+    expect(mocks.logSystemWarn).toHaveBeenCalledWith(
+      "BILLING",
+      expect.stringContaining("did not resolve"),
+      undefined,
+      expect.objectContaining({ organization_id: "org_1" })
+    );
+  });
+
+  it("refuses to default to free when the stored plan is not a known plan", async () => {
+    mocks.readOrgSubscription.mockResolvedValue(
+      resolved({ plan: "legacy_gold", tier: null, planOverrides: null })
+    );
+
+    expect(await confirmQuotaStatus(countedAsFree(310_340))).toBeNull();
+    expect(mocks.logSystemWarn).toHaveBeenCalledWith(
+      "BILLING",
+      expect.stringContaining("not a known plan"),
+      undefined,
+      expect.objectContaining({ stored_plan: "legacy_gold" })
+    );
+  });
+
   it("confirms inside the month the usage was counted in", async () => {
-    mocks.getOrgSubscription.mockResolvedValue(subscription("free"));
+    mocks.readOrgSubscription.mockResolvedValue(subscription("free"));
 
     const confirmed = await confirmQuotaStatus(countedAsFree(5000));
 
