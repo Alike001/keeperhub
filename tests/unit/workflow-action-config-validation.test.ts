@@ -1834,6 +1834,51 @@ describe("formatActionConfigValidationResponse", () => {
     );
   });
 
+  it("separates id-less nodes that share a label by their path index", () => {
+    const issue = (index: number, field: string) => ({
+      code: "MISSING_REQUIRED_FIELD" as const,
+      path: `nodes[${index}].data.config.${field}`,
+      field,
+      message: `Missing ${field}`,
+      nodeLabel: "Send Message",
+    });
+
+    const result = formatActionConfigValidationResponse({
+      valid: false,
+      issues: [
+        issue(0, "message"),
+        issue(0, "discordMessage"),
+        issue(1, "message"),
+        issue(1, "discordMessage"),
+      ],
+    });
+
+    expect(result.message).toContain(
+      '"Send Message" (message, discordMessage), "Send Message" (message, discordMessage)'
+    );
+  });
+
+  // Field names render bare inside the parentheses, so the comma separator and
+  // the `+N more` marker are their only delimiters.
+  it("neutralises separators forged inside a config key", () => {
+    const result = formatActionConfigValidationResponse({
+      valid: false,
+      issues: [
+        {
+          code: "UNKNOWN_FIELD",
+          path: "nodes[0].data.config.x",
+          field: "webhookUrl, apiKey +9 more",
+          message: "Unknown field",
+          nodeId: "n1",
+          nodeLabel: "Treasury Transfer",
+        },
+      ],
+    });
+
+    expect(result.message).not.toContain("webhookUrl, apiKey");
+    expect(result.message).not.toContain("+9 more");
+  });
+
   it("escapes the nodeId fallback when the label is blank", () => {
     const result = formatActionConfigValidationResponse({
       valid: false,

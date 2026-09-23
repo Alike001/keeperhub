@@ -36,6 +36,9 @@ const RESERVED_CONFIG_KEYS = new Set([
 
 const TEMPLATE_VALUE_PATTERN = /\{\{[^}]+}}/;
 const DECIMAL_PATTERN = /^\d+(?:\.\d+)?$/;
+// The `nodes[N]` prefix the validator writes into every issue path, used to
+// tell two nodes apart when neither carries an id.
+const NODE_PATH_PREFIX_PATTERN = /^nodes\[\d+]/;
 
 // Maximum characters for a node label rendered into the top-level message.
 // Matches the 500-char cap in export-schema.ts but shorter for readability.
@@ -68,6 +71,14 @@ function sanitiseSummaryText(text: string, maxChars: number): string {
 
 function sanitiseNodeLabel(label: string): string {
   return sanitiseSummaryText(label, NODE_LABEL_MAX_CHARS);
+}
+
+// A node label is rendered inside quotes, so escaping `"` is enough to stop it
+// forging a neighbouring entry. A field name is rendered bare, separated only
+// by commas and elided with `+N more`, so those two characters are its
+// delimiters and a caller-supplied config key must not contain either.
+function sanitiseFieldName(field: string): string {
+  return sanitiseSummaryText(field.replace(/[,+]/g, " "), FIELD_NAME_MAX_CHARS);
 }
 
 export type ActionConfigValidationIssueCode =
@@ -723,7 +734,21 @@ export function hasDraftActionNodes(
 // same way ("actionType") and every issue contributes exactly one name.
 function issueFieldName(issue: ActionConfigValidationIssue): string {
   const raw = issue.field ?? issue.path.split(".").pop() ?? "";
-  return sanitiseSummaryText(raw, FIELD_NAME_MAX_CHARS);
+  return sanitiseFieldName(raw);
+}
+
+// Which node an issue belongs to, for grouping. A nodeId is authoritative, but
+// it survives import as `undefined`, and two nodes can carry the same default
+// label -- keying on the label alone would merge them into one entry, so
+// fixing one would produce an identical message with the other still broken.
+// The `nodes[N]` path prefix distinguishes them when the id is missing.
+function issueNodeKey(issue: ActionConfigValidationIssue): string {
+  return (
+    issue.nodeId ??
+    issue.path.match(NODE_PATH_PREFIX_PATTERN)?.[0] ??
+    issue.nodeLabel ??
+    issue.path
+  );
 }
 
 // Renders the field names behind a node's issues, so a consumer that surfaces
@@ -755,11 +780,7 @@ export function formatActionConfigValidationResponse(
             }
           >();
           for (const issue of validation.issues) {
-            // Group on nodeId where there is one: two distinct nodes can carry
-            // the same default label, and keying on the label would merge them
-            // into a single entry, so fixing one leaves an identical message
-            // with no sign the other is still broken.
-            const key = issue.nodeId ?? issue.nodeLabel ?? issue.path;
+            const key = issueNodeKey(issue);
             const existing = labels.get(key);
             const entry = existing ?? {
               count: 0,
