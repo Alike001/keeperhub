@@ -44,21 +44,33 @@ function allConfigFields(): FoundField[] {
  * neither list and passes either way. Any addition or removal fails here, so
  * marking a message body is a decision someone has to write down.
  *
- * Clerk's publicMetadata and privateMetadata are marked in source too, but
- * clerk is absent from plugins/plugin-allowlist.json so it never registers.
+ * Clerk's privateMetadata is marked in source too, but clerk is absent from
+ * plugins/plugin-allowlist.json so it never registers.
  */
 const EXPECTED_JSON_FIELDS = [
-  "data/extract-fields.source",
   "data/flatten-findings.sources",
   "pagerduty/send-change-event.customDetails",
   "pagerduty/trigger-incident.customDetails",
-  "tempo/batch-payout.payouts",
   "web3/decode-calldata.abi",
   "webhook/send-webhook.webhookHeaders",
   "webhook/send-webhook.webhookPayload",
 ];
 
-describe("format: json marking", () => {
+/**
+ * Fields that hold JSON but also accept a lone reference, which the
+ * placeholder offers first. A bare `{{ref}}` is already formatted, so the hook
+ * has nothing to apply and raises no toast: the button is inert with no
+ * feedback, which is worse than not being there. They are named rather than
+ * merely absent, so re-marking one has to be an argument someone makes.
+ */
+const BARE_REFERENCE_FIELDS = [
+  "data/extract-fields.source",
+  "tempo/batch-payout.payouts",
+  // clerk/create-user.publicMetadata and clerk/update-user.publicMetadata are
+  // the same shape; clerk never registers, so they cannot be asserted here.
+];
+
+describe("valueFormat: json marking", () => {
   it("is only ever set on template-textarea fields", () => {
     const wrong = allConfigFields()
       .filter(({ field }) => field.valueFormat === "json")
@@ -75,6 +87,33 @@ describe("format: json marking", () => {
       .sort();
 
     expect(marked).toEqual(EXPECTED_JSON_FIELDS);
+  });
+
+  it("leaves the fields that also take a bare reference unmarked", () => {
+    const marked = new Set(
+      allConfigFields()
+        .filter(({ field }) => field.valueFormat === "json")
+        .map(({ actionType, field }) => `${actionType}.${field.key}`)
+    );
+    const known = new Set(
+      allConfigFields().map(
+        ({ actionType, field }) => `${actionType}.${field.key}`
+      )
+    );
+
+    for (const name of BARE_REFERENCE_FIELDS) {
+      // Guards against the field being renamed out from under the list.
+      expect(known.has(name)).toBe(true);
+      expect(marked.has(name)).toBe(false);
+    }
+  });
+
+  it("would be a no-op on those fields, which is why they are left out", () => {
+    const outcome = beautifyJson("{{@node1:Chainlog.data}}");
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.value).toBe("{{@node1:Chainlog.data}}");
+    }
   });
 
   it("leaves every other textarea field unmarked", () => {
