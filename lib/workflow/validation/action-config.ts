@@ -243,6 +243,24 @@ function isJsonArrayString(value: unknown): boolean {
   }
 }
 
+function isJsonObjectString(value: unknown): boolean {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const trimmed = value.trim();
+  if (trimmed === "") {
+    return true;
+  }
+  try {
+    const parsed = JSON.parse(trimmed);
+    return (
+      typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+    );
+  } catch {
+    return false;
+  }
+}
+
 function isJsonArrayOrObjectString(value: unknown): boolean {
   if (typeof value !== "string") {
     return false;
@@ -450,7 +468,6 @@ function validateFieldValue(
     case "json-editor":
     case "schema-builder":
     case "abi-function-args":
-    case "abi-event-args":
     case "call-list-builder":
     case "args-list-builder":
       return isRecord(value) ||
@@ -459,6 +476,13 @@ function validateFieldValue(
         isJsonArrayOrObjectString(value)
         ? { valid: true }
         : { valid: false, expected: "object or array", received: value };
+    case "abi-event-args":
+      // Keyed by indexed parameter name, so the step refuses an array.
+      return isRecord(value) ||
+        valueContainsTemplate(value) ||
+        isJsonObjectString(value)
+        ? { valid: true }
+        : { valid: false, expected: "object", received: value };
     default:
       if (field.isAddressField) {
         return typeof value === "string" &&

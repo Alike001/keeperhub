@@ -524,6 +524,101 @@ describe("validateWorkflowActionConfigs", () => {
     });
   });
 
+  describe("abi-event-args (query-events eventArgs)", () => {
+    function queryEventsNode(eventArgs: unknown) {
+      return actionNode("web3/query-events", {
+        network: "1",
+        contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+        abi: "[]",
+        eventName: "Transfer",
+        eventArgs,
+      });
+    }
+
+    it("accepts a native object", () => {
+      expect(
+        validateWorkflowActionConfigs([
+          queryEventsNode({
+            from: "0x0000000000000000000000000000000000000001",
+          }),
+        ])
+      ).toEqual({ valid: true, issues: [] });
+    });
+
+    it("accepts a JSON-stringified object (the format the UI emits)", () => {
+      expect(
+        validateWorkflowActionConfigs([
+          queryEventsNode(
+            '{"from":"0x0000000000000000000000000000000000000001"}'
+          ),
+        ])
+      ).toEqual({ valid: true, issues: [] });
+    });
+
+    it("accepts a template value", () => {
+      expect(
+        validateWorkflowActionConfigs([
+          queryEventsNode("{{@prev:Prev.filters}}"),
+        ])
+      ).toEqual({ valid: true, issues: [] });
+    });
+
+    it("accepts an empty or whitespace-only string (no filter)", () => {
+      expect(validateWorkflowActionConfigs([queryEventsNode("")])).toEqual({
+        valid: true,
+        issues: [],
+      });
+      expect(validateWorkflowActionConfigs([queryEventsNode("  ")])).toEqual({
+        valid: true,
+        issues: [],
+      });
+    });
+
+    it("rejects a native array", () => {
+      const result = validateWorkflowActionConfigs([queryEventsNode([])]);
+
+      expect(result.valid).toBe(false);
+      expect(result.issues).toEqual([
+        expect.objectContaining({
+          code: "INVALID_FIELD_TYPE",
+          path: "nodes[0].data.config.eventArgs",
+          field: "eventArgs",
+          expected: "object",
+          received: [],
+        }),
+      ]);
+    });
+
+    it("rejects a JSON-stringified array", () => {
+      const result = validateWorkflowActionConfigs([queryEventsNode("[]")]);
+
+      expect(result.valid).toBe(false);
+      expect(result.issues).toEqual([
+        expect.objectContaining({
+          code: "INVALID_FIELD_TYPE",
+          field: "eventArgs",
+          expected: "object",
+          received: "[]",
+        }),
+      ]);
+    });
+
+    it("rejects a JSON null string and a non-JSON literal", () => {
+      for (const eventArgs of ["null", "not-json"]) {
+        const result = validateWorkflowActionConfigs([
+          queryEventsNode(eventArgs),
+        ]);
+        expect(result.issues).toEqual([
+          expect.objectContaining({
+            code: "INVALID_FIELD_TYPE",
+            field: "eventArgs",
+            received: eventArgs,
+          }),
+        ]);
+      }
+    });
+  });
+
   describe("batch-write-contract calls[] required fields", () => {
     const DO_WRITE_ABI = JSON.stringify([
       {
