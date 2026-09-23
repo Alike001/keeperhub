@@ -1,8 +1,6 @@
 import "server-only";
 
-import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { organizationSubscriptions } from "@/lib/db/schema";
 import { maybeNotifyQuotaThreshold } from "@/lib/notifications/quota-threshold";
 import { getActiveDebtExecutions } from "./execution-debt";
 import {
@@ -24,6 +22,11 @@ import {
   parseTierKey,
   type TierKey,
 } from "./plans";
+import { getOrgSubscription } from "./subscription-read";
+
+// Kept on this module so every existing importer, and the tests that mock
+// this module, keep working after the reader moved.
+export { getOrgSubscription } from "./subscription-read";
 
 // -- Price ID mapping (server-only, env vars not available in client bundles) --
 
@@ -136,17 +139,6 @@ export function resolveSubscriptionPlan(
     resolveFromMetadata(metadata?.subscription) ??
     resolveFromMetadata(metadata?.price)
   );
-}
-
-export async function getOrgSubscription(
-  organizationId: string
-): Promise<typeof organizationSubscriptions.$inferSelect | undefined> {
-  const rows = await db
-    .select()
-    .from(organizationSubscriptions)
-    .where(eq(organizationSubscriptions.organizationId, organizationId))
-    .limit(1);
-  return rows[0];
 }
 
 export async function getOrgPlan(organizationId: string): Promise<PlanName> {
