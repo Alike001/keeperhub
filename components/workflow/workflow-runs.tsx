@@ -22,11 +22,7 @@ import type { JSX } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toChecksumAddress } from "@/lib/address-utils";
 import { getCustomerRunErrorMessage } from "@/lib/errors/customer-message";
-import type { ExecutionErrorType } from "@/lib/errors/execution-error-type";
-import type {
-  NodeExecutionStatus,
-  WorkflowExecutionStatus,
-} from "@/lib/errors/execution-status";
+import type { NodeExecutionStatus } from "@/lib/errors/execution-status";
 import {
   FOR_EACH_GROUP_TYPE,
   buildChildLogsLookup,
@@ -34,13 +30,20 @@ import {
   type ChildLogsLookup,
   type IterationGroup,
 } from "@/lib/workflow/nodes/for-each/iteration-grouping";
-import { api } from "@/lib/api-client";
+import { api, type ExecutionSummary } from "@/lib/api-client";
 import {
   OUTPUT_DISPLAY_CONFIGS,
   type OutputDisplayConfig,
 } from "@/lib/output-display-configs";
 import { cn } from "@/lib/utils";
+import { startSerialPoll } from "@/lib/utils/serial-poll";
 import { getRelativeTime } from "@/lib/utils/time";
+import {
+  appendPage,
+  EMPTY_EXECUTION_PAGE,
+  type ExecutionPage,
+  mergeFirstPage,
+} from "@/lib/workflow/execution-page-merge";
 import {
   formatStoredBytes,
   isTruncatedOutput,
@@ -73,29 +76,12 @@ type ExecutionLog = {
   forEachNodeId: string | null;
 };
 
-type WorkflowExecution = {
-  id: string;
-  workflowId: string;
-  status: WorkflowExecutionStatus;
-  startedAt: Date;
-  completedAt: Date | null;
-  duration: string | null;
-  error: string | null;
-  errorType: ExecutionErrorType | null;
-  errorCategory: string | null;
-  errorCode: string | null;
-  // Progress tracking fields
-  totalSteps: number | null;
-  completedSteps: number | null;
-  currentNodeId: string | null;
-  currentNodeName: string | null;
-  lastSuccessfulNodeId: string | null;
-  lastSuccessfulNodeName: string | null;
-  executionTrace: string[] | null;
-  // The workflow_history version this run executed (resolved server-side from
-  // the run's content hash); null when no matching version exists.
-  ranVersion: number | null;
-};
+type WorkflowExecution = ExecutionSummary;
+
+// Runs fetched per page. The panel keeps every page it has loaded and polls
+// only the first one, so this bounds what each poll costs.
+const RUNS_PAGE_SIZE = 20;
+const RUNS_POLL_INTERVAL_MS = 2000;
 
 type WorkflowRunsProps = {
   isActive?: boolean;
@@ -992,11 +978,15 @@ export function WorkflowRuns({
     },
     [router, pathname, searchParams, setActiveTab]
   );
-  const [executions, setExecutions] = useState<WorkflowExecution[]>([]);
+  const [runs, setRuns] = useState<ExecutionPage<WorkflowExecution>>(
+    EMPTY_EXECUTION_PAGE
+  );
+  const { executions, nextCursor, total } = runs;
   const [logs, setLogs] = useState<Record<string, ExecutionLog[]>>({});
   const [expandedRuns, setExpandedRuns] = useState<Set<string>>(new Set());
   const [expandedLogs, setExpandedLogs] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   // Track which execution we've already auto-expanded to prevent loops
   const autoExpandedExecutionRef = useRef<string | null>(null);
@@ -1015,11 +1005,17 @@ export function WorkflowRuns({
         if (showLoading) {
           setLoading(true);
         }
-        const data = await api.workflow.getExecutions(currentWorkflowId);
-        setExecutions(data as WorkflowExecution[]);
+        const page = await api.workflow.getExecutions(currentWorkflowId, {
+          limit: RUNS_PAGE_SIZE,
+        });
+        // A full load (mount, workflow switch) replaces the list; a refresh
+        // folds the first page in and keeps the older pages already loaded.
+        setRuns((loaded) =>
+          showLoading ? page : mergeFirstPage(loaded, page)
+        );
       } catch (error) {
         console.error("Failed to load executions:", error);
-        setExecutions([]);
+        setRuns(EMPTY_EXECUTION_PAGE);
       } finally {
         if (showLoading) {
           setLoading(false);
@@ -1028,6 +1024,24 @@ export function WorkflowRuns({
     },
     [currentWorkflowId]
   );
+
+  const loadMore = useCallback(async () => {
+    if (!(currentWorkflowId && nextCursor) || loadingMore) {
+      return;
+    }
+    setLoadingMore(true);
+    try {
+      const page = await api.workflow.getExecutions(currentWorkflowId, {
+        limit: RUNS_PAGE_SIZE,
+        cursor: nextCursor,
+      });
+      setRuns((loaded) => appendPage(loaded, page));
+    } catch (error) {
+      console.error("Failed to load more executions:", error);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [currentWorkflowId, nextCursor, loadingMore]);
 
   // Expose refresh function via ref
   useEffect(() => {
@@ -1177,16 +1191,25 @@ export function WorkflowRuns({
     [mapNodeLabels, selectedExecutionId, setExecutionLogs]
   );
 
-  // Poll for new executions when tab is active
+  // Poll for new executions when tab is active. Only the first page is
+  // re-fetched: that is where runs start and change; older pages stay as
+  // loaded. The poll is serial, so a slow response delays the next request
+  // instead of stacking another one behind it.
   useEffect(() => {
     if (!(isActive && currentWorkflowId)) {
       return;
     }
 
+    let cancelled = false;
     const pollExecutions = async () => {
       try {
-        const data = await api.workflow.getExecutions(currentWorkflowId);
-        setExecutions(data as WorkflowExecution[]);
+        const page = await api.workflow.getExecutions(currentWorkflowId, {
+          limit: RUNS_PAGE_SIZE,
+        });
+        if (cancelled) {
+          return;
+        }
+        setRuns((loaded) => mergeFirstPage(loaded, page));
 
         // Refresh logs for expanded runs: always for running, once more for newly-terminal
         const terminalStatuses = new Set([
@@ -1196,7 +1219,7 @@ export function WorkflowRuns({
           "system_error",
           "skipped",
         ]);
-        const executionMap = new Map(data.map((e) => [e.id, e]));
+        const executionMap = new Map(page.executions.map((e) => [e.id, e]));
         for (const executionId of expandedRuns) {
           const execution = executionMap.get(executionId);
           if (!execution) {
@@ -1219,8 +1242,11 @@ export function WorkflowRuns({
       }
     };
 
-    const interval = setInterval(pollExecutions, 2000);
-    return () => clearInterval(interval);
+    const stop = startSerialPoll(pollExecutions, RUNS_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      stop();
+    };
   }, [isActive, currentWorkflowId, expandedRuns, refreshExecutionLogs]);
 
   const toggleRun = async (executionId: string) => {
@@ -1374,7 +1400,7 @@ export function WorkflowRuns({
               >
                 <div className="mb-1 flex items-center gap-2">
                   <span className="font-semibold text-sm">
-                    Run #{executions.length - index}
+                    Run #{total - index}
                   </span>
                 </div>
                 <div className="flex items-center gap-2 font-mono text-muted-foreground text-xs">
@@ -1505,6 +1531,22 @@ export function WorkflowRuns({
           </div>
         );
       })}
+      {nextCursor !== null && (
+        <Button
+          className="w-full"
+          disabled={loadingMore}
+          onClick={loadMore}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
+          {loadingMore ? (
+            <Spinner />
+          ) : (
+            `Load more (${Math.max(total - executions.length, 0)} older)`
+          )}
+        </Button>
+      )}
     </div>
   );
 }
