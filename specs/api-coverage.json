@@ -61,7 +61,7 @@
       "path": "/api/workflows/{workflowId}/executions",
       "route_file": "app/api/workflows/[workflowId]/executions/route.ts",
       "source": "docs/api/executions.md",
-      "line": 315
+      "line": 351
     },
     {
       "method": "GET",
@@ -75,28 +75,28 @@
       "path": "/api/analytics/networks",
       "route_file": "app/api/analytics/networks/route.ts",
       "source": "docs/api/analytics.md",
-      "line": 103
+      "line": 123
     },
     {
       "method": "GET",
       "path": "/api/analytics/runs",
       "route_file": "app/api/analytics/runs/route.ts",
       "source": "docs/api/analytics.md",
-      "line": 134
+      "line": 155
     },
     {
       "method": "GET",
       "path": "/api/analytics/runs/{executionId}/steps",
       "route_file": "app/api/analytics/runs/[id]/steps/route.ts",
       "source": "docs/api/analytics.md",
-      "line": 185
+      "line": 281
     },
     {
       "method": "GET",
       "path": "/api/analytics/spend-cap",
       "route_file": "app/api/analytics/spend-cap/route.ts",
       "source": "docs/api/analytics.md",
-      "line": 211
+      "line": 330
     },
     {
       "method": "GET",
@@ -104,7 +104,7 @@
       "route_file": "app/api/analytics/stream/route.ts",
       "streaming": true,
       "source": "docs/api/analytics.md",
-      "line": 236
+      "line": 355
     },
     {
       "method": "GET",
@@ -118,7 +118,7 @@
       "path": "/api/analytics/time-series",
       "route_file": "app/api/analytics/time-series/route.ts",
       "source": "docs/api/analytics.md",
-      "line": 61
+      "line": 81
     },
     {
       "method": "GET",
@@ -153,7 +153,7 @@
       "path": "/api/features",
       "route_file": "app/api/features/route.ts",
       "source": "docs/api/workflows.md",
-      "line": 476
+      "line": 480
     },
     {
       "method": "GET",
@@ -258,21 +258,21 @@
       "path": "/api/workflows/executions/{executionId}/logs",
       "route_file": "app/api/workflows/executions/[executionId]/logs/route.ts",
       "source": "docs/api/executions.md",
-      "line": 172
+      "line": 206
     },
     {
       "method": "GET",
       "path": "/api/workflows/executions/{executionId}/status",
       "route_file": "app/api/workflows/executions/[executionId]/status/route.ts",
       "source": "docs/api/executions.md",
-      "line": 46
+      "line": 80
     },
     {
       "method": "GET",
       "path": "/api/workflows/executions/{executionId}/wait",
       "route_file": "app/api/workflows/executions/[executionId]/wait/route.ts",
       "source": "docs/api/executions.md",
-      "line": 129
+      "line": 163
     },
     {
       "method": "GET",

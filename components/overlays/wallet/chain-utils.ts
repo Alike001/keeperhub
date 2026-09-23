@@ -8,7 +8,7 @@ export {
   isTempoChain,
 } from "@/lib/wallet/build-withdrawable-assets";
 
-export const MAINNET_CHAIN_ID = 1;
+export { ETHEREUM_MAINNET_CHAIN_ID as MAINNET_CHAIN_ID } from "@/lib/chains/ids";
 
 // Re-exported so wallet components keep importing chain helpers from one
 // place; the list itself lives in lib/web3 because the supported-tokens API
