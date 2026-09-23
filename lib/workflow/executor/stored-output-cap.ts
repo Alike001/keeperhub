@@ -1,3 +1,4 @@
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import { toJsonSafe } from "@/lib/utils/json-safe";
 import {
   formatStoredBytes,
@@ -62,15 +63,23 @@ export function oversizeStoredOutputMessage(
  * The failed result a step wrapper substitutes for one too large to store.
  * Same shape every action step uses for a failure, so the executor, the run
  * error and the logs treat it like any other step error.
+ *
+ * It is a user error: the fix is in the workflow (return less from the
+ * step), not in the platform. The message matches no classifier rule, so
+ * without the tag the run would land as system_error, page as a platform
+ * fault, and show the customer a generic "internal error" in place of the
+ * actionable text.
  */
 export function oversizeStepResult(bytes: number): {
   success: false;
   error: string;
   code: string;
+  errorClass: ExecutionErrorType;
 } {
   return {
     success: false,
     error: oversizeStoredOutputMessage(bytes),
     code: STEP_OUTPUT_TOO_LARGE_CODE,
+    errorClass: ExecutionErrorType.USER,
   };
 }

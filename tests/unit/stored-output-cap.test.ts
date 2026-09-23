@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyErrorClassHint,
+  classifyExecutionError,
+} from "@/lib/errors/classify";
+import { getCustomerRunErrorMessage } from "@/lib/errors/customer-message";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
+import { statusForErrorType } from "@/lib/errors/execution-status";
+import {
   boundStoredOutput,
   oversizeStepResult,
   oversizeStoredOutputMessage,
@@ -66,5 +73,32 @@ describe("oversizeStepResult", () => {
     expect(result.error).toBe(oversizeStoredOutputMessage(184_421_952));
     expect(result.error).toContain("175.9 MiB");
     expect(result.error).toContain("1.0 MiB");
+  });
+
+  it("finalises as a user error that shows the customer the actionable text", () => {
+    const result = oversizeStepResult(184_421_952);
+    expect(result.errorClass).toBe(ExecutionErrorType.USER);
+
+    // The message matches no classifier rule, so on its own the run would be
+    // a system fault: it would page, and the customer would see a generic
+    // internal error. The tag on the result is what the run finaliser applies
+    // over that reading.
+    const byMessage = classifyExecutionError(result.error);
+    expect(byMessage.errorType).toBe(ExecutionErrorType.SYSTEM);
+    const classification = applyErrorClassHint(byMessage, result.errorClass);
+    expect(classification.errorType).toBe(ExecutionErrorType.USER);
+    expect(classification.code).toBeNull();
+
+    const status = statusForErrorType(classification.errorType);
+    expect(status).toBe("error");
+    expect(
+      getCustomerRunErrorMessage({
+        status,
+        error: result.error,
+        errorType: classification.errorType,
+        errorCategory: classification.errorCategory,
+        errorCode: classification.code,
+      })
+    ).toBe(result.error);
   });
 });

@@ -25,6 +25,7 @@ vi.mock("@/lib/workflow/executor/logging", () => ({
   updateCurrentStep: vi.fn(),
 }));
 
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import { recordStepMetrics } from "@/lib/metrics/instrumentation/workflow";
 import {
   incrementCompletedSteps,
@@ -62,11 +63,19 @@ describe("withStepLogging stored-output cap", () => {
 
     const result = (await withStepLogging({ _context: context }, () =>
       Promise.resolve(huge)
-    )) as { success: boolean; error?: string; code?: string };
+    )) as {
+      success: boolean;
+      error?: string;
+      code?: string;
+      errorClass?: ExecutionErrorType;
+    };
 
     expect(result.success).toBe(false);
     expect(result.code).toBe(STEP_OUTPUT_TOO_LARGE_CODE);
     expect(result.error).toMatch(/exceeds the 1\.0 MiB limit/);
+    // The executor forwards this tag to the run finaliser, which is what
+    // keeps the run a plain error rather than a paging system_error.
+    expect(result.errorClass).toBe(ExecutionErrorType.USER);
 
     const completion = vi.mocked(logStepCompleteDb).mock.calls[0]?.[0];
     expect(completion?.status).toBe("error");
