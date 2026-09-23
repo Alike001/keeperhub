@@ -1739,6 +1739,33 @@ describe("formatActionConfigValidationResponse", () => {
     );
   });
 
+  // Every UNKNOWN_FIELD is emitted before any MISSING_REQUIRED_FIELD, so in
+  // emission order the cap would elide the field that blocks the save.
+  it("keeps a blocking field ahead of stray keys under the cap", () => {
+    const validation = validateWorkflowActionConfigs([
+      {
+        id: "n1",
+        type: "action",
+        data: {
+          label: "Notify Ops",
+          type: "action",
+          config: {
+            actionType: "discord/send-message",
+            integrationId: "i1",
+            typoA: "x",
+            typoB: "x",
+            typoC: "x",
+            typoD: "x",
+          },
+        },
+      },
+    ]);
+
+    const { message } = formatActionConfigValidationResponse(validation);
+
+    expect(message).toContain('"Notify Ops" (discordMessage,');
+  });
+
   it("elides field names past the third for one node", () => {
     const result = formatActionConfigValidationResponse({
       valid: false,

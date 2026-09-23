@@ -51,6 +51,17 @@ const FIELD_NAME_MAX_CHARS = 40;
 // Per-node field names rendered into the message before it elides the rest.
 const SUMMARY_FIELDS_PER_NODE = 3;
 
+// Which names survive the cap. The validator emits every UNKNOWN_FIELD before
+// any MISSING_REQUIRED_FIELD, so in emission order a node with a few stray
+// keys elides the very field that blocks the save. Rank the blocking codes
+// first; ties keep emission order, since the sort is stable.
+const SUMMARY_NAME_PRIORITY: Record<ActionConfigValidationIssueCode, number> = {
+  UNKNOWN_ACTION_TYPE: 0,
+  MISSING_REQUIRED_FIELD: 1,
+  INVALID_FIELD_TYPE: 1,
+  UNKNOWN_FIELD: 2,
+};
+
 function sanitiseSummaryText(text: string, maxChars: number): string {
   // The text is interpolated into a single-line summary, so nothing
   // whitespace-like survives, and a removed character leaves a space rather
@@ -778,7 +789,7 @@ export function formatActionConfigValidationResponse(
               count: number;
               display: string;
               fallback: string;
-              fields: Set<string>;
+              fields: Map<string, number>;
             }
           >();
           for (const issue of validation.issues) {
@@ -788,12 +799,18 @@ export function formatActionConfigValidationResponse(
               count: 0,
               display: issue.nodeLabel ?? issue.nodeId ?? issue.path,
               fallback: issue.nodeId ?? issue.path,
-              fields: new Set<string>(),
+              fields: new Map<string, number>(),
             };
             entry.count++;
             const field = issueFieldName(issue);
             if (field) {
-              entry.fields.add(field);
+              // One name can come from several issues; keep the most blocking
+              // rank so a field that is both unknown and required ranks first.
+              const rank = SUMMARY_NAME_PRIORITY[issue.code];
+              const seen = entry.fields.get(field);
+              if (seen === undefined || rank < seen) {
+                entry.fields.set(field, rank);
+              }
             }
             if (!existing) {
               labels.set(key, entry);
@@ -812,7 +829,10 @@ export function formatActionConfigValidationResponse(
               // needs the same escaping as the label it stands in for.
               label = sanitiseNodeLabel(fallback);
             }
-            entries.push(`"${label}"${formatNodeFields([...fields], count)}`);
+            const ordered = [...fields.entries()]
+              .sort(([, a], [, b]) => a - b)
+              .map(([name]) => name);
+            entries.push(`"${label}"${formatNodeFields(ordered, count)}`);
             shown++;
           }
           return `Invalid node(s): ${entries.join(", ")}. `;
