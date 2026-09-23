@@ -1557,7 +1557,7 @@ describe("formatActionConfigValidationResponse", () => {
     expect(formatActionConfigValidationResponse(validation)).toEqual({
       error: "INVALID_ACTION_CONFIG",
       message:
-        'Workflow contains invalid action configuration. Invalid node(s): "webhook/send". Fix the listed fields and save again.',
+        'Workflow contains invalid action configuration. Invalid node(s): "webhook/send" (actionType). Fix the listed fields and save again.',
       invalidFields: validation.issues,
     });
   });
@@ -1755,7 +1755,23 @@ describe("formatActionConfigValidationResponse", () => {
     expect(result.message).toContain('"Send Notification" (a, b, c +2 more)');
   });
 
-  it("falls back to the issue count when no issue carries a field", () => {
+  it("names a field-less issue by its path segment", () => {
+    const result = formatActionConfigValidationResponse({
+      valid: false,
+      issues: [
+        {
+          code: "UNKNOWN_ACTION_TYPE",
+          path: "nodes[0].data.config.actionType",
+          message: "Unknown action type",
+          nodeLabel: "Mystery Node",
+        },
+      ],
+    });
+
+    expect(result.message).toContain('"Mystery Node" (actionType)');
+  });
+
+  it("keeps a field-less issue visible alongside one that names a field", () => {
     const result = formatActionConfigValidationResponse({
       valid: false,
       issues: [
@@ -1766,15 +1782,53 @@ describe("formatActionConfigValidationResponse", () => {
           nodeLabel: "Mystery Node",
         },
         {
-          code: "UNKNOWN_ACTION_TYPE",
-          path: "nodes[0].data.config.actionType",
-          message: "Unknown action type",
+          code: "MISSING_REQUIRED_FIELD",
+          path: "nodes[0].data.config.amount",
+          field: "amount",
+          message: "Missing amount",
           nodeLabel: "Mystery Node",
         },
       ],
     });
 
-    expect(result.message).toContain('"Mystery Node" (2 issues)');
+    expect(result.message).toContain('"Mystery Node" (actionType, amount)');
+  });
+
+  it("falls back to the issue count when no issue yields a name", () => {
+    const result = formatActionConfigValidationResponse({
+      valid: false,
+      issues: [
+        { code: "UNKNOWN_ACTION_TYPE", path: "", message: "x", nodeLabel: "N" },
+        { code: "UNKNOWN_ACTION_TYPE", path: "", message: "x", nodeLabel: "N" },
+      ],
+    });
+
+    expect(result.message).toContain('"N" (2 issues)');
+  });
+
+  it("groups every missing batch-call field under its node", () => {
+    const validation = validateWorkflowActionConfigs([
+      {
+        id: "b1",
+        type: "action",
+        data: {
+          label: "Batch Calls",
+          type: "action",
+          config: {
+            actionType: "web3/batch-write-contract",
+            network: "1",
+            calls: JSON.stringify([
+              { contractAddress: "", abi: "", abiFunction: "" },
+            ]),
+          },
+        },
+      },
+    ]);
+
+    const { message } = formatActionConfigValidationResponse(validation);
+
+    expect(message).toContain('"Batch Calls" (calls[0].contractAddress');
+    expect(message).not.toContain('"nodes[0]');
   });
 
   it("escapes format delimiters in field names to prevent fake entries", () => {

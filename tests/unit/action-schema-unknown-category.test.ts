@@ -37,6 +37,35 @@ describe("action schemas unknown category filter", () => {
     expect(response.availableCategories).toBeUndefined();
   });
 
+  // category=triggers fills the `triggers` key and leaves `actions` empty by
+  // design, so a hint keyed on `actions` alone would reject a valid filter
+  // and point the caller straight back at it.
+  it("omits the hint for triggers, which populates its own key", async () => {
+    const response = await build("triggers");
+
+    expect(Object.keys(response.actions as object)).toHaveLength(0);
+    expect(Object.keys(response.triggers as object).length).toBeGreaterThan(0);
+    expect(response.availableCategories).toBeUndefined();
+  });
+
+  it("omits the hint for system, which populates actions", async () => {
+    const response = await build("system");
+
+    expect(Object.keys(response.actions as object).length).toBeGreaterThan(0);
+    expect(response.availableCategories).toBeUndefined();
+  });
+
+  it("omits the hint for an unmatched type filter, which it cannot correct", async () => {
+    const response = await buildActionSchemasResponse({
+      type: "web3/check-balnce",
+      includeChains: false,
+      endpointLabel: "test",
+    });
+
+    expect(Object.keys(response.actions as object)).toHaveLength(0);
+    expect(response.availableCategories).toBeUndefined();
+  });
+
   it("matches a category case-insensitively", async () => {
     const response = await build("Data");
 

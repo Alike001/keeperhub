@@ -645,6 +645,8 @@ export function validateWorkflowActionConfigs(
             path: `nodes[${nodeIndex}].data.config.${field.key}[${missingCall.callIndex}].${missingCall.fieldKey}`,
             actionType,
             field: `${field.key}[${missingCall.callIndex}].${missingCall.fieldKey}`,
+            nodeId: identity.nodeId,
+            nodeLabel: identity.nodeLabel,
             expected: missingCall.fieldLabel,
             message: `Missing required field "${missingCall.fieldLabel}" for call ${missingCall.callIndex + 1} on action "${actionType}".`,
           });
@@ -714,6 +716,16 @@ export function hasDraftActionNodes(
   return false;
 }
 
+// What to call an issue in the summary. An issue with no `field` -- an
+// unknown actionType, say -- still has to appear: dropping it would hide the
+// real blocker behind whichever sibling issue happened to name a field. The
+// last path segment is the field-shaped part of the path, so it reads the
+// same way ("actionType") and every issue contributes exactly one name.
+function issueFieldName(issue: ActionConfigValidationIssue): string {
+  const raw = issue.field ?? issue.path.split(".").pop() ?? "";
+  return sanitiseSummaryText(raw, FIELD_NAME_MAX_CHARS);
+}
+
 // Renders the field names behind a node's issues, so a consumer that surfaces
 // only `message` still learns which fields to fix.
 function formatNodeFields(fields: string[], count: number): string {
@@ -746,9 +758,7 @@ export function formatActionConfigValidationResponse(
               fields: new Set<string>(),
             };
             entry.count++;
-            const field = issue.field
-              ? sanitiseSummaryText(issue.field, FIELD_NAME_MAX_CHARS)
-              : "";
+            const field = issueFieldName(issue);
             if (field) {
               entry.fields.add(field);
             }
