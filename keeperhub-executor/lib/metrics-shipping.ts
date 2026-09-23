@@ -54,11 +54,13 @@ export type IngestPayload = {
 async function loadShippableCounters(): Promise<
   Record<string, Counter<string>>
 > {
-  const { rpcMetrics, workflowCounterMetrics, executorBroadcastsTotal } = await import(
+  const { rpcMetrics, workflowCounterMetrics, executorBroadcastsTotal, executorBroadcastWriteFailuresTotal } = await import(
     "../../lib/metrics/collectors/prometheus"
   );
   return {
     keeperhub_executor_broadcasts_total: executorBroadcastsTotal,
+    keeperhub_executor_broadcast_write_failures_total:
+      executorBroadcastWriteFailuresTotal,
     keeperhub_rpc_primary_attempts_total: rpcMetrics.primaryAttempts,
     keeperhub_rpc_primary_failures_total: rpcMetrics.primaryFailures,
     keeperhub_rpc_fallback_attempts_total: rpcMetrics.fallbackAttempts,
@@ -76,6 +78,7 @@ async function loadShippableCounters(): Promise<
 
 export const SHIPPABLE_COUNTER_NAMES = [
   "keeperhub_executor_broadcasts_total",
+  "keeperhub_executor_broadcast_write_failures_total",
   "keeperhub_rpc_primary_attempts_total",
   "keeperhub_rpc_primary_failures_total",
   "keeperhub_rpc_fallback_attempts_total",

@@ -27,7 +27,12 @@
 
 import type { ExecutionLatency } from "../latency";
 
-const MAX_TRACKED = 1024;
+/**
+ * Maximum entries held. Oldest-inserted is dropped only when a forced age
+ * scan (below) found nothing stale to reclaim first. Exported for the cap
+ * tests; production code should not branch on it.
+ */
+export const MAX_TRACKED = 1024;
 
 /**
  * How long an entry from a never-dispatched run may sit before the age scan
@@ -76,11 +81,15 @@ type TrackedEntry = {
 
 /**
  * Drop entries older than MAX_TRACKED_AGE_MS, at most once per
- * EVICT_SCAN_INTERVAL_MS. The map is capped at 1024 entries, so a scan is
- * bounded; the throttle keeps it off the per-message path.
+ * EVICT_SCAN_INTERVAL_MS - unless `force` is set. The map is capped at 1024
+ * entries, so a scan is bounded; the throttle keeps it off the per-message
+ * path, and the cap lifts the throttle (trackLatency), because a full map is
+ * exactly the moment the next insert must drop the oldest *inserted* entry -
+ * which can be a k8s-job run still awaiting its observation. The cheap scan
+ * is worth its cost precisely there.
  */
-function evictStale(now: number): void {
-  if (now - lastEvictScanAt < EVICT_SCAN_INTERVAL_MS) {
+function evictStale(now: number, force = false): void {
+  if (!force && now - lastEvictScanAt < EVICT_SCAN_INTERVAL_MS) {
     return;
   }
   lastEvictScanAt = now;
@@ -94,7 +103,13 @@ function evictStale(now: number): void {
 /** Track the timeline for a run from SQS receive until its observations land. */
 export function trackLatency(latency: ExecutionLatency): void {
   const now = Date.now();
-  evictStale(now);
+  // At the cap the scan runs regardless of the throttle: between two
+  // throttled scans a full map would otherwise drop the oldest inserted
+  // entry, which can be a k8s-job run whose observation has not landed
+  // yet, while a genuinely stale entry (a never-dispatched run from an
+  // hour ago) keeps its slot. Scan first; only if nothing stale was found
+  // does the arrival-order drop below reclaim a slot.
+  evictStale(now, map.size >= MAX_TRACKED);
   if (map.size >= MAX_TRACKED) {
     const oldest = map.keys().next().value;
     if (oldest !== undefined) {

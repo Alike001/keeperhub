@@ -852,6 +852,20 @@ export const executorBroadcastsTotal = getOrCreateCounter(
   []
 );
 
+// Broadcast marker writes that failed with something other than the expected
+// first-wins EEXIST (issue #2289 review). A sustained rise means the sidecar
+// filesystem is unavailable and the executor.broadcast.latency_ms histogram
+// is silently losing every sample; this counter is what tells "no broadcasts
+// happened" apart from "broadcasts happened and none could be recorded".
+// Same channel as broadcasts_total: bumped by the process that performed the
+// write and merged into the executor's registry via the counter-delta ingest.
+export const executorBroadcastWriteFailuresTotal = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_executor_broadcast_write_failures_total",
+  "Broadcast marker writes failed for a reason other than the first-wins EEXIST race",
+  []
+);
+
 // Sponsorship counters
 const SPONSORSHIP_LABELS = ["chain_id", "organization_id"];
 
@@ -1618,6 +1632,7 @@ const histogramMap: Record<string, Histogram> = {
 
 const counterMap: Record<string, Counter> = {
   "executor.broadcasts.total": executorBroadcastsTotal,
+  "executor.broadcast.write_failures.total": executorBroadcastWriteFailuresTotal,
   "plugin.invocations.total": pluginInvocations,
   "workflow.executions.started.total": workflowExecutionsStartedTotal,
   "db.query.slow_count": slowQueries,

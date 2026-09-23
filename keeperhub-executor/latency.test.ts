@@ -158,9 +158,9 @@ describe("ExecutionLatency", () => {
   it("derives the #2289 observed -> broadcast interval only when both are marked", () => {
     const latency = new ExecutionLatency();
     latency.mark("observed", 1_000);
-    expect(latency.broadcastMs()).toBeUndefined(); // never broadcast
+    expect(latency.rawStageMs("observed", "broadcast")).toBeUndefined(); // never broadcast
     latency.mark("broadcast", 4_250);
-    expect(latency.broadcastMs()).toBe(3_250);
+    expect(latency.rawStageMs("observed", "broadcast")).toBe(3_250);
   });
 
   it("emits no observed_to_broadcast_ms for a skewed clock, matching the histogram", () => {
@@ -289,7 +289,7 @@ describe("latency observation guards", () => {
     latency.mark("observed", UNREPRESENTABLE);
     latency.mark("broadcast", 5_000);
     // Absent, not fabricated: a stripped stamp must not surface as a 0ms leg.
-    expect(latency.broadcastMs()).toBeUndefined();
+    expect(latency.rawStageMs("observed", "broadcast")).toBeUndefined();
   });
 
   it("emits the log line without throwing on a dropped stamp", () => {

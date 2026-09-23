@@ -56,7 +56,7 @@ describe("applyObservations", () => {
       { ...BASE, correlationId: "corr-2", stage: "observed-broadcast", durationMs: 2500 },
     ]);
     expect(latency.has("broadcast")).toBe(true);
-    expect(latency.broadcastMs()).toBe(2500);
+    expect(latency.rawStageMs("observed", "broadcast")).toBe(2500);
   });
 
   it("anchors received-completed on the executor's received stamp", () => {

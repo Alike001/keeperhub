@@ -127,7 +127,11 @@ export function currentExecutionId(): string | undefined {
  * transaction it observes.
  */
 export function markBroadcast(
-  executionId: string | undefined = currentExecutionId()
+  executionId: string | undefined = currentExecutionId(),
+  /** Test seam: pins the stamped time so a test can place the broadcast
+   * before the run's observed epoch (the skewed-clock case). Production
+   * callers never pass it and get Date.now() as before. */
+  broadcastAt: number = Date.now()
 ): void {
   broadcastCount++;
   bumpRegisteredCounter();
@@ -154,7 +158,7 @@ export function markBroadcast(
       getBroadcastMarkerPath(executionId),
       JSON.stringify({
         executionId,
-        broadcastAt: Date.now(),
+        broadcastAt,
       } satisfies BroadcastMarker),
       { encoding: "utf-8", flag: "wx" }
     );
@@ -167,6 +171,7 @@ export function markBroadcast(
     const code = (error as NodeJS.ErrnoException | undefined)?.code;
     if (code !== "EEXIST") {
       broadcastWriteFailures++;
+      bumpWriteFailureCounter();
     }
     // Sidecar unavailable (read-only fs, sandbox): the registered broadcast
     // counter still records that a broadcast happened this run.
@@ -324,21 +329,61 @@ function parseMarker(raw: string): BroadcastMarker | undefined {
  * expected EEXIST. The only expected failure is the first-wins race (the
  * marker already exists), so any other code - ENOSPC on a full emptyDir,
  * EACCES on a read-only fs - means the sidecar is down for this process and
- * every subsequent marker write will fail the same way. Exported through
- * getBroadcastWriteFailures so a scrape or test can tell "no broadcasts
- * happened" apart from "broadcasts happened and none could be recorded" -
- * the second is the silent zero-sample histogram the review flagged.
+ * every subsequent marker write will fail the same way. Bumped into the
+ * registered keeperhub_executor_broadcast_write_failures_total counter on
+ * the same lazy-import path as broadcasts_total (so it ships to the
+ * executor's registry via the counter-delta ingest), and mirrored locally
+ * through getBroadcastWriteFailures for tests and scrapes where the
+ * collector never resolves. Either series tells "no broadcasts happened"
+ * apart from "broadcasts happened and none could be recorded" - the second
+ * is the silent zero-sample histogram the review flagged.
  */
 let broadcastWriteFailures = 0;
 
 let broadcastCount = 0;
 let broadcastCounter: import("prom-client").Counter<string> | undefined;
-let broadcastCounterRequested = false;
+let countersRequested = false;
 let broadcastCounterBuffer = 0;
+let writeFailureCounter: import("prom-client").Counter<string> | undefined;
+let writeFailureCounterBuffer = 0;
 // The in-flight resolution of the lazy counter import, captured so tests can
 // await it deterministically (waitForBroadcastCounterForTests) instead of
-// assuming a dynamic ESM import settles within a fixed number of ticks.
-let broadcastCounterReady: Promise<void> | undefined;
+// assuming a dynamic ESM import settles within a fixed number of ticks. One
+// import serves both counters - the write-failure sibling ships from the
+// same module and bumps on the same marks.
+let countersReady: Promise<void> | undefined;
+
+function resolveCounters(): void {
+  if (countersRequested) {
+    return;
+  }
+  countersRequested = true;
+  countersReady = import("../../lib/metrics/collectors/prometheus")
+    .then(
+      ({
+        executorBroadcastsTotal,
+        executorBroadcastWriteFailuresTotal,
+      }) => {
+        broadcastCounter = executorBroadcastsTotal;
+        writeFailureCounter = executorBroadcastWriteFailuresTotal;
+        if (broadcastCounterBuffer > 0) {
+          broadcastCounter.inc(broadcastCounterBuffer);
+          broadcastCounterBuffer = 0;
+        }
+        if (writeFailureCounterBuffer > 0) {
+          writeFailureCounter.inc(writeFailureCounterBuffer);
+          writeFailureCounterBuffer = 0;
+        }
+      }
+    )
+    .catch(() => {
+      // Collector unavailable in this process (tests, bundles without the
+      // metrics stack): keep counting locally via getBroadcastCount() and
+      // getBroadcastWriteFailures().
+      broadcastCounterBuffer = 0;
+      writeFailureCounterBuffer = 0;
+    });
+}
 
 function bumpRegisteredCounter(): void {
   if (broadcastCounter) {
@@ -346,34 +391,28 @@ function bumpRegisteredCounter(): void {
     return;
   }
   broadcastCounterBuffer++;
-  if (!broadcastCounterRequested) {
-    broadcastCounterRequested = true;
-    broadcastCounterReady = import("../../lib/metrics/collectors/prometheus")
-      .then(({ executorBroadcastsTotal }) => {
-        broadcastCounter = executorBroadcastsTotal;
-        if (broadcastCounterBuffer > 0) {
-          broadcastCounter.inc(broadcastCounterBuffer);
-          broadcastCounterBuffer = 0;
-        }
-      })
-      .catch(() => {
-        // Collector unavailable in this process (tests, bundles without the
-        // metrics stack): keep counting locally via getBroadcastCount().
-        broadcastCounterBuffer = 0;
-      });
+  resolveCounters();
+}
+
+function bumpWriteFailureCounter(): void {
+  if (writeFailureCounter) {
+    writeFailureCounter.inc();
+    return;
   }
+  writeFailureCounterBuffer++;
+  resolveCounters();
 }
 
 /**
- * Test seam: resolves once a requested counter import has settled (counter
- * registered, or resolution failed and the buffer was dropped). Resolves
+ * Test seam: resolves once a requested counter import has settled (counters
+ * registered, or resolution failed and the buffers were dropped). Resolves
  * immediately when no import was ever requested. Without this, a test
- * asserting on the registered counter would have to assume a dynamic ESM
+ * asserting on the registered counters would have to assume a dynamic ESM
  * import settles within one macrotask tick - which holds only by accident of
  * module-load order, not by guarantee.
  */
 export async function waitForBroadcastCounterForTests(): Promise<void> {
-  if (broadcastCounterReady) {
-    await broadcastCounterReady;
+  if (countersReady) {
+    await countersReady;
   }
 }

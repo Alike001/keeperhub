@@ -24,6 +24,7 @@
 
 import { getMetricsCollector } from "../../lib/metrics";
 import { LabelKeys, MetricNames } from "../../lib/metrics/types";
+import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { peekLatency, takeLatency } from "./correlation-map";
 import {
   setLatencyObservationApplier,
@@ -59,7 +60,13 @@ export function applyObservations(
       }
     } catch (error) {
       skipped++;
-      console.error(
+      // The outer catch in index.ts can no longer see a per-observation
+      // throw (the loop body is inside this try), so without this the
+      // failure is stdout-only. INFRASTRUCTURE, matching the outer catch's
+      // category: a collector that rejects a registered label is a system
+      // fault, not a caller's.
+      logSystemError(
+        ErrorCategory.INFRASTRUCTURE,
         `[Executor] Latency observation ${o.stage} for correlation ${o.correlationId} failed to apply (skipped):`,
         error
       );

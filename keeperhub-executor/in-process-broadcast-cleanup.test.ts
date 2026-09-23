@@ -237,6 +237,58 @@ describe("executeInProcess broadcast marker cleanup (issue #2289 blocking item)"
     expect(logSystemError).toHaveBeenCalledTimes(1);
   });
 
+  it("records no broadcast sample when the marker predates observedAt (skewed clock)", async () => {
+    // The k8s-job series drops a negative observed -> broadcast interval in
+    // latency-observations; the in-process recording site must agree, or the
+    // two series in one histogram disagree on _count for the same skew. The
+    // earlier test asserted the log field; this one pins the recording guard
+    // itself: a tracker clock running ahead stamps observed after broadcast
+    // in wall-clock terms, and the raw delta is negative, so no sample may
+    // land in EXECUTOR_BROADCAST_LATENCY - not even a clamped fake zero.
+    const { getMetricsCollector } = await import("../lib/metrics");
+    const collector = {
+      recordLatency: vi.fn(),
+    };
+    vi.mocked(getMetricsCollector).mockImplementation(
+      () => collector as never
+    );
+    vi.mocked(
+      (await import("../lib/workflow/executor/executor.workflow"))
+        .executeWorkflow
+    ).mockImplementationOnce(async () => {
+      // The marker write happens at the real broadcast point; backdate it
+      // behind the observed epoch (900) handed to executeInProcess below.
+      const { markBroadcast } = await import("./lib/broadcast-marker");
+      markBroadcast("exec-skew", 500);
+      return { success: true, results: {}, outputs: {} };
+    });
+
+    await executeInProcess({
+      workflowId: "wf-1",
+      executionId: "exec-skew",
+      input: {},
+      triggerType: "event",
+      db: {} as never,
+      correlationId: "corr-skew",
+      latencyEpochs: { receivedAt: 1_000, observedAt: 900 },
+    });
+
+    // The log line carries no interval either (same guard), and the
+    // histogram saw no broadcast sample at all: dispatch and execution
+    // legs were recorded (both self-contained, received-anchored), the
+    // skewed headline was not.
+    const recorded = collector.recordLatency.mock.calls.filter(
+      (call) => call[0] === "executor.broadcast.latency_ms"
+    );
+    expect(recorded).toHaveLength(0);
+    const { logInfo } = await import("../lib/logging");
+    const line = vi
+      .mocked(logInfo)
+      .mock.calls.find(([message]) => message === "execution latency stages");
+    const labels = line?.[1] as Record<string, string>;
+    expect(labels?.observed_to_broadcast_ms).toBeUndefined();
+  });
+
   it("frees its correlation-map entry at run end (in-process ships nothing)", async () => {
     // The executor tracks every message under its correlation id at SQS
     // receive; only the k8s-job ingest ever freed an entry, so in-process

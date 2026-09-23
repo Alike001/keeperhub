@@ -160,6 +160,11 @@ export const MetricNames = {
   // deltas, so the broadcast stage is observable even when the per-run
   // sidecar timestamp cannot be read back.
   EXECUTOR_BROADCASTS_TOTAL: "executor.broadcasts.total",
+  // Sidecar writes that failed other than first-wins EEXIST (issue #2289
+  // review): a sustained rise means the marker filesystem is down and the
+  // broadcast histogram is silently losing every sample.
+  EXECUTOR_BROADCAST_WRITE_FAILURES_TOTAL:
+    "executor.broadcast.write_failures.total",
 
   // Sponsorship metrics
   SPONSORSHIP_TRANSACTIONS_TOTAL: "sponsorship.transactions.total",

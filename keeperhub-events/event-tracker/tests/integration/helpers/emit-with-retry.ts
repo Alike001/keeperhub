@@ -32,11 +32,14 @@ function isEphemeralNonceError(err: unknown): boolean {
  *
  * Known tradeoff, accepted deliberately: "nonce too low" can also mean
  * the transaction already landed, in which case a retry emits the event a
- * second time. Every call site in these suites tolerates that (the
- * tracker dedupes by tx hash / log id, and a duplicate fixture event
- * exercises the same code path), so the retry is duplicate-side-effect
- * rather than idempotent by design. Revisit before reusing this helper
- * anywhere a repeated write is not tolerated.
+ * second time. The retry sends a fresh transaction, so it lands with a new
+ * tx hash and log index - the tracker's tx-hash/log-id dedupe does NOT
+ * collapse it into the original; the duplicate is tolerated only because
+ * the emit loops around every call site accept any message and count a
+ * duplicate fixture event the same as the original. In other words the
+ * retry is duplicate-side-effect by design, not idempotent, and the
+ * dedupe does not cover it. Revisit before reusing this helper anywhere a
+ * repeated write is not tolerated.
  */
 export async function emitWithNonceRetry<T>(
   emit: () => Promise<T>,

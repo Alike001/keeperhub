@@ -41,11 +41,13 @@ const workflowCounters = {
 };
 
 const executorBroadcastsTotal = makeCounter();
+const executorBroadcastWriteFailuresTotal = makeCounter();
 
 vi.mock("../../lib/metrics/collectors/prometheus", () => ({
   rpcMetrics: counters,
   workflowCounterMetrics: workflowCounters,
   executorBroadcastsTotal,
+  executorBroadcastWriteFailuresTotal,
 }));
 
 const {
@@ -324,6 +326,15 @@ describe("SHIPPABLE_COUNTER_NAMES", () => {
     );
     expect(SHIPPABLE_COUNTER_NAMES).toContain(
       "keeperhub_workflow_execution_errors_created_total"
+    );
+  });
+
+  it("ships the broadcast write-failure counter beside the broadcast counter", () => {
+    // The ENOSPC/EACCES side: when the marker filesystem is down the
+    // broadcast histogram silently loses every sample, and this counter is
+    // what keeps that visible (issue #2289 review).
+    expect(SHIPPABLE_COUNTER_NAMES).toContain(
+      "keeperhub_executor_broadcast_write_failures_total"
     );
   });
 });

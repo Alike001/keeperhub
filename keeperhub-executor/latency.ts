@@ -215,16 +215,6 @@ export class ExecutionLatency {
   }
 
   /**
-   * The interval #2289 exists for: trigger observed by the tracker to the
-   * transaction actually broadcast to the chain. Undefined until both stages
-   * are marked (legacy messages have no `observed`; non-write runs never
-   * broadcast).
-   */
-  broadcastMs(): number | undefined {
-    return this.stageMs("observed", "broadcast");
-  }
-
-  /**
    * Emit the canonical structured latency line for this run via logInfo
    * (lib/logging). The correlation id rides as a label so tracker, executor
    * and runner logs join on one key; stage timestamps and derived durations

@@ -705,6 +705,7 @@ Prometheus metrics are prefixed with `keeperhub_` and use snake_case:
 | `executor.execution.latency_ms` | `keeperhub_executor_execution_latency_ms` | histogram |
 | `executor.broadcast.latency_ms` | `keeperhub_executor_broadcast_latency_ms` | histogram |
 | `executor.broadcasts.total` | `keeperhub_executor_broadcasts_total` | counter |
+| `executor.broadcast.write_failures.total` | `keeperhub_executor_broadcast_write_failures_total` | counter |
 | `plugin.invocations.total` | `keeperhub_plugin_invocations_total` | counter |
 | `plugin.action.errors` | `keeperhub_plugin_action_errors_total` | counter |
 | `api.errors.total` | `keeperhub_api_errors_total` | counter |
