@@ -747,13 +747,23 @@ export function formatActionConfigValidationResponse(
       ? (() => {
           const labels = new Map<
             string,
-            { count: number; fallback: string; fields: Set<string> }
+            {
+              count: number;
+              display: string;
+              fallback: string;
+              fields: Set<string>;
+            }
           >();
           for (const issue of validation.issues) {
-            const raw = issue.nodeLabel ?? issue.nodeId ?? issue.path;
-            const existing = labels.get(raw);
+            // Group on nodeId where there is one: two distinct nodes can carry
+            // the same default label, and keying on the label would merge them
+            // into a single entry, so fixing one leaves an identical message
+            // with no sign the other is still broken.
+            const key = issue.nodeId ?? issue.nodeLabel ?? issue.path;
+            const existing = labels.get(key);
             const entry = existing ?? {
               count: 0,
+              display: issue.nodeLabel ?? issue.nodeId ?? issue.path,
               fallback: issue.nodeId ?? issue.path,
               fields: new Set<string>(),
             };
@@ -763,19 +773,21 @@ export function formatActionConfigValidationResponse(
               entry.fields.add(field);
             }
             if (!existing) {
-              labels.set(raw, entry);
+              labels.set(key, entry);
             }
           }
           const entries: string[] = [];
           let shown = 0;
-          for (const [raw, { count, fallback, fields }] of labels) {
+          for (const { count, display, fallback, fields } of labels.values()) {
             if (shown >= 3) {
               entries.push(`and ${labels.size - 3} more`);
               break;
             }
-            let label = sanitiseNodeLabel(raw);
+            let label = sanitiseNodeLabel(display);
             if (!label.trim()) {
-              label = fallback;
+              // The fallback is a nodeId or path, both caller-supplied, so it
+              // needs the same escaping as the label it stands in for.
+              label = sanitiseNodeLabel(fallback);
             }
             entries.push(`"${label}"${formatNodeFields([...fields], count)}`);
             shown++;

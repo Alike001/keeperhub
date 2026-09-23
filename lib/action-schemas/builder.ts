@@ -355,7 +355,7 @@ export async function buildActionSchemasResponse(
   const matchedNothing =
     Object.keys(actions).length === 0 && Object.keys(triggers).length === 0;
   const unmatchedFilter =
-    categoryFilter && matchedNothing
+    categoryFilter && !typeFilter && matchedNothing
       ? {
           availableCategories: [
             ...allPlugins.map((plugin) => plugin.type),

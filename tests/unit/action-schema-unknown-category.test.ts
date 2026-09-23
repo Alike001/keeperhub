@@ -55,6 +55,20 @@ describe("action schemas unknown category filter", () => {
     expect(response.availableCategories).toBeUndefined();
   });
 
+  // A category list cannot correct a mistyped actionType, and naming the
+  // category the caller got right reads as though that were the mistake.
+  it("omits the hint when a valid category carries an unmatched type", async () => {
+    const response = await buildActionSchemasResponse({
+      category: "web3",
+      type: "web3/read-contarct",
+      includeChains: false,
+      endpointLabel: "test",
+    });
+
+    expect(Object.keys(response.actions as object)).toHaveLength(0);
+    expect(response.availableCategories).toBeUndefined();
+  });
+
   it("omits the hint for an unmatched type filter, which it cannot correct", async () => {
     const response = await buildActionSchemasResponse({
       type: "web3/check-balnce",

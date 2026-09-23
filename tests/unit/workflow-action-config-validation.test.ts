@@ -1806,6 +1806,53 @@ describe("formatActionConfigValidationResponse", () => {
     expect(result.message).toContain('"N" (2 issues)');
   });
 
+  it("keeps two nodes that share a label as separate entries", () => {
+    const result = formatActionConfigValidationResponse({
+      valid: false,
+      issues: [
+        {
+          code: "MISSING_REQUIRED_FIELD",
+          path: "nodes[0].data.config.content",
+          field: "content",
+          message: "Missing content",
+          nodeId: "n1",
+          nodeLabel: "Send Message",
+        },
+        {
+          code: "MISSING_REQUIRED_FIELD",
+          path: "nodes[1].data.config.content",
+          field: "content",
+          message: "Missing content",
+          nodeId: "n2",
+          nodeLabel: "Send Message",
+        },
+      ],
+    });
+
+    expect(result.message).toContain(
+      '"Send Message" (content), "Send Message" (content)'
+    );
+  });
+
+  it("escapes the nodeId fallback when the label is blank", () => {
+    const result = formatActionConfigValidationResponse({
+      valid: false,
+      issues: [
+        {
+          code: "MISSING_REQUIRED_FIELD",
+          path: "nodes[0].data.config.amount",
+          field: "amount",
+          message: "Missing amount",
+          nodeId: '") (Treasury Transfer',
+          nodeLabel: "   ",
+        },
+      ],
+    });
+
+    expect(result.message).toContain('"\'] [Treasury Transfer"');
+    expect(result.message).not.toContain('") (Treasury Transfer');
+  });
+
   it("groups every missing batch-call field under its node", () => {
     const validation = validateWorkflowActionConfigs([
       {
