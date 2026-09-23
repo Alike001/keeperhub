@@ -67,8 +67,31 @@ describe("executions cursor", () => {
       "timestamp with trailing sql",
       Buffer.from('["2026-09-23 00:03:07 or 1=1", "id"]').toString("base64url"),
     ],
+    [
+      "well-formed but impossible fields, which Postgres would reject",
+      Buffer.from('["2026-13-45 99:99:99", "id"]').toString("base64url"),
+    ],
+    [
+      "a day the month does not have",
+      Buffer.from('["2026-02-30 00:00:00", "id"]').toString("base64url"),
+    ],
+    [
+      "hour 24",
+      Buffer.from('["2026-09-23 24:00:00", "id"]').toString("base64url"),
+    ],
     ["empty string", ""],
   ])("rejects %s", (_label, raw) => {
     expect(decodeExecutionsCursor(raw)).toBeNull();
+  });
+
+  it("accepts the last instant of a leap day and of a year", () => {
+    for (const startedAt of [
+      "2028-02-29 23:59:59.999999",
+      "2026-12-31 23:59:59",
+    ]) {
+      expect(
+        decodeExecutionsCursor(encodeExecutionsCursor({ startedAt, id: "x" }))
+      ).toEqual({ startedAt, id: "x" });
+    }
   });
 });

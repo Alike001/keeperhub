@@ -6,7 +6,7 @@
  * id breaks ties between runs that share a start timestamp, which a cursor on
  * started_at alone would skip or repeat at a page boundary.
  *
- * `startedAt` carries Postgres' own text rendering of the column
+ * `startedAt` carries the column rendered as `YYYY-MM-DD HH24:MI:SS.US`
  * (`2026-09-23 00:03:07.272123`), not a JS Date: the column holds microseconds
  * and a millisecond Date would round it, so rows inside the rounded gap could
  * vanish from or repeat on the next page.
@@ -17,7 +17,28 @@ export type ExecutionsCursor = {
 };
 
 const PG_TIMESTAMP_TEXT_RE =
-  /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?$/;
+  /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?$/;
+
+/**
+ * True when the fields name a real instant. The regex only checks the shape,
+ * and Postgres rejects `2026-13-45 99:99:99` at query time, which would turn
+ * a forged cursor into a 500. Date.UTC rolls impossible fields over (Feb 30
+ * becomes Mar 2), so the check is that nothing rolled.
+ */
+function isRealTimestamp(match: RegExpMatchArray): boolean {
+  const [year, month, day, hour, minute, second] = match
+    .slice(1, 7)
+    .map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day &&
+    date.getUTCHours() === hour &&
+    date.getUTCMinutes() === minute &&
+    date.getUTCSeconds() === second
+  );
+}
 
 export function encodeExecutionsCursor(cursor: ExecutionsCursor): string {
   return Buffer.from(
@@ -41,7 +62,8 @@ export function decodeExecutionsCursor(raw: string): ExecutionsCursor | null {
   if (typeof startedAt !== "string" || typeof id !== "string" || id === "") {
     return null;
   }
-  if (!PG_TIMESTAMP_TEXT_RE.test(startedAt)) {
+  const match = startedAt.match(PG_TIMESTAMP_TEXT_RE);
+  if (match === null || !isRealTimestamp(match)) {
     return null;
   }
   return { startedAt, id };

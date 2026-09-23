@@ -158,11 +158,13 @@ async function summaryResponse(
       where,
       columns: { input: false, output: false, executionTrace: false },
       extras: {
-        // The column's own text rendering keeps the microseconds a JS Date
-        // would round away; the cursor is built from it, not from startedAt.
-        startedAtKey: sql<string>`${workflowExecutions.startedAt}::text`.as(
-          "started_at_key"
-        ),
+        // A fixed rendering with the microseconds a JS Date would round away;
+        // the cursor is built from it, not from startedAt. to_char rather than
+        // ::text so the format does not follow the session's DateStyle.
+        startedAtKey:
+          sql<string>`to_char(${workflowExecutions.startedAt}, 'YYYY-MM-DD HH24:MI:SS.US')`.as(
+            "started_at_key"
+          ),
       },
       orderBy: [desc(workflowExecutions.startedAt), desc(workflowExecutions.id)],
       limit: limit + 1,

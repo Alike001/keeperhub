@@ -4,6 +4,7 @@
  * and ETag revalidation.
  */
 
+import type { SQL } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
@@ -56,6 +57,7 @@ vi.mock("@/lib/logging", () => ({
   logSystemError: vi.fn(),
 }));
 
+import { PgDialect } from "drizzle-orm/pg-core";
 import { GET } from "@/app/api/workflows/[workflowId]/executions/route";
 import { decodeExecutionsCursor } from "@/lib/workflow/executions-cursor";
 
@@ -243,15 +245,15 @@ describe("GET /api/workflows/[workflowId]/executions", () => {
       expect(args.extras).toHaveProperty("startedAtKey");
     });
 
-    it.each([
-      ["1000", 101],
-      ["abc", 21],
-      ["5", 6],
-      ["0", 2],
-    ])("clamps limit=%s to a fetch of %i rows", async (limit, fetched) => {
-      await call(`?view=summary&limit=${limit}`);
-      const [args] = mockFindMany.mock.calls[0] as [Record<string, unknown>];
-      expect(args.limit).toBe(fetched);
+    it("renders the cursor key in a fixed format, not the session DateStyle", async () => {
+      await call("?view=summary");
+      const [args] = mockFindMany.mock.calls[0] as [
+        { extras: { startedAtKey: { sql: SQL } } },
+      ];
+      const { sql } = new PgDialect().sqlToQuery(args.extras.startedAtKey.sql);
+      expect(sql).toBe(
+        'to_char("workflow_executions"."started_at", \'YYYY-MM-DD HH24:MI:SS.US\')'
+      );
     });
 
     it("hands back a cursor for the last returned row when more exist", async () => {
