@@ -58,7 +58,10 @@ vi.mock("@/lib/logging", () => ({
 }));
 
 import { PgDialect } from "drizzle-orm/pg-core";
-import { GET } from "@/app/api/workflows/[workflowId]/executions/route";
+import {
+  GET,
+  MAX_COUNTED_RUNS,
+} from "@/app/api/workflows/[workflowId]/executions/route";
 import { decodeExecutionsCursor } from "@/lib/workflow/executions-cursor";
 
 const WORKFLOW_ID = "wf_1";
@@ -138,9 +141,39 @@ function call(query = "", headers?: HeadersInit): Promise<Response> {
   });
 }
 
+// What the count query saw: the LIMIT on the counted subquery, the source
+// the count ran over, and the number it returns.
+let countLimit: number | null = null;
+let countedSource: { alias: string } | null = null;
+let countRows: Array<{ total: number }> = [{ total: 46 }];
+
+/**
+ * Stand in for the three select shapes the route issues: the bounded
+ * subquery of run ids (select id ... limit n ... as alias), the count over
+ * that subquery, and the history lookup for ran versions.
+ */
 function selectChain(fields: Record<string, unknown>) {
-  const rows = "total" in fields ? [{ total: 46 }] : HISTORY_ROWS;
-  return { from: () => ({ where: () => Promise.resolve(rows) }) };
+  if ("total" in fields) {
+    return {
+      from: (source: { alias: string }) => {
+        countedSource = source;
+        return Promise.resolve(countRows);
+      },
+    };
+  }
+  if ("id" in fields) {
+    return {
+      from: () => ({
+        where: () => ({
+          limit: (n: number) => {
+            countLimit = n;
+            return { as: (alias: string) => ({ alias }) };
+          },
+        }),
+      }),
+    };
+  }
+  return { from: () => ({ where: () => Promise.resolve(HISTORY_ROWS) }) };
 }
 
 describe("GET /api/workflows/[workflowId]/executions", () => {
@@ -157,6 +190,9 @@ describe("GET /api/workflows/[workflowId]/executions", () => {
       isDeleted: false,
     });
     mockSelect.mockImplementation(selectChain);
+    countLimit = null;
+    countedSource = null;
+    countRows = [{ total: 46 }];
     setRows(makeRows(3));
   });
 
@@ -254,6 +290,28 @@ describe("GET /api/workflows/[workflowId]/executions", () => {
       expect(sql).toBe(
         'to_char("workflow_executions"."started_at", \'YYYY-MM-DD HH24:MI:SS.US\')'
       );
+    });
+
+    it("counts over a bounded subquery and reports the total as exact up to the bound", async () => {
+      await call("?view=summary");
+      expect(countLimit).toBe(MAX_COUNTED_RUNS + 1);
+      expect(countedSource?.alias).toBe("counted_runs");
+
+      countRows = [{ total: MAX_COUNTED_RUNS + 1 }];
+      const capped = await call("?view=summary");
+      const body = (await capped.json()) as { total: number };
+      expect(body.total).toBe(MAX_COUNTED_RUNS);
+    });
+
+    it.each([
+      ["1000", 101],
+      ["abc", 21],
+      ["5", 6],
+      ["0", 2],
+    ])("clamps limit=%s to a fetch of %i rows", async (limit, fetched) => {
+      await call(`?view=summary&limit=${limit}`);
+      const [args] = mockFindMany.mock.calls[0] as [Record<string, unknown>];
+      expect(args.limit).toBe(fetched);
     });
 
     it("hands back a cursor for the last returned row when more exist", async () => {

@@ -22,6 +22,8 @@ import {
 
 const SUMMARY_DEFAULT_LIMIT = 20;
 const SUMMARY_MAX_LIMIT = 100;
+/** `total` is exact up to this many live runs and reported as this beyond. */
+export const MAX_COUNTED_RUNS = 10_000;
 const WEAK_ETAG_PREFIX_RE = /^W\//;
 
 function parseIntOrNull(value: string | null): number | null {
@@ -153,7 +155,18 @@ async function summaryResponse(
           sql`(${workflowExecutions.startedAt}, ${workflowExecutions.id}) < (${cursor.startedAt}::timestamp, ${cursor.id})`
         );
 
-  const [rows, [{ total }]] = await Promise.all([
+  // The count runs on every poll and no index carries deleted_at, so each
+  // live row costs a heap visit. Counting a bounded subquery keeps that cost
+  // flat for a workflow with a very long history; past the bound the total is
+  // reported as the bound.
+  const countedRuns = db
+    .select({ id: workflowExecutions.id })
+    .from(workflowExecutions)
+    .where(scope)
+    .limit(MAX_COUNTED_RUNS + 1)
+    .as("counted_runs");
+
+  const [rows, [{ total: countedTotal }]] = await Promise.all([
     db.query.workflowExecutions.findMany({
       where,
       columns: { input: false, output: false, executionTrace: false },
@@ -169,8 +182,9 @@ async function summaryResponse(
       orderBy: [desc(workflowExecutions.startedAt), desc(workflowExecutions.id)],
       limit: limit + 1,
     }),
-    db.select({ total: count() }).from(workflowExecutions).where(scope),
+    db.select({ total: count() }).from(countedRuns),
   ]);
+  const total = Math.min(countedTotal, MAX_COUNTED_RUNS);
 
   const hasMore = rows.length > limit;
   const pageRows = hasMore ? rows.slice(0, limit) : rows;

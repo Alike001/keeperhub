@@ -72,7 +72,7 @@ Add `view=summary` for a lighter, paginated list. Each run omits `input`, `outpu
 }
 ```
 
-`nextCursor` is opaque and `null` on the last page. `total` counts the workflow's runs across all pages. Summary responses carry an `ETag`; send it back in `If-None-Match` to receive `304 Not Modified` when nothing has changed.
+`nextCursor` is opaque and `null` on the last page. `total` counts the workflow's runs across all pages; it is exact up to 10,000 and reported as 10,000 for a workflow with more. Summary responses carry an `ETag`; send it back in `If-None-Match` to receive `304 Not Modified` when nothing has changed.
 
 ## Get Execution Status
 
