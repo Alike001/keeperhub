@@ -864,6 +864,31 @@ describe("RPC Config Resolution", () => {
 
       expect(result).toBeUndefined();
     });
+
+    it("should fall back to public WSS defaults when JSON has no WSS URL", () => {
+      const rpcConfig: RpcConfig = {
+        "arc-mainnet": {
+          primaryRpcUrl: "https://chain.techops.live/arc-mainnet",
+          // No WSS URLs
+        },
+      };
+
+      expect(
+        getWssUrl({
+          rpcConfig,
+          jsonKey: "arc-mainnet",
+          type: "primary",
+        })
+      ).toBe("wss://rpc.mainnet.arc.io");
+
+      expect(
+        getWssUrl({
+          rpcConfig,
+          jsonKey: "arc-mainnet",
+          type: "fallback",
+        })
+      ).toBe("wss://rpc.blockdaemon.mainnet.arc.io/websocket");
+    });
   });
 
   describe("Full schema integration", () => {
