@@ -737,15 +737,17 @@ function issueFieldName(issue: ActionConfigValidationIssue): string {
   return sanitiseFieldName(raw);
 }
 
-// Which node an issue belongs to, for grouping. A nodeId is authoritative, but
-// it survives import as `undefined`, and two nodes can carry the same default
-// label -- keying on the label alone would merge them into one entry, so
-// fixing one would produce an identical message with the other still broken.
-// The `nodes[N]` path prefix distinguishes them when the id is missing.
+// Which node an issue belongs to, for grouping. The `nodes[N]` path prefix
+// leads because it is the only identifier unique by construction: every
+// emitter writes it from the index into the node array. A nodeId arrives
+// straight off the payload with no uniqueness check and can be absent after
+// an import, and two nodes routinely share a default label -- keying on
+// either would merge distinct nodes into one entry, so fixing one would leave
+// an identical message with the other still broken.
 function issueNodeKey(issue: ActionConfigValidationIssue): string {
   return (
-    issue.nodeId ??
     issue.path.match(NODE_PATH_PREFIX_PATTERN)?.[0] ??
+    issue.nodeId ??
     issue.nodeLabel ??
     issue.path
   );

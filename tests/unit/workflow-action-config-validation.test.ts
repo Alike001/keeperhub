@@ -1858,6 +1858,36 @@ describe("formatActionConfigValidationResponse", () => {
     );
   });
 
+  // Node ids come straight off the payload with no uniqueness check, so an
+  // import can carry two nodes sharing one id.
+  it("separates two nodes that share an id", () => {
+    const result = formatActionConfigValidationResponse({
+      valid: false,
+      issues: [
+        {
+          code: "MISSING_REQUIRED_FIELD",
+          path: "nodes[0].data.config.content",
+          field: "content",
+          message: "Missing content",
+          nodeId: "a_1",
+          nodeLabel: "Send Discord",
+        },
+        {
+          code: "MISSING_REQUIRED_FIELD",
+          path: "nodes[1].data.config.channel",
+          field: "channel",
+          message: "Missing channel",
+          nodeId: "a_1",
+          nodeLabel: "Send Discord",
+        },
+      ],
+    });
+
+    expect(result.message).toContain(
+      '"Send Discord" (content), "Send Discord" (channel)'
+    );
+  });
+
   // Field names render bare inside the parentheses, so the comma separator and
   // the `+N more` marker are their only delimiters.
   it("neutralises separators forged inside a config key", () => {
