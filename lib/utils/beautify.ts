@@ -194,7 +194,13 @@ function maskJavaScript(source: string): MaskResult {
   while (index < source.length) {
     const jsEnd = referenceEndAt(source, index, JS_FORBIDDEN_IN_BODY);
     if (jsEnd !== -1) {
-      masked += placeholderAt(prefix, templates.length);
+      const placeholder = placeholderAt(prefix, templates.length);
+      spans.push({
+        maskedStart: masked.length,
+        maskedLength: placeholder.length,
+        sourceLength: jsEnd - index,
+      });
+      masked += placeholder;
       quoted.push(false);
       templates.push(source.slice(index, jsEnd));
       index = jsEnd;
@@ -539,6 +545,52 @@ function lineAndColumn(
   return { line, column: offset - lastBreak };
 }
 
+const JS_POSITION = /\((\d+):(\d+)\)/;
+
+/**
+ * The offset of a 1-based line and column. The inverse of `lineAndColumn`.
+ *
+ * Prettier reports a position rather than an offset, so its numbers have to be
+ * turned back into one before `toSourceOffset` can move them.
+ */
+function offsetAt(source: string, line: number, column: number): number {
+  let offset = 0;
+  let current = 1;
+  while (current < line) {
+    const next = source.indexOf("\n", offset);
+    if (next === -1) {
+      return source.length;
+    }
+    offset = next + 1;
+    current += 1;
+  }
+  return offset + Math.max(0, column - 1);
+}
+
+/**
+ * Prettier's message with its position moved into the user's coordinates.
+ *
+ * The parser reads the masked text, where every placeholder is shorter than
+ * the reference it stands for, so a reference earlier on the line drags the
+ * column left - onto the middle of the user's own reference. The line is
+ * always right; only the column moves. The phrase is kept as Prettier wrote
+ * it, since "Missing semicolon" says more than any wording of ours.
+ */
+function describeJavaScriptFailure(
+  error: unknown,
+  mask: MaskResult,
+  source: string
+): string {
+  const message = describeError(error);
+  const at = JS_POSITION.exec(message);
+  if (!at) {
+    return message;
+  }
+  const maskedOffset = offsetAt(mask.masked, Number(at[1]), Number(at[2]));
+  const mapped = lineAndColumn(source, toSourceOffset(maskedOffset, mask));
+  return message.replace(at[0], `(${mapped.line}:${mapped.column})`);
+}
+
 function describeJsonFailure(
   error: unknown,
   mask: MaskResult,
@@ -613,7 +665,7 @@ export async function beautifyJavaScript(
 
     return withReferencesIntact(source, restoreTemplates(formatted, mask));
   } catch (error) {
-    return { ok: false, error: describeError(error) };
+    return { ok: false, error: describeJavaScriptFailure(error, mask, source) };
   }
 }
 
