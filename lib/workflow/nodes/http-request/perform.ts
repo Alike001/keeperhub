@@ -189,6 +189,8 @@ export function resolveRetryDelayMs(retryDelay: unknown): number {
 
 type BoundedBody = { ok: true; text: string } | { ok: false; bytes: number };
 
+const UTF8 = new TextDecoder("utf-8");
+
 /**
  * Read a response body up to the stored-output limit and stop there.
  *
@@ -222,7 +224,9 @@ async function readBoundedBody(
     }
     chunks.push(value);
   }
-  return { ok: true, text: Buffer.concat(chunks).toString("utf8") };
+  // TextDecoder, like Response.text(), drops a leading UTF-8 byte-order mark;
+  // Buffer#toString keeps it, and JSON.parse then rejects the body.
+  return { ok: true, text: UTF8.decode(Buffer.concat(chunks)) };
 }
 
 function oversizeBodyError(bytes: number): string {

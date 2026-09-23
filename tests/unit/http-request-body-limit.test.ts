@@ -66,6 +66,44 @@ describe("HTTP Request body limit", () => {
     });
   });
 
+  it("parses a JSON body that starts with a byte-order mark", async () => {
+    const encoded = new TextEncoder().encode('{"ok":true}');
+    const withBom = new Uint8Array(3 + encoded.byteLength);
+    withBom.set([0xef, 0xbb, 0xbf], 0);
+    withBom.set(encoded, 3);
+    mockedSafeFetch.mockResolvedValue(response(withBom));
+
+    const result = await httpRequest(input);
+    expect(result).toEqual({ success: true, data: { ok: true }, status: 200 });
+    expect(mockedSafeFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("decodes a multi-byte character split across two chunks", async () => {
+    const bytes = new TextEncoder().encode('{"s":"\u{1F600}"}');
+    // The four-byte character starts at offset 6; cut it in half.
+    const chunks = [bytes.subarray(0, 8), bytes.subarray(8)];
+    let index = 0;
+    const stream = new ReadableStream({
+      pull(controller) {
+        const chunk = chunks[index];
+        index += 1;
+        if (chunk === undefined) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(chunk);
+      },
+    });
+    mockedSafeFetch.mockResolvedValue(response(stream));
+
+    const result = await httpRequest(input);
+    expect(result).toEqual({
+      success: true,
+      data: { s: "\u{1F600}" },
+      status: 200,
+    });
+  });
+
   it("refuses a declared Content-Length above the limit without reading", async () => {
     let cancelled = false;
     mockedSafeFetch.mockResolvedValue(
