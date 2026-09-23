@@ -40,6 +40,38 @@ Returns execution history for a workflow.
 ]
 ```
 
+### Summary view and pagination
+
+Add `view=summary` for a lighter, paginated list. Each run omits `input`, `output` and `executionTrace`; read those per run from the [logs](#get-execution-logs) endpoint. The default response grows with the size of every run's output, so prefer this view when you only need status and progress.
+
+| Parameter | Description |
+|-----------|-------------|
+| `view` | `summary` |
+| `limit` | Runs per page, 1 to 100. Default 20. |
+| `cursor` | The `nextCursor` value from the previous page. Omit for the first page. |
+
+```json
+{
+  "executions": [
+    {
+      "id": "n5lyy066zzplv64gijm0y",
+      "workflowId": "2mp0ybcgj03t0ybqlngyb",
+      "status": "success",
+      "startedAt": "2024-01-01T00:00:00Z",
+      "completedAt": "2024-01-01T00:00:05Z",
+      "totalSteps": 3,
+      "completedSteps": 3,
+      "transactionHashes": [...],
+      "ranVersion": 2
+    }
+  ],
+  "nextCursor": "WyIyMDI0LTAxLTAxIDAwOjAwOjAwIiwibjVseXkwNjZ6enBsdjY0Z2lqbTB5Il0",
+  "total": 46
+}
+```
+
+`nextCursor` is opaque and `null` on the last page. `total` counts the workflow's runs across all pages. Summary responses carry an `ETag`; send it back in `If-None-Match` to receive `304 Not Modified` when nothing has changed.
+
 ## Get Execution Status
 
 ```http
