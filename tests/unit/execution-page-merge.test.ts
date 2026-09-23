@@ -1,25 +1,43 @@
 import { describe, expect, it } from "vitest";
 import {
   appendPage,
-  EMPTY_EXECUTION_PAGE,
   type ExecutionPage,
+  emptyExecutionPage,
   mergeFirstPage,
+  replacePage,
 } from "@/lib/workflow/execution-page-merge";
 
 type Run = { id: string; status: string };
 
+const WF = "wf_a";
+const OTHER_WF = "wf_b";
+
 function page(
   executions: Run[],
   nextCursor: string | null,
-  total: number
+  total: number,
+  workflowId: string = WF
 ): ExecutionPage<Run> {
-  return { executions, nextCursor, total };
+  return { workflowId, executions, nextCursor, total };
 }
+
+describe("replacePage", () => {
+  it("replaces the list with a page for the same workflow", () => {
+    const first = page([{ id: "b", status: "running" }], "after-b", 5);
+    expect(replacePage(emptyExecutionPage(WF), first)).toEqual(first);
+  });
+
+  it("drops a page for another workflow", () => {
+    const shown = page([{ id: "x", status: "success" }], null, 1, OTHER_WF);
+    const stale = page([{ id: "b", status: "running" }], "after-b", 5);
+    expect(replacePage(shown, stale)).toBe(shown);
+  });
+});
 
 describe("mergeFirstPage", () => {
   it("is the page itself on a fresh load", () => {
     const first = page([{ id: "b", status: "running" }], "after-b", 5);
-    expect(mergeFirstPage(EMPTY_EXECUTION_PAGE, first)).toEqual(first);
+    expect(mergeFirstPage(emptyExecutionPage(WF), first)).toEqual(first);
   });
 
   it("replaces covered rows in place so status changes show", () => {
@@ -63,6 +81,7 @@ describe("mergeFirstPage", () => {
       3
     );
     expect(mergeFirstPage(loaded, refreshed)).toEqual({
+      workflowId: WF,
       executions: [
         { id: "c", status: "running" },
         { id: "b", status: "success" },
@@ -139,6 +158,33 @@ describe("mergeFirstPage", () => {
       page([], null, 0)
     );
   });
+
+  it("drops a first page for another workflow instead of merging it", () => {
+    const shown = page([{ id: "x", status: "running" }], null, 1, OTHER_WF);
+    const stale = page([{ id: "a", status: "success" }], "after-a", 30);
+    expect(mergeFirstPage(shown, stale)).toBe(shown);
+  });
+
+  it("does not let a slow load for the previous workflow leak into the next one", () => {
+    // Open A (slow), switch to B before A answers, then A's page lands,
+    // then B's first poll lands.
+    const emptyB = emptyExecutionPage(OTHER_WF);
+    const lateA = page(
+      [
+        { id: "a2", status: "success" },
+        { id: "a1", status: "success" },
+      ],
+      "after-a1",
+      50
+    );
+    const afterA = replacePage(emptyB, lateA);
+    expect(afterA).toBe(emptyB);
+
+    const pollB = page([{ id: "b1", status: "running" }], null, 1, OTHER_WF);
+    const afterB = mergeFirstPage(afterA, pollB);
+    expect(afterB.executions.map((run) => run.id)).toEqual(["b1"]);
+    expect(afterB.total).toBe(1);
+  });
 });
 
 describe("appendPage", () => {
@@ -160,6 +206,7 @@ describe("appendPage", () => {
       4
     );
     expect(appendPage(loaded, older)).toEqual({
+      workflowId: WF,
       executions: [
         { id: "c", status: "success" },
         { id: "b", status: "success" },
@@ -168,5 +215,16 @@ describe("appendPage", () => {
       nextCursor: null,
       total: 4,
     });
+  });
+
+  it("drops an older page for another workflow", () => {
+    const shown = page(
+      [{ id: "x", status: "success" }],
+      "after-x",
+      9,
+      OTHER_WF
+    );
+    const stale = page([{ id: "a", status: "success" }], null, 4);
+    expect(appendPage(shown, stale)).toBe(shown);
   });
 });

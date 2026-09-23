@@ -40,9 +40,10 @@ import { startSerialPoll } from "@/lib/utils/serial-poll";
 import { getRelativeTime } from "@/lib/utils/time";
 import {
   appendPage,
-  EMPTY_EXECUTION_PAGE,
+  emptyExecutionPage,
   type ExecutionPage,
   mergeFirstPage,
+  replacePage,
 } from "@/lib/workflow/execution-page-merge";
 import {
   formatStoredBytes,
@@ -978,10 +979,25 @@ export function WorkflowRuns({
     },
     [router, pathname, searchParams, setActiveTab]
   );
-  const [runs, setRuns] = useState<ExecutionPage<WorkflowExecution>>(
-    EMPTY_EXECUTION_PAGE
+  const [runs, setRuns] = useState<ExecutionPage<WorkflowExecution>>(() =>
+    emptyExecutionPage(currentWorkflowId)
   );
   const { executions, nextCursor, total } = runs;
+
+  // The workflow whose runs are on screen. Every fetch captures the id it was
+  // made for and applies its result only while this still matches, so a slow
+  // response for the previous workflow cannot land in the next one's list or
+  // clear its loading state. Switching also starts from an empty page so
+  // nothing of the previous workflow is retained under the new one.
+  const shownWorkflowIdRef = useRef<string | null>(currentWorkflowId);
+  useEffect(() => {
+    shownWorkflowIdRef.current = currentWorkflowId;
+    setRuns((loaded) =>
+      loaded.workflowId === currentWorkflowId
+        ? loaded
+        : emptyExecutionPage(currentWorkflowId)
+    );
+  }, [currentWorkflowId]);
   const [logs, setLogs] = useState<Record<string, ExecutionLog[]>>({});
   const [expandedRuns, setExpandedRuns] = useState<Set<string>>(new Set());
   const [expandedLogs, setExpandedLogs] = useState<Set<string>>(new Set());
@@ -996,28 +1012,40 @@ export function WorkflowRuns({
 
   const loadExecutions = useCallback(
     async (showLoading = true) => {
-      if (!currentWorkflowId) {
+      const workflowId = currentWorkflowId;
+      if (!workflowId) {
         setLoading(false);
         return;
       }
+      const stillShown = () => shownWorkflowIdRef.current === workflowId;
 
       try {
         if (showLoading) {
           setLoading(true);
         }
-        const page = await api.workflow.getExecutions(currentWorkflowId, {
-          limit: RUNS_PAGE_SIZE,
-        });
+        const page = {
+          ...(await api.workflow.getExecutions(workflowId, {
+            limit: RUNS_PAGE_SIZE,
+          })),
+          workflowId,
+        };
+        if (!stillShown()) {
+          return;
+        }
         // A full load (mount, workflow switch) replaces the list; a refresh
         // folds the first page in and keeps the older pages already loaded.
         setRuns((loaded) =>
-          showLoading ? page : mergeFirstPage(loaded, page)
+          showLoading ? replacePage(loaded, page) : mergeFirstPage(loaded, page)
         );
       } catch (error) {
         console.error("Failed to load executions:", error);
-        setRuns(EMPTY_EXECUTION_PAGE);
+        // A failed refresh keeps what is on screen; only a failed full load
+        // has nothing to show.
+        if (showLoading && stillShown()) {
+          setRuns(emptyExecutionPage(workflowId));
+        }
       } finally {
-        if (showLoading) {
+        if (showLoading && stillShown()) {
           setLoading(false);
         }
       }
@@ -1026,16 +1054,22 @@ export function WorkflowRuns({
   );
 
   const loadMore = useCallback(async () => {
-    if (!(currentWorkflowId && nextCursor) || loadingMore) {
+    const workflowId = currentWorkflowId;
+    if (!(workflowId && nextCursor) || loadingMore) {
       return;
     }
     setLoadingMore(true);
     try {
-      const page = await api.workflow.getExecutions(currentWorkflowId, {
-        limit: RUNS_PAGE_SIZE,
-        cursor: nextCursor,
-      });
-      setRuns((loaded) => appendPage(loaded, page));
+      const page = {
+        ...(await api.workflow.getExecutions(workflowId, {
+          limit: RUNS_PAGE_SIZE,
+          cursor: nextCursor,
+        })),
+        workflowId,
+      };
+      if (shownWorkflowIdRef.current === workflowId) {
+        setRuns((loaded) => appendPage(loaded, page));
+      }
     } catch (error) {
       console.error("Failed to load more executions:", error);
     } finally {
@@ -1200,12 +1234,16 @@ export function WorkflowRuns({
       return;
     }
 
+    const workflowId = currentWorkflowId;
     let cancelled = false;
     const pollExecutions = async () => {
       try {
-        const page = await api.workflow.getExecutions(currentWorkflowId, {
-          limit: RUNS_PAGE_SIZE,
-        });
+        const page = {
+          ...(await api.workflow.getExecutions(workflowId, {
+            limit: RUNS_PAGE_SIZE,
+          })),
+          workflowId,
+        };
         if (cancelled) {
           return;
         }

@@ -2,18 +2,32 @@
  * Client-side bookkeeping for the paginated executions list: the runs panel
  * keeps every page it has loaded and re-fetches only the first one while
  * polling, so these fold a fresh page into what is already on screen.
+ *
+ * Every page names the workflow it belongs to. A response for the previous
+ * workflow that lands after the panel switched must not be shown under the
+ * new one, so each helper drops a page whose workflow is not the loaded
+ * page's.
  */
 export type ExecutionPage<T> = {
+  workflowId: string | null;
   executions: T[];
   nextCursor: string | null;
   total: number;
 };
 
-export const EMPTY_EXECUTION_PAGE: ExecutionPage<never> = {
-  executions: [],
-  nextCursor: null,
-  total: 0,
-};
+export function emptyExecutionPage(
+  workflowId: string | null
+): ExecutionPage<never> {
+  return { workflowId, executions: [], nextCursor: null, total: 0 };
+}
+
+/** A full load: the page replaces the list, unless it is another workflow's. */
+export function replacePage<T extends { id: string }>(
+  loaded: ExecutionPage<T>,
+  page: ExecutionPage<T>
+): ExecutionPage<T> {
+  return page.workflowId === loaded.workflowId ? page : loaded;
+}
 
 /**
  * Fold a freshly fetched first page into the loaded list.
@@ -33,6 +47,9 @@ export function mergeFirstPage<T extends { id: string }>(
   loaded: ExecutionPage<T>,
   page: ExecutionPage<T>
 ): ExecutionPage<T> {
+  if (page.workflowId !== loaded.workflowId) {
+    return loaded;
+  }
   if (page.nextCursor === null) {
     return page;
   }
@@ -41,6 +58,7 @@ export function mergeFirstPage<T extends { id: string }>(
     (execution) => !covered.has(execution.id)
   );
   return {
+    workflowId: page.workflowId,
     executions: [...page.executions, ...retained],
     nextCursor: retained.length > 0 ? loaded.nextCursor : page.nextCursor,
     total: page.total,
@@ -52,9 +70,13 @@ export function appendPage<T extends { id: string }>(
   loaded: ExecutionPage<T>,
   page: ExecutionPage<T>
 ): ExecutionPage<T> {
+  if (page.workflowId !== loaded.workflowId) {
+    return loaded;
+  }
   const seen = new Set(loaded.executions.map((execution) => execution.id));
   const fresh = page.executions.filter((execution) => !seen.has(execution.id));
   return {
+    workflowId: page.workflowId,
     executions: [...loaded.executions, ...fresh],
     nextCursor: page.nextCursor,
     total: page.total,
