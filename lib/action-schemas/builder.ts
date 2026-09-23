@@ -340,22 +340,27 @@ export async function buildActionSchemasResponse(
     ...pluginActions,
     ...enrichedSystemActions,
   };
+
+  // Whether the category matched, judged before the type filter narrows the
+  // map. `triggers` counts: category=triggers fills that key and leaves
+  // `actions` empty by design, so testing `actions` alone would tell a caller
+  // their correct category was unrecognised. Judging it after the type filter
+  // would instead blame the category whenever the actionType was the typo.
+  const categoryMatched =
+    Object.keys(actions).length > 0 || Object.keys(triggers).length > 0;
+
   if (typeFilter) {
     const matched = actions[typeFilter];
     actions = matched === undefined ? {} : { [typeFilter]: matched };
   }
 
-  // An unrecognised category otherwise returns an empty map with a 200,
-  // which reads as "this action does not exist" rather than "that is not a
-  // category". Name the valid ones so the caller can correct the filter.
-  // `triggers` has to count as a match: category=triggers fills that key and
-  // leaves `actions` empty by design, so testing `actions` alone would tell a
-  // caller their correct category was unrecognised and point them back at it.
-  // A `type` filter names an actionType, which this list would not correct.
-  const matchedNothing =
-    Object.keys(actions).length === 0 && Object.keys(triggers).length === 0;
+  // An unrecognised category otherwise returns an empty map with a 200, which
+  // reads as "this action does not exist" rather than "that is not a
+  // category". Name the valid ones so the caller can correct the filter. A
+  // `type` filter names an actionType, which this list would not correct, so
+  // it neither triggers nor suppresses the hint on its own.
   const unmatchedFilter =
-    categoryFilter && !typeFilter && matchedNothing
+    categoryFilter && !categoryMatched
       ? {
           availableCategories: [
             ...allPlugins.map((plugin) => plugin.type),
