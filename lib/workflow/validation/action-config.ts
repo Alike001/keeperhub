@@ -1,5 +1,11 @@
 import { ADDRESS_BOOK_SELECTION_KEY } from "@/lib/address-book-selection";
 import { stripControlChars } from "@/lib/utils/control-chars";
+import { EVM_ADDRESS_RE } from "@/lib/web3/address";
+import {
+  HEX_BYTES_PATTERN,
+  INTEGER_PATTERN,
+  UNSIGNED_INTEGER_PATTERN,
+} from "@/lib/web3/solidity-values";
 import { evaluateShowWhen } from "@/lib/workflow/editor/show-when";
 import { SYSTEM_ACTION_TYPES as SYSTEM_ACTION_TYPE_LIST } from "@/lib/workflow/executor/system-action-types";
 import {
@@ -29,10 +35,6 @@ const RESERVED_CONFIG_KEYS = new Set([
 ]);
 
 const TEMPLATE_VALUE_PATTERN = /\{\{[^}]+}}/;
-const ETH_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
-const HEX_BYTES_PATTERN = /^0x(?:[0-9a-fA-F]{2})*$/;
-const INTEGER_PATTERN = /^-?\d+$/;
-const UNSIGNED_INTEGER_PATTERN = /^\d+$/;
 const DECIMAL_PATTERN = /^\d+(?:\.\d+)?$/;
 const FIXED_ARRAY_LENGTH_PATTERN = /\[(\d+)]$/;
 
@@ -273,6 +275,24 @@ function isJsonArrayString(value: unknown): boolean {
   }
 }
 
+function isJsonObjectString(value: unknown): boolean {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const trimmed = value.trim();
+  if (trimmed === "") {
+    return true;
+  }
+  try {
+    const parsed = JSON.parse(trimmed);
+    return (
+      typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+    );
+  } catch {
+    return false;
+  }
+}
+
 function isJsonArrayOrObjectString(value: unknown): boolean {
   if (typeof value !== "string") {
     return false;
@@ -422,7 +442,7 @@ function validateFieldValue(
       return { valid: true };
     case "protocol-address":
       return typeof value === "string" &&
-        (valueContainsTemplate(value) || ETH_ADDRESS_PATTERN.test(value))
+        (valueContainsTemplate(value) || EVM_ADDRESS_RE.test(value))
         ? { valid: true }
         : { valid: false, expected: "address", received: value };
     case "protocol-uint":
@@ -500,10 +520,17 @@ function validateFieldValue(
         isJsonArrayOrObjectString(value)
         ? { valid: true }
         : { valid: false, expected: "object or array", received: value };
+    case "abi-event-args":
+      // Keyed by indexed parameter name, so the step refuses an array.
+      return isRecord(value) ||
+        valueContainsTemplate(value) ||
+        isJsonObjectString(value)
+        ? { valid: true }
+        : { valid: false, expected: "object", received: value };
     default:
       if (field.isAddressField) {
         return typeof value === "string" &&
-          (valueContainsTemplate(value) || ETH_ADDRESS_PATTERN.test(value))
+          (valueContainsTemplate(value) || EVM_ADDRESS_RE.test(value))
           ? { valid: true }
           : { valid: false, expected: "address", received: value };
       }
