@@ -484,18 +484,24 @@ async function approveTokenCoreImpl(
     // Keep contract instance for error formatting in catch block
     const contract = new ethers.Contract(tokenAddress, ERC20_ABI, signer);
 
-    let receivedTransactionHash: string | undefined;
-    try {
-      // Get token decimals and symbol via failover
-      const [decimals, symbol] = await rpcManager.executeWithFailover(
-        (p) => {
+      // Get token decimals and symbol via failover. This is a read-only
+      // preflight: a decode/RPC failure here proves no broadcast was attempted.
+      let decimals: bigint;
+      let symbol: string;
+      try {
+        [decimals, symbol] = await rpcManager.executeWithFailover((p) => {
           const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, p);
           return Promise.all([
             tokenContract.decimals() as Promise<bigint>,
             tokenContract.symbol() as Promise<string>,
           ]);
-        }
-      );
+        });
+      } catch (error) {
+        return {
+          success: false,
+          error: `Failed to read token metadata: ${getErrorMessage(error)}`,
+        };
+      }
 
       const decimalsNum = Number(decimals);
 
@@ -555,6 +561,8 @@ async function approveTokenCoreImpl(
         };
       }
 
+    let receivedTransactionHash: string | undefined;
+    try {
       let receipt: Awaited<ReturnType<typeof adapter.executeContractCall>>;
       if (signerMode.kind === SIGNER_MODE.SAFE_ROLE) {
         receipt = await executeContractCallAsRole(

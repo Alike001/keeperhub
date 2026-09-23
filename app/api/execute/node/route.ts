@@ -327,7 +327,8 @@ async function handleResult(
     // that pair, failExecution cannot verify a receipt and this arbitrary node
     // may already have produced a side effect, so the idempotency key stays
     // held. broadcastAttempted is still forwarded above so a hashless attempted
-    // chain send becomes unconfirmed/reconcilable instead of terminal.
+    // chain send fails closed as unconfirmed. The reconciler requires a hash,
+    // so this shape is intentionally held rather than described as reconcilable.
     const disposition =
       transactionHash && chainId !== undefined
         ? dispositionForExecutionOutcome(settled.status, { transactionHash })

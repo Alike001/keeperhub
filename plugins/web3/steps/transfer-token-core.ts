@@ -582,15 +582,16 @@ async function transferTokenCoreImpl(
     // Create contract instance for the actual write (needs signer)
     const contract = new ethers.Contract(tokenAddress, ERC20_ABI, signer);
 
-    let receivedTransactionHash: string | undefined;
-    try {
       const tokenHolderAddress =
         signerMode.kind === SIGNER_MODE.SAFE_ROLE || signerMode.kind === SIGNER_MODE.SAFE
           ? signerMode.safeAddress
           : signerAddress;
 
-      const [decimals, symbol, balance] =
-        await rpcManager.executeWithFailover((p) => {
+      let decimals: bigint;
+      let symbol: string;
+      let balance: bigint;
+      try {
+        [decimals, symbol, balance] = await rpcManager.executeWithFailover((p) => {
           const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, p);
           return Promise.all([
             tokenContract.decimals() as Promise<bigint>,
@@ -598,6 +599,12 @@ async function transferTokenCoreImpl(
             tokenContract.balanceOf(tokenHolderAddress) as Promise<bigint>,
           ]);
         });
+      } catch (error) {
+        return {
+          success: false,
+          error: `Failed to read token metadata or balance: ${getErrorMessage(error)}`,
+        };
+      }
 
       const decimalsNum = Number(decimals);
 
@@ -651,6 +658,8 @@ async function transferTokenCoreImpl(
         };
       }
 
+    let receivedTransactionHash: string | undefined;
+    try {
       let receipt: Awaited<ReturnType<typeof adapter.executeContractCall>>;
       if (signerMode.kind === SIGNER_MODE.SAFE_ROLE) {
         receipt = await executeContractCallAsRole(

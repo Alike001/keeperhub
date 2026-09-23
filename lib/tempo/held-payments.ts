@@ -307,8 +307,6 @@ export async function expireDueHeldPayments(): Promise<number> {
   return rows.length;
 }
 
-/** Rows sent to the node but not yet reconciled (poller path). A later tick
- *  checks each receipt and advances it to `confirmed` or `failed`. */
 /** Move an unresolved broadcast to the back of the reconciliation queue.
  *
  * A not-found receipt is not proof of failure: the transaction may have been
@@ -332,6 +330,8 @@ export async function deferBroadcastReconcile(
   return rows[0] ?? null;
 }
 
+/** Rows sent to the node but not yet reconciled (poller path). A later tick
+ *  checks each receipt and advances it to `confirmed` or `failed`. */
 export async function selectBroadcastToReconcile(
   limit: number
 ): Promise<TempoHeldPayment[]> {

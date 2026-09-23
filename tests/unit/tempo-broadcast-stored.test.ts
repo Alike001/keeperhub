@@ -31,12 +31,13 @@ vi.mock("ox/tempo", () => ({
   },
 }));
 
-import { broadcastStoredTempoTx } from "@/plugins/tempo/steps/tempo-tx-core";
 import { isOnChainPendingError } from "@/lib/web3/onchain-revert";
+import { broadcastStoredTempoTx } from "@/plugins/tempo/steps/tempo-tx-core";
 
 const NOW_SEC = 1_800_000_000;
 const CHAIN = 42_431;
 const mockSend = vi.fn();
+const mockGetTransaction = vi.fn();
 const WINDOW_CLOSED_RE = /validity window closed/;
 const HASH_MISMATCH_RE = /does not match its expected hash/;
 const NOT_TEMPO_RE = /not a Tempo network/;
@@ -45,9 +46,15 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.useFakeTimers();
   vi.setSystemTime(NOW_SEC * 1000);
+  mockGetTransaction.mockResolvedValue(null);
   mockGetRpcProvider.mockResolvedValue({
     executeWithFailover: (fn: (p: unknown) => unknown) =>
-      Promise.resolve(fn({ send: (...a: unknown[]) => mockSend(...a) })),
+      Promise.resolve(
+        fn({
+          send: (...a: unknown[]) => mockSend(...a),
+          getTransaction: (...a: unknown[]) => mockGetTransaction(...a),
+        })
+      ),
     getProvider: () => ({}),
   });
 });
@@ -152,9 +159,78 @@ describe("broadcastStoredTempoTx", () => {
     );
 
     expect(isOnChainPendingError(thrown)).toBe(true);
-    expect(
-      (thrown as { transactionHash?: string }).transactionHash
-    ).toBe("0xhash");
+    expect((thrown as { transactionHash?: string }).transactionHash).toBe(
+      "0xhash"
+    );
+  });
+
+  it("keeps a send pending when earlier retry history was not all refusals", async () => {
+    mockDeserialize.mockReturnValue({ validBefore: NOW_SEC + 100 });
+    mockHash.mockReturnValue("0xhash");
+    const masked = Object.assign(
+      new Error(
+        "RPC failed on both endpoints. Primary: ECONNREFUSED. Fallback: ECONNREFUSED"
+      ),
+      { allAttemptsConnectionRefused: false }
+    );
+    mockSend.mockRejectedValue(masked);
+
+    const thrown = await broadcastStoredTempoTx({
+      chainId: CHAIN,
+      serialized: "0x76blob",
+      waitForConfirmation: false,
+    }).then(
+      () => undefined,
+      (error: unknown) => error
+    );
+
+    expect(isOnChainPendingError(thrown)).toBe(true);
+    expect((thrown as { transactionHash?: string }).transactionHash).toBe(
+      "0xhash"
+    );
+    expect(mockGetTransaction).not.toHaveBeenCalled();
+  });
+
+  it("treats an all-refused send as accepted when its deterministic hash is visible", async () => {
+    mockDeserialize.mockReturnValue({ validBefore: NOW_SEC + 100 });
+    mockHash.mockReturnValue("0xhash");
+    const refused = Object.assign(new Error("ECONNREFUSED"), {
+      allAttemptsConnectionRefused: true,
+    });
+    mockSend.mockRejectedValue(refused);
+    mockGetTransaction.mockResolvedValue({ hash: "0xhash" });
+
+    const result = await broadcastStoredTempoTx({
+      chainId: CHAIN,
+      serialized: "0x76blob",
+      waitForConfirmation: false,
+    });
+
+    expect(result).toEqual({ hash: "0xhash", confirmed: false });
+    expect(mockGetTransaction).toHaveBeenCalledWith("0xhash");
+  });
+
+  it("keeps an all-refused send terminal only after a readable hash miss", async () => {
+    mockDeserialize.mockReturnValue({ validBefore: NOW_SEC + 100 });
+    mockHash.mockReturnValue("0xhash");
+    const refused = Object.assign(new Error("ECONNREFUSED"), {
+      allAttemptsConnectionRefused: true,
+    });
+    mockSend.mockRejectedValue(refused);
+    mockGetTransaction.mockResolvedValue(null);
+
+    const thrown = await broadcastStoredTempoTx({
+      chainId: CHAIN,
+      serialized: "0x76blob",
+      waitForConfirmation: false,
+    }).then(
+      () => undefined,
+      (error: unknown) => error
+    );
+
+    expect(thrown).toBe(refused);
+    expect(isOnChainPendingError(thrown)).toBe(false);
+    expect(mockGetTransaction).toHaveBeenCalledWith("0xhash");
   });
 
   it("rejects a non-Tempo chain before touching the blob", async () => {

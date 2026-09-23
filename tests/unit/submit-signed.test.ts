@@ -2,8 +2,16 @@ import { ethers, makeError } from "ethers";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
+vi.mock("@/lib/sleep", () => ({
+  sleep: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@/lib/logging", () => ({
+  ErrorCategory: { NETWORK_RPC: "network_rpc" },
+  logSystemError: vi.fn(),
+  logSystemWarn: vi.fn(),
+}));
 
-import type { RpcOperationType, RpcProviderManager } from "@/lib/rpc/providers";
+import { type RpcOperationType, RpcProviderManager } from "@/lib/rpc/providers";
 import {
   isNonceConflictError,
   isPreBroadcastNetworkError,
@@ -414,6 +422,76 @@ describe("submitSignedTransactionWithFailover", () => {
     );
 
     expect(result.preExistingReceipt).toBe(receipt);
+  });
+});
+
+describe("RpcProviderManager write-broadcast retry evidence", () => {
+  it("does not call an endpoint all-refused when an earlier retry timed out", async () => {
+    const manager = new RpcProviderManager({
+      config: {
+        primaryRpcUrl: "http://127.0.0.1:1",
+        maxRetries: 3,
+        timeoutMs: 50,
+        chainName: "retry-history-test",
+        chainId: 1,
+      },
+    });
+    let attempt = 0;
+
+    const thrown = await manager
+      .executeWithFailover(async () => {
+        attempt += 1;
+        if (attempt === 1) {
+          throw new Error("Timeout after 50ms");
+        }
+        throw new Error("ECONNREFUSED");
+      }, "write-broadcast")
+      .then(
+        () => undefined,
+        (error: unknown) => error
+      );
+
+    expect(attempt).toBe(3);
+    expect(thrown).toBeInstanceOf(Error);
+    expect(
+      (
+        thrown as Error & {
+          allAttemptsConnectionRefused?: boolean;
+        }
+      ).allAttemptsConnectionRefused
+    ).toBe(false);
+  });
+
+  it("marks an endpoint all-refused only when every retry was refused", async () => {
+    const manager = new RpcProviderManager({
+      config: {
+        primaryRpcUrl: "http://127.0.0.1:1",
+        maxRetries: 3,
+        timeoutMs: 50,
+        chainName: "retry-history-test",
+        chainId: 1,
+      },
+    });
+    let attempt = 0;
+
+    const thrown = await manager
+      .executeWithFailover(async () => {
+        attempt += 1;
+        throw new Error("ECONNREFUSED");
+      }, "write-broadcast")
+      .then(
+        () => undefined,
+        (error: unknown) => error
+      );
+
+    expect(attempt).toBe(3);
+    expect(
+      (
+        thrown as Error & {
+          allAttemptsConnectionRefused?: boolean;
+        }
+      ).allAttemptsConnectionRefused
+    ).toBe(true);
   });
 });
 

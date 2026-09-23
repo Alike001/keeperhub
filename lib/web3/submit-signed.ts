@@ -225,6 +225,15 @@ const RPC_FAILOVER_ENDPOINT_SPLIT = /\b(?:primary|fallback):\s*/i;
  * PreBroadcastNetworkError marker instead.
  */
 export function isDefinitelyPreBroadcastNetworkError(error: unknown): boolean {
+  if (error instanceof Error && "allAttemptsConnectionRefused" in error) {
+    const aggregate = (
+      error as Error & { allAttemptsConnectionRefused?: unknown }
+    ).allAttemptsConnectionRefused;
+    if (typeof aggregate === "boolean") {
+      return aggregate;
+    }
+  }
+
   const message = errorMessage(error).toLowerCase();
   const endpointFailures = message
     .split(RPC_FAILOVER_ENDPOINT_SPLIT)

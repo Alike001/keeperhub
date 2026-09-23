@@ -604,24 +604,39 @@ export async function broadcastStoredTempoTx(
       error,
       { chain_id: String(chainId) }
     );
-    // Node envelope rejections are terminal, not pending: the node read the
-    // envelope and refused it (the payer cannot cover it, or the envelope
-    // fails intrinsic validation), so nothing was broadcast. Wrapping one in
-    // OnChainPendingError would park the row in `broadcast` with a hash that
-    // is not on chain, and the reconcile sweep reads a not-found hash as
-    // pending forever.
-    if (isNodeEnvelopeRejection(message)) {
-      throw error;
+    // A definite envelope rejection or an all-attempts connection refusal is
+    // terminal only if the deterministic signed hash is also absent. A prior
+    // retry may have reached a node before a later refusal masked it, so probe
+    // the hash exactly as the EVM signed-send path does before releasing the
+    // idempotency key.
+    const looksDefinitelyPreBroadcast =
+      isNodeEnvelopeRejection(message) ||
+      isDefinitelyPreBroadcastNetworkError(error);
+    if (looksDefinitelyPreBroadcast) {
+      let visible: ethers.TransactionResponse | null;
+      try {
+        visible = await rpcManager.executeWithFailover(
+          (provider) => provider.getTransaction(actualHash),
+          "read"
+        );
+      } catch (lookupError) {
+        throw new OnChainPendingError({
+          message: `Tempo transaction send outcome could not be determined (${lookupError instanceof Error ? lookupError.message : String(lookupError)})`,
+          transactionHash: actualHash,
+        });
+      }
+
+      if (visible) {
+        hash = actualHash;
+      } else {
+        throw error;
+      }
+    } else {
+      throw new OnChainPendingError({
+        message: `Tempo transaction send outcome could not be determined (${message})`,
+        transactionHash: actualHash,
+      });
     }
-    // Provenance is established here: this catch wraps only the send call,
-    // so a refusal message can only have come from the broadcast itself.
-    if (isDefinitelyPreBroadcastNetworkError(error)) {
-      throw error;
-    }
-    throw new OnChainPendingError({
-      message: `Tempo transaction send outcome could not be determined (${message})`,
-      transactionHash: actualHash,
-    });
   }
 
   if (!waitForConfirmation) {
