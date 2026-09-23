@@ -1249,8 +1249,9 @@ export async function logWorkflowCompleteDb(
     .update(workflowExecutions)
     .set({
       status: executionStatus,
-      // The run's output is derived from step outputs that were each within
-      // the limit, but a fan-out can still sum past it; store the marker then.
+      // The run's output is the last node's data, which the step wrapper has
+      // already capped; bounding it here is the backstop for any writer that
+      // reaches this function with an oversized value.
       output: boundStoredOutput(params.output).value,
       error: resolvedError,
       errorCategory: persistedClassification?.errorCategory ?? null,
