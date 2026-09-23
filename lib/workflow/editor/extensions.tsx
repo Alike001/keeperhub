@@ -9,13 +9,20 @@
  */
 
 import { useAtomValue } from "jotai";
+import { Info } from "lucide-react";
 import { KeeperHubLogo } from "@/components/icons/keeperhub-logo";
 import { SendGridConnectionSection } from "@/components/settings/sendgrid-connection-section";
 import { Web3WalletSection } from "@/components/settings/web3-wallet-section";
 import { Label } from "@/components/ui/label";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { AbiEventSelectField } from "@/components/workflow/config/abi-event-select-field";
 import { AbiWithAutoFetchField } from "@/components/workflow/config/abi-with-auto-fetch-field";
 import { ArgsListField } from "@/components/workflow/config/args-list-field";
+import { ArrayInputField } from "@/components/workflow/config/array-input-field";
 import { CallListField } from "@/components/workflow/config/call-list-field";
 import {
   ChainSelectField,
@@ -324,10 +331,6 @@ function ProtocolFieldLabel({
     docUrl?: string;
   };
 }): React.ReactNode {
-  const { Tooltip, TooltipTrigger, TooltipContent } =
-    require("@/components/ui/tooltip") as typeof import("@/components/ui/tooltip");
-  const { Info } = require("lucide-react") as typeof import("lucide-react");
-
   const hasDocUrl = Boolean(field.docUrl);
 
   const infoIcon = (
@@ -548,14 +551,12 @@ registerFieldRenderer(
 registerFieldRenderer(
   "protocol-array",
   ({ field, config, onUpdateConfig, disabled }) => {
-    const { ArrayInputField } =
-      require("@/components/workflow/config/array-input-field") as typeof import("@/components/workflow/config/array-input-field");
-
     const rawValue = config[field.key];
     let value: unknown = rawValue;
     if (typeof rawValue === "string" && rawValue.trim() !== "") {
       try {
-        value = JSON.parse(rawValue);
+        const parsedValue: unknown = JSON.parse(rawValue);
+        value = Array.isArray(parsedValue) ? parsedValue : rawValue;
       } catch {
         value = rawValue;
       }
