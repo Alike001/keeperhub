@@ -9,6 +9,7 @@ import { db } from "@/lib/db";
 import { workflowExecutions, workflowHistory, workflows } from "@/lib/db/schema";
 import { parsePageLimit } from "@/lib/pagination";
 import { getWorkflowAccess } from "@/lib/workflow/access";
+import { boundedJsonb } from "@/lib/workflow/bounded-jsonb";
 import {
   decodeExecutionsCursor,
   encodeExecutionsCursor,
@@ -259,12 +260,19 @@ export async function GET(
       return await summaryResponse(request, workflowId, summaryQuery);
     }
 
-    // Fetch executions, excluding runs whose history was purged.
+    // Fetch executions, excluding runs whose history was purged. A run's
+    // input and output come back as a truncated marker past the stored-output
+    // limit, so one oversized run cannot size the whole response.
     const executions = await db.query.workflowExecutions.findMany({
       where: and(
         eq(workflowExecutions.workflowId, workflowId),
         isNull(workflowExecutions.deletedAt)
       ),
+      columns: { input: false, output: false },
+      extras: {
+        input: boundedJsonb(workflowExecutions.input).as("input"),
+        output: boundedJsonb(workflowExecutions.output).as("output"),
+      },
       orderBy: [desc(workflowExecutions.startedAt)],
       limit: 50,
     });

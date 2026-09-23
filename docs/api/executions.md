@@ -40,6 +40,8 @@ Returns execution history for a workflow.
 ]
 ```
 
+A run's `input` or `output` larger than 1 MiB is returned as `{ "_truncated": true, "originalSize": <bytes>, "preview": "<first 1024 characters>" }` in place of the value.
+
 ### Summary view and pagination
 
 Add `view=summary` for a lighter, paginated list. Each run omits `input`, `output` and `executionTrace`; read those per run from the [logs](#get-execution-logs) endpoint. The default response grows with the size of every run's output, so prefer this view when you only need status and progress.
@@ -207,6 +209,8 @@ GET /api/workflows/executions/{executionId}/logs
 Returns detailed per-node logs for an execution along with the execution row itself. Use this when you need per-step input, output, error, gas usage, or other step-specific detail. For the common case of "what hashes did this run produce", read `transactionHashes` on the [status](#get-execution-status) or [list](#list-executions) responses instead — that field is denormalised from these logs and avoids parsing per-step output.
 
 `logs` is ordered by `timestamp` descending (most recent first).
+
+A step's `input`, `output` or `outputRaw` larger than 1 MiB is returned as `{ "_truncated": true, "originalSize": <bytes>, "preview": "<first 1024 characters>" }` in place of the value; the same limit applies when the step runs, so a step whose result would exceed it fails with an error naming the size.
 
 ### Response
 

@@ -94,12 +94,16 @@ function makeRows(count: number): Row[] {
 
 /**
  * Stand in for the relational query: rows come back without the columns the
- * caller excluded, the way Drizzle returns them, so the route is shown to rely
- * on the database omission rather than stripping the fields afterwards.
+ * caller excluded and with a field per `extras` key, the way Drizzle returns
+ * them, so the route is shown to rely on the database shape rather than
+ * stripping or adding fields afterwards.
  */
 function setRows(rows: Row[]): void {
   mockFindMany.mockImplementation(
-    (args: { columns?: Record<string, boolean> }) => {
+    (args: {
+      columns?: Record<string, boolean>;
+      extras?: Record<string, unknown>;
+    }) => {
       const excluded = Object.entries(args.columns ?? {})
         .filter(([, included]) => included === false)
         .map(([column]) => column);
@@ -108,6 +112,9 @@ function setRows(rows: Row[]): void {
           const copy: Record<string, unknown> = { ...row };
           for (const column of excluded) {
             delete copy[column];
+          }
+          for (const extra of Object.keys(args.extras ?? {})) {
+            copy[extra] = row[extra];
           }
           return copy;
         })
@@ -171,13 +178,29 @@ describe("GET /api/workflows/[workflowId]/executions", () => {
       expect(response.headers.get("etag")).toBeNull();
     });
 
-    it("keeps the 50-row full-column query", () => {
+    it("keeps the 50-row query, with input and output bounded at the database", () => {
       return call().then(() => {
         const [args] = mockFindMany.mock.calls[0] as [Record<string, unknown>];
         expect(args.limit).toBe(50);
-        expect(args.columns).toBeUndefined();
-        expect(args.extras).toBeUndefined();
+        expect(args.columns).toEqual({ input: false, output: false });
+        expect(Object.keys(args.extras as object).sort()).toEqual([
+          "input",
+          "output",
+        ]);
       });
+    });
+
+    it("hands an oversized run's marker through unchanged", async () => {
+      const marker = {
+        _truncated: true,
+        originalSize: 184_421_952,
+        preview: '{"count":3,"results":[',
+      };
+      setRows([makeRow(59, { output: marker }), makeRow(58)]);
+      const response = await call();
+      const body = (await response.json()) as Record<string, unknown>[];
+      expect(body[0]?.output).toEqual(marker);
+      expect(body[1]?.output).toEqual({ results: "x".repeat(64) });
     });
   });
 

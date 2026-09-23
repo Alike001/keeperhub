@@ -42,6 +42,11 @@ import {
 import { cn } from "@/lib/utils";
 import { getRelativeTime } from "@/lib/utils/time";
 import {
+  formatStoredBytes,
+  isTruncatedOutput,
+  MAX_STORED_OUTPUT_BYTES,
+} from "@/lib/workflow/output-limits";
+import {
   currentWorkflowIdAtom,
   executionLogsAtom,
   propertiesPanelActiveTabAtom,
@@ -472,6 +477,23 @@ function CollapsibleSection({
 }
 
 // Component for rendering output with rich display support
+// A step payload the server withheld because it is past the stored-output
+// limit. There is nothing to expand: only the size is known.
+function TruncatedDataNotice({
+  title,
+  bytes,
+}: {
+  title: string;
+  bytes: number;
+}) {
+  return (
+    <div className="rounded-lg border bg-muted/30 px-3 py-2 text-muted-foreground text-xs">
+      {title} too large to display ({formatStoredBytes(bytes)}). The step
+      output limit is {formatStoredBytes(MAX_STORED_OUTPUT_BYTES)}.
+    </div>
+  );
+}
+
 function OutputDisplay({
   output,
   input,
@@ -891,16 +913,32 @@ function ExecutionLogEntry({
 
         {isExpanded && (
           <div className="mt-2 mb-2 space-y-3 px-3">
-            {log.input !== null && log.input !== undefined && (
-              <CollapsibleSection copyData={log.input} title="Input">
-                <pre className="overflow-auto rounded-lg border bg-muted/50 p-3 font-mono text-xs leading-relaxed">
-                  <JsonWithLinks data={log.input} />
-                </pre>
-              </CollapsibleSection>
+            {isTruncatedOutput(log.input) ? (
+              <TruncatedDataNotice
+                bytes={log.input.originalSize}
+                title="Input"
+              />
+            ) : (
+              log.input !== null &&
+              log.input !== undefined && (
+                <CollapsibleSection copyData={log.input} title="Input">
+                  <pre className="overflow-auto rounded-lg border bg-muted/50 p-3 font-mono text-xs leading-relaxed">
+                    <JsonWithLinks data={log.input} />
+                  </pre>
+                </CollapsibleSection>
+              )
             )}
             {middleContent}
-            {log.output !== null && log.output !== undefined && (
-              <OutputDisplay input={log.input} output={log.output} />
+            {isTruncatedOutput(log.output) ? (
+              <TruncatedDataNotice
+                bytes={log.output.originalSize}
+                title="Output"
+              />
+            ) : (
+              log.output !== null &&
+              log.output !== undefined && (
+                <OutputDisplay input={log.input} output={log.output} />
+              )
             )}
             {log.error && (
               <CollapsibleSection
