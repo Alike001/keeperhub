@@ -345,10 +345,25 @@ export async function buildActionSchemasResponse(
     actions = matched === undefined ? {} : { [typeFilter]: matched };
   }
 
+  // An unrecognised filter otherwise returns an empty map with a 200, which
+  // reads as "this action does not exist" rather than "that is not a
+  // category". Name the valid ones so the caller can correct the filter.
+  const unmatchedFilter =
+    Object.keys(actions).length === 0 && (categoryFilter || typeFilter)
+      ? {
+          availableCategories: [
+            ...allPlugins.map((plugin) => plugin.type),
+            "system",
+            "triggers",
+          ].sort(),
+        }
+      : {};
+
   return {
     version: "1.0.0",
     generatedAt: new Date().toISOString(),
     actions,
+    ...unmatchedFilter,
     triggers,
     chains: chainList,
     platform: platformCapabilities,

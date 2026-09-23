@@ -41,22 +41,33 @@ const DECIMAL_PATTERN = /^\d+(?:\.\d+)?$/;
 // Matches the 500-char cap in export-schema.ts but shorter for readability.
 const NODE_LABEL_MAX_CHARS = 100;
 
-function sanitiseNodeLabel(label: string): string {
-  // A label is interpolated into a single-line summary, so nothing
+// An UNKNOWN_FIELD issue carries a config key the caller chose, so field names
+// are sanitised on the same path as labels, with a tighter cap.
+const FIELD_NAME_MAX_CHARS = 40;
+
+// Per-node field names rendered into the message before it elides the rest.
+const SUMMARY_FIELDS_PER_NODE = 3;
+
+function sanitiseSummaryText(text: string, maxChars: number): string {
+  // The text is interpolated into a single-line summary, so nothing
   // whitespace-like survives, and a removed character leaves a space rather
   // than joining the words either side of it into one.
-  let stripped = stripControlChars(label, { replacement: " " });
-  // Escape format delimiters to prevent a malicious label from rendering a
+  let stripped = stripControlChars(text, { replacement: " " });
+  // Escape format delimiters to prevent malicious text from rendering a
   // convincing fake entry in the summary.
   stripped = stripped
     .replace(/"/g, "'")
     .replace(/\(/g, "[")
     .replace(/\)/g, "]");
   stripped = stripped.trim();
-  if (stripped.length > NODE_LABEL_MAX_CHARS) {
-    return `${stripped.slice(0, NODE_LABEL_MAX_CHARS - 3)}...`;
+  if (stripped.length > maxChars) {
+    return `${stripped.slice(0, maxChars - 3)}...`;
   }
   return stripped;
+}
+
+function sanitiseNodeLabel(label: string): string {
+  return sanitiseSummaryText(label, NODE_LABEL_MAX_CHARS);
 }
 
 export type ActionConfigValidationIssueCode =
@@ -703,28 +714,51 @@ export function hasDraftActionNodes(
   return false;
 }
 
+// Renders the field names behind a node's issues, so a consumer that surfaces
+// only `message` still learns which fields to fix.
+function formatNodeFields(fields: string[], count: number): string {
+  if (fields.length === 0) {
+    return count > 1 ? ` (${count} issues)` : "";
+  }
+  const shown = fields.slice(0, SUMMARY_FIELDS_PER_NODE);
+  const hidden = fields.length - shown.length;
+  const list =
+    hidden > 0 ? `${shown.join(", ")} +${hidden} more` : shown.join(", ");
+  return ` (${list})`;
+}
+
 export function formatActionConfigValidationResponse(
   validation: ActionConfigValidationResult
 ) {
   const summary =
     validation.issues.length > 0
       ? (() => {
-          const labels = new Map<string, { count: number; fallback: string }>();
+          const labels = new Map<
+            string,
+            { count: number; fallback: string; fields: Set<string> }
+          >();
           for (const issue of validation.issues) {
             const raw = issue.nodeLabel ?? issue.nodeId ?? issue.path;
             const existing = labels.get(raw);
-            if (existing) {
-              existing.count++;
-            } else {
-              labels.set(raw, {
-                count: 1,
-                fallback: issue.nodeId ?? issue.path,
-              });
+            const entry = existing ?? {
+              count: 0,
+              fallback: issue.nodeId ?? issue.path,
+              fields: new Set<string>(),
+            };
+            entry.count++;
+            const field = issue.field
+              ? sanitiseSummaryText(issue.field, FIELD_NAME_MAX_CHARS)
+              : "";
+            if (field) {
+              entry.fields.add(field);
+            }
+            if (!existing) {
+              labels.set(raw, entry);
             }
           }
           const entries: string[] = [];
           let shown = 0;
-          for (const [raw, { count, fallback }] of labels) {
+          for (const [raw, { count, fallback, fields }] of labels) {
             if (shown >= 3) {
               entries.push(`and ${labels.size - 3} more`);
               break;
@@ -733,9 +767,7 @@ export function formatActionConfigValidationResponse(
             if (!label.trim()) {
               label = fallback;
             }
-            entries.push(
-              count > 1 ? `"${label}" (${count} issues)` : `"${label}"`
-            );
+            entries.push(`"${label}"${formatNodeFields([...fields], count)}`);
             shown++;
           }
           return `Invalid node(s): ${entries.join(", ")}. `;

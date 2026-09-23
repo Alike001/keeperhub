@@ -1714,6 +1714,102 @@ describe("formatActionConfigValidationResponse", () => {
       ],
     });
 
-    expect(result.message).toContain('"Send Notification" (2 issues)');
+    expect(result.message).toContain('"Send Notification" (a, b)');
+  });
+
+  it("names the missing fields in the top-level message", () => {
+    const validation = validateWorkflowActionConfigs([
+      {
+        id: "hash-probe",
+        type: "action",
+        data: {
+          label: "Hash Probe",
+          type: "action",
+          config: {
+            actionType: "data/hash",
+            algorithm: "keccak256",
+            value: "frob(bytes32,address)",
+          },
+        },
+      },
+    ]);
+
+    expect(formatActionConfigValidationResponse(validation).message).toContain(
+      '"Hash Probe" (inputEncoding)'
+    );
+  });
+
+  it("elides field names past the third for one node", () => {
+    const result = formatActionConfigValidationResponse({
+      valid: false,
+      issues: ["a", "b", "c", "d", "e"].map((field) => ({
+        code: "MISSING_REQUIRED_FIELD" as const,
+        path: `nodes[0].data.config.${field}`,
+        actionType: "discord/send-message",
+        field,
+        message: `Missing ${field}`,
+        nodeLabel: "Send Notification",
+      })),
+    });
+
+    expect(result.message).toContain('"Send Notification" (a, b, c +2 more)');
+  });
+
+  it("falls back to the issue count when no issue carries a field", () => {
+    const result = formatActionConfigValidationResponse({
+      valid: false,
+      issues: [
+        {
+          code: "UNKNOWN_ACTION_TYPE",
+          path: "nodes[0].data.config.actionType",
+          message: "Unknown action type",
+          nodeLabel: "Mystery Node",
+        },
+        {
+          code: "UNKNOWN_ACTION_TYPE",
+          path: "nodes[0].data.config.actionType",
+          message: "Unknown action type",
+          nodeLabel: "Mystery Node",
+        },
+      ],
+    });
+
+    expect(result.message).toContain('"Mystery Node" (2 issues)');
+  });
+
+  it("escapes format delimiters in field names to prevent fake entries", () => {
+    const result = formatActionConfigValidationResponse({
+      valid: false,
+      issues: [
+        {
+          code: "UNKNOWN_FIELD",
+          path: "nodes[0].data.config.bogus",
+          actionType: "discord/send-message",
+          field: 'x") (webhook/send',
+          message: "Unknown field",
+          nodeLabel: "Send Notification",
+        },
+      ],
+    });
+
+    expect(result.message).toContain("(x'] [webhook/send)");
+  });
+
+  it("caps field names in the summary", () => {
+    const result = formatActionConfigValidationResponse({
+      valid: false,
+      issues: [
+        {
+          code: "UNKNOWN_FIELD",
+          path: "nodes[0].data.config.bogus",
+          actionType: "discord/send-message",
+          field: "B".repeat(200),
+          message: "Unknown field",
+          nodeLabel: "Send Notification",
+        },
+      ],
+    });
+
+    expect(result.message).not.toContain("B".repeat(41));
   });
 });
