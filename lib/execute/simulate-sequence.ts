@@ -501,12 +501,13 @@ export async function simulateCallSequence(
       // The fallback is pinned for the process lifetime, and the result
       // message reaches only the caller, so an operator would otherwise never
       // learn that this chain's node stopped answering eth_simulateV1.
-      // Log the flip once, here, where the pin happens.
+      // Log the flip here, where the pin happens: once per process per chain,
+      // best-effort (a concurrent first-use race can log it twice).
       logSystemWarn(
         ErrorCategory.NETWORK_RPC,
         `[SimulateSequence] chain ${chainId} does not answer eth_simulateV1; degraded to the state-overrides fallback for the process lifetime`,
         err,
-        { chainId: String(chainId) }
+        { chain_id: String(chainId) }
       );
       mechanism = "state-overrides";
       mechanismByChain.set(chainId, "state-overrides");

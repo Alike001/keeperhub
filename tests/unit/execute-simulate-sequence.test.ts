@@ -419,7 +419,7 @@ describe("simulateCallSequence on a node without eth_simulateV1", () => {
     expect(category).toBe("network_rpc");
     expect(String(message)).toContain("eth_simulateV1");
     expect(error).toBeDefined();
-    expect(labels).toEqual({ chainId: "84532" });
+    expect(labels).toEqual({ chain_id: "84532" });
 
     // The pinned fallback path stays silent: the warning fires only at the flip.
     const second = await run();
