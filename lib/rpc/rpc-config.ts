@@ -108,9 +108,18 @@ export const PUBLIC_RPCS = {
   // resolves too, unlike pre-launch, so it serves as publicFallback.
   ARC_MAINNET: "https://rpc.mainnet.arc.io",
   ARC_MAINNET_FALLBACK: "https://rpc.drpc.mainnet.arc.io",
-  // Blockdaemon's endpoint completes the WSS upgrade handshake with no API
-  // key required, unlike the Alchemy/QuickNode mirrors docs.arc.io lists.
-  ARC_MAINNET_WSS: "wss://rpc.blockdaemon.mainnet.arc.io/websocket",
+  // Circle's own host, mirroring the HTTP primary and the testnet WSS
+  // pattern. Blockdaemon's endpoint also completes the WSS upgrade with no
+  // API key required (unlike the Alchemy/QuickNode mirrors docs.arc.io
+  // lists), so it serves as the WSS fallback rather than the sole source.
+  ARC_MAINNET_WSS: "wss://rpc.mainnet.arc.io",
+  // Blockdaemon's socket idles out (code 1006) after ~61s of no outbound
+  // traffic, vs. 75s+ observed on Circle's. Both consumers ping every 30s: the
+  // event tracker's HEARTBEAT_INTERVAL_MS (provider-manager.ts) and the
+  // scheduler's PING_INTERVAL_MS (chain-monitor.ts, env-overridable), giving
+  // ~2x margin on both, but raising either above ~60s would make this
+  // fallback churn every minute.
+  ARC_MAINNET_WSS_FALLBACK: "wss://rpc.blockdaemon.mainnet.arc.io/websocket",
 } as const;
 
 /**
@@ -336,6 +345,7 @@ export const CHAIN_CONFIG: Record<number, ChainConfigEntry> = {
     publicDefault: PUBLIC_RPCS.ARC_MAINNET,
     publicFallback: PUBLIC_RPCS.ARC_MAINNET_FALLBACK,
     publicWssDefault: PUBLIC_RPCS.ARC_MAINNET_WSS,
+    publicWssFallback: PUBLIC_RPCS.ARC_MAINNET_WSS_FALLBACK,
   },
 };
 
