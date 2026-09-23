@@ -1,6 +1,7 @@
 import { ADDRESS_BOOK_SELECTION_KEY } from "@/lib/address-book-selection";
+import { stripControlChars } from "@/lib/utils/control-chars";
+import { EVM_ADDRESS_RE } from "@/lib/web3/address";
 import {
-  ETH_ADDRESS_PATTERN,
   HEX_BYTES_PATTERN,
   INTEGER_PATTERN,
   UNSIGNED_INTEGER_PATTERN,
@@ -12,6 +13,7 @@ import {
   type ActionConfigFieldBase,
   findActionById,
   getAllActions,
+  isDisplayOnlyField,
 } from "@/plugins/registry";
 
 // Built from the shared union so this validator, the executor dispatch table,
@@ -39,20 +41,11 @@ const DECIMAL_PATTERN = /^\d+(?:\.\d+)?$/;
 // Matches the 500-char cap in export-schema.ts but shorter for readability.
 const NODE_LABEL_MAX_CHARS = 100;
 
-// Control characters, Unicode bidi overrides and isolates that can inject
-// invisible text or alter rendering order in error messages. Stripped from
-// node labels before interpolation into the summary.
-//
-// Covers: C0 + DEL + C1 controls, line/paragraph separators, zero-width
-// chars (ZWSP/ZWNJ/ZWJ/LRM/RLM), bidi overrides (LRE/RLE/PDF/LRO/RLO),
-// bidi isolates (LRI/RLI/FSI/PDI), Arabic letter mark, BOM, and soft
-// hyphen.
-const NODE_LABEL_CONTROL_CHARS_RE =
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control chars + Unicode separators + bidi-overrides/isolates to neutralise log-injection / hidden-text vectors before rendering upstream-supplied strings
-  /[\u0000-\u001f\u007f-\u009f\u00ad\ufeff\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
-
 function sanitiseNodeLabel(label: string): string {
-  let stripped = label.replace(NODE_LABEL_CONTROL_CHARS_RE, " ");
+  // A label is interpolated into a single-line summary, so nothing
+  // whitespace-like survives, and a removed character leaves a space rather
+  // than joining the words either side of it into one.
+  let stripped = stripControlChars(label, { replacement: " " });
   // Escape format delimiters to prevent a malicious label from rendering a
   // convincing fake entry in the summary.
   stripped = stripped
@@ -362,9 +355,16 @@ function validateFieldValue(
       if (!validateStringLike(value)) {
         return { valid: false, expected: "select option", received: value };
       }
+      // A template resolves at run time, so its text is never one of the
+      // options and cannot be checked here. That is only allowed where the
+      // field opted in: a select's options are a promise to the step, and
+      // waiving it for every select in the product would let a template steer
+      // fields like robinhood's buy/sell `side`, which treats anything that
+      // is not "buy" as a sell.
       if (
         field.options &&
         field.options.length > 0 &&
+        !(field.allowTemplate && valueContainsTemplate(value)) &&
         !field.options.some((option) => option.value === String(value))
       ) {
         return {
@@ -392,7 +392,7 @@ function validateFieldValue(
       return { valid: true };
     case "protocol-address":
       return typeof value === "string" &&
-        (valueContainsTemplate(value) || ETH_ADDRESS_PATTERN.test(value))
+        (valueContainsTemplate(value) || EVM_ADDRESS_RE.test(value))
         ? { valid: true }
         : { valid: false, expected: "address", received: value };
     case "protocol-uint":
@@ -462,7 +462,7 @@ function validateFieldValue(
     default:
       if (field.isAddressField) {
         return typeof value === "string" &&
-          (valueContainsTemplate(value) || ETH_ADDRESS_PATTERN.test(value))
+          (valueContainsTemplate(value) || EVM_ADDRESS_RE.test(value))
           ? { valid: true }
           : { valid: false, expected: "address", received: value };
       }
@@ -563,6 +563,14 @@ export function validateWorkflowActionConfigs(
     }
 
     for (const field of fields) {
+      // A field that renders rather than collects has no value to validate,
+      // and cannot be required. Nothing writes under these keys today, so
+      // this is not a live fault - but the AI-prompt and pin-schema paths both
+      // had to learn the same exception, and a display panel that ever
+      // persisted anything would otherwise start blocking saves.
+      if (isDisplayOnlyField(field.type)) {
+        continue;
+      }
       if (!evaluateShowWhen(field.showWhen, config)) {
         continue;
       }
