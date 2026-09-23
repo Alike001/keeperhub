@@ -4,6 +4,7 @@ import {
   type ExecutionPage,
   emptyExecutionPage,
   mergeFirstPage,
+  nextPageSize,
   replacePage,
 } from "@/lib/workflow/execution-page-merge";
 
@@ -184,6 +185,18 @@ describe("mergeFirstPage", () => {
     const afterB = mergeFirstPage(afterA, pollB);
     expect(afterB.executions.map((run) => run.id)).toEqual(["b1"]);
     expect(afterB.total).toBe(1);
+  });
+});
+
+describe("nextPageSize", () => {
+  it.each([
+    ["a full page remains", 56, 20, 20],
+    ["a partial last page remains", 56, 40, 16],
+    ["a new run arrived on top and is already on screen", 57, 41, 16],
+    ["everything is loaded", 56, 56, 0],
+    ["a purge left fewer runs than are shown", 0, 2, 0],
+  ])("%s: total %i, loaded %i -> %i", (_label, total, loaded, expected) => {
+    expect(nextPageSize(total, loaded, 20)).toBe(expected);
   });
 });
 

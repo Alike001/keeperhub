@@ -43,6 +43,7 @@ import {
   emptyExecutionPage,
   type ExecutionPage,
   mergeFirstPage,
+  nextPageSize,
   replacePage,
 } from "@/lib/workflow/execution-page-merge";
 import {
@@ -983,6 +984,7 @@ export function WorkflowRuns({
     emptyExecutionPage(currentWorkflowId)
   );
   const { executions, nextCursor, total } = runs;
+  const nextPageCount = nextPageSize(total, executions.length, RUNS_PAGE_SIZE);
 
   // The workflow whose runs are on screen. Every fetch captures the id it was
   // made for and applies its result only while this still matches, so a slow
@@ -1569,7 +1571,7 @@ export function WorkflowRuns({
           </div>
         );
       })}
-      {nextCursor !== null && (
+      {nextCursor !== null && nextPageCount > 0 && (
         <Button
           className="w-full"
           disabled={loadingMore}
@@ -1578,11 +1580,7 @@ export function WorkflowRuns({
           type="button"
           variant="outline"
         >
-          {loadingMore ? (
-            <Spinner />
-          ) : (
-            `Load more (${Math.max(total - executions.length, 0)} older)`
-          )}
+          {loadingMore ? <Spinner /> : `Load ${nextPageCount} more`}
         </Button>
       )}
     </div>

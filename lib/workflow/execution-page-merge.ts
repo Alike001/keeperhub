@@ -65,6 +65,20 @@ export function mergeFirstPage<T extends { id: string }>(
   };
 }
 
+/**
+ * How many runs the next cursor fetch will return: the runs not yet on
+ * screen, at most one page. A poll that prepends a new run raises the total
+ * and the loaded count together, so the number holds steady; it is 0 once
+ * everything is loaded, or when a purge leaves fewer runs than are shown.
+ */
+export function nextPageSize(
+  total: number,
+  loadedCount: number,
+  pageSize: number
+): number {
+  return Math.max(0, Math.min(total - loadedCount, pageSize));
+}
+
 /** Append an older page fetched with the stored cursor. */
 export function appendPage<T extends { id: string }>(
   loaded: ExecutionPage<T>,
