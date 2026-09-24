@@ -4,22 +4,25 @@
  * and never accepts the flag and broadcasts."
  *
  * The route list is NOT maintained by hand here. The first test walks
- * app/api/execute on the filesystem for every route.ts, and each discovered
+ * app/api/execute on the filesystem for every route file, and each discovered
  * route must appear in ROUTE_STANCES below -- a new route file cannot merge
  * without declaring (and wiring) exactly one of:
  *
- *   - honors-body:  body simulate:true dry-runs; a query flag and a
- *     mistyped flag are 400s; the broadcast cores are unreachable whenever
- *     a flag is present
+ *   - honors-body:  top-level body simulate:true dry-runs; a query flag, a
+ *     nested flag, and a mistyped flag are 400s; the broadcast cores are
+ *     unreachable whenever a flag is refused
  *   - refuses:      body AND query `simulate` are both 400s before any
  *     reservation, execution row, or broadcast
  *   - stub-501:     the route never reads a body and answers 501, so it
  *     cannot broadcast by construction; the query flag is still a 400
  *   - read-only-get: no POST handler exists; the query flag is still a 400
  *
- * The per-stance assertions iterate over the manifest, so a route declared
- * here automatically gets its behavioural checks -- declaring a stance
- * without wiring the guard fails this suite.
+ * `simulate: false` (and `?simulate=false`) is accepted wherever the flag
+ * is otherwise refused: it asks for the real execution the route performs.
+ *
+ * Every route with a stance must have a harness for that stance (asserted
+ * in Part 1), so declaring a stance without wiring the guard fails this
+ * suite.
  *
  * The honouring routes' simulate-path details (response shapes, revert
  * surfaces, token transfers) live in
@@ -43,9 +46,12 @@ const EXECUTE_DIR = fileURLToPath(
   new URL("../../app/api/execute", import.meta.url)
 );
 
-// Returns sorted route keys: app/api/execute/<key>/route.ts, relative to the
-// execute dir, with the route.ts segment stripped. Underscore-prefixed dirs
-// (_lib and friends) are not route segments.
+// Every extension the App Router serves a route handler from.
+const ROUTE_FILE = /^route\.(ts|tsx|js|jsx|mjs)$/;
+
+// Returns sorted route keys: app/api/execute/<key>/route.<ext>, relative to
+// the execute dir, with the route file segment stripped. Underscore-prefixed
+// dirs (_lib and friends) are not route segments.
 function discoverExecuteRoutes(): string[] {
   const found: string[] = [];
   const walk = (dir: string): void => {
@@ -58,7 +64,7 @@ function discoverExecuteRoutes(): string[] {
         walk(full);
         continue;
       }
-      if (entry.name === "route.ts") {
+      if (ROUTE_FILE.test(entry.name)) {
         const segments = path.relative(EXECUTE_DIR, full).split(path.sep);
         found.push(segments.slice(0, -1).join("/"));
       }
@@ -213,8 +219,8 @@ vi.mock("@/lib/abi/cache", () => ({
   resolveAbi: vi.fn(() => Promise.resolve({ abi: "[]" })),
 }));
 
-vi.mock("@/lib/abi/utils", () => ({
-  findAbiFunction: (_abi: unknown, name: string) => {
+vi.mock("@/lib/abi/utils", () => {
+  const findAbiFunction = (_abi: unknown, name: string) => {
     if (name === "setValue") {
       return { name, type: "function", stateMutability: "nonpayable" };
     }
@@ -227,8 +233,21 @@ vi.mock("@/lib/abi/utils", () => ({
       };
     }
     return;
-  },
-}));
+  };
+  // Same shape as the mock in execute-simulate-route.test.ts: the routes
+  // resolve through resolveAbiFunction, and no fixture here has an overload.
+  return {
+    findAbiFunction,
+    resolveAbiFunction: (abi: unknown, name: string) => {
+      const entry = findAbiFunction(abi, name);
+      return entry
+        ? { status: "found", entry, canonicalKey: name }
+        : { status: "not_found" };
+    },
+    describeAmbiguousKey: (key: string) =>
+      `Function '${key}' matches several overloads in this ABI`,
+  };
+});
 
 vi.mock("../../app/api/execute/_lib/condition", () => ({
   evaluateCondition: () => ({ met: true }),
@@ -420,6 +439,21 @@ const REFUSING_HARNESSES: Record<string, RefusingHarness> = {
   },
 };
 
+// Routes that cannot broadcast: only the query refusal applies to them.
+const QUERY_ONLY_HARNESSES: Record<
+  string,
+  (query: string) => Promise<Response>
+> = {
+  swap: (query) => swapPOST(jsonRequest(`/api/execute/swap${query}`, {})),
+  "[executionId]/status": (query) =>
+    statusGET(
+      new Request(`http://localhost/api/execute/exec_1/status${query}`, {
+        method: "GET",
+      }),
+      { params: Promise.resolve({ executionId: "exec_1" }) }
+    ),
+};
+
 const {
   checkAndReserveExecution,
   markRunning,
@@ -449,16 +483,35 @@ function expectNoBroadcastSideEffects(): void {
   expect(stepFn).not.toHaveBeenCalled();
 }
 
-async function expectUnsupportedParam(res: Response): Promise<void> {
+async function expectUnsupportedParam(
+  res: Response,
+  field = "simulate"
+): Promise<Record<string, unknown>> {
   expect(res.status).toBe(400);
   const body = (await res.json()) as Record<string, unknown>;
   expect(body.code).toBe("unsupported_param");
-  expect(body.field).toBe("simulate");
-  // The refusal names the routes that do honour a dry run, so a caller
-  // holding the flag in the wrong place knows where it belongs.
+  expect(body.field).toBe(field);
+  return body;
+}
+
+// The refusal names the routes that do honour a dry run, so a caller
+// holding the flag in the wrong place knows where it belongs.
+async function expectRefusalNamingDryRunRoutes(
+  res: Response,
+  field = "simulate"
+): Promise<void> {
+  const body = await expectUnsupportedParam(res, field);
   expect(String(body.error)).toContain("/api/execute/transfer");
   expect(String(body.error)).toContain("/api/execute/contract-call");
   expect(String(body.error)).toContain("/api/execute/check-and-execute");
+}
+
+// `false` asks for the real execution, so the request must get past every
+// simulate guard and reach the reservation that precedes a broadcast.
+async function expectNotRefused(res: Response): Promise<void> {
+  const body = (await res.clone().json()) as Record<string, unknown>;
+  expect(body.code).not.toBe("unsupported_param");
+  expect(checkAndReserveExecution).toHaveBeenCalledTimes(1);
 }
 
 beforeEach(() => {
@@ -472,6 +525,15 @@ beforeEach(() => {
     executionId: "exec_1",
   });
   createExecution.mockResolvedValue({ executionId: "exec_1" });
+  // Accepted requests (simulate:false) run to completion; refused ones must
+  // never reach these, which expectNoBroadcastSideEffects asserts.
+  for (const core of [
+    writeContractCore,
+    transferFundsCore,
+    transferTokenCore,
+  ]) {
+    core.mockResolvedValue({ success: true, transactionHash: "0x01" });
+  }
   resolveAction.mockImplementation((actionType: string) => ({
     actionType,
     label: "Test Action",
@@ -496,6 +558,24 @@ describe("#2004 route discovery", () => {
     // Both directions: a new route file cannot appear without a stance, and
     // a deleted route cannot leave a stale one behind.
     expect(discovered).toEqual(declared);
+  });
+
+  it("every declared stance is exercised by a harness for that stance", () => {
+    const routesWith = (...stances: SimulateStance[]) =>
+      Object.entries(ROUTE_STANCES)
+        .filter(([, s]) => stances.includes(s.stance))
+        .map(([key]) => key)
+        .sort();
+
+    expect(Object.keys(HONORING_HARNESSES).sort()).toEqual(
+      routesWith("honors-body")
+    );
+    expect(Object.keys(REFUSING_HARNESSES).sort()).toEqual(
+      routesWith("refuses")
+    );
+    expect(Object.keys(QUERY_ONLY_HARNESSES).sort()).toEqual(
+      routesWith("stub-501", "read-only-get")
+    );
   });
 
   it("the refusal messages name exactly the routes that honour a dry run", () => {
@@ -542,7 +622,7 @@ describe("#2004 honouring routes", () => {
           harness.happyBody
         );
 
-        await expectUnsupportedParam(res);
+        await expectRefusalNamingDryRunRoutes(res);
         expect(harness.simulator).not.toHaveBeenCalled();
         expectNoBroadcastSideEffects();
       });
@@ -557,8 +637,60 @@ describe("#2004 honouring routes", () => {
         expect(harness.simulator).not.toHaveBeenCalled();
         expectNoBroadcastSideEffects();
       });
+
+      it("the query key is matched case-insensitively: ?SIMULATE=true is a 400", async () => {
+        const res = await harness.post(
+          `/api/execute/${routeKey}?SIMULATE=true`,
+          harness.happyBody
+        );
+
+        await expectRefusalNamingDryRunRoutes(res);
+        expectNoBroadcastSideEffects();
+      });
+
+      it("?simulate=false is accepted: it asks for the real execution", async () => {
+        harness.arrange();
+
+        const res = await harness.post(
+          `/api/execute/${routeKey}?simulate=false`,
+          harness.happyBody
+        );
+
+        await expectNotRefused(res);
+        expect(harness.simulator).not.toHaveBeenCalled();
+      });
     });
   }
+});
+
+describe("#2004 check-and-execute reads simulate only at the top level", () => {
+  const harness = HONORING_HARNESSES["check-and-execute"];
+  const action = harness.happyBody.action as Record<string, unknown>;
+
+  it("action.simulate:true is a 400, not a broadcast of the action", async () => {
+    const res = await harness.post("/api/execute/check-and-execute", {
+      ...harness.happyBody,
+      action: { ...action, simulate: true },
+    });
+
+    await expectUnsupportedParam(res, "action.simulate");
+    expect(harness.simulator).not.toHaveBeenCalled();
+    expectNoBroadcastSideEffects();
+  });
+
+  it("action.simulate:false is accepted", async () => {
+    spies.readContractCore.mockResolvedValueOnce({
+      success: true,
+      result: 100,
+    });
+
+    const res = await harness.post("/api/execute/check-and-execute", {
+      ...harness.happyBody,
+      action: { ...action, simulate: false },
+    });
+
+    await expectNotRefused(res);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -574,7 +706,7 @@ describe("#2004 refusing routes", () => {
           simulate: true,
         });
 
-        await expectUnsupportedParam(res);
+        await expectRefusalNamingDryRunRoutes(res);
         expectNoBroadcastSideEffects();
       });
 
@@ -594,8 +726,26 @@ describe("#2004 refusing routes", () => {
           harness.executableBody
         );
 
-        await expectUnsupportedParam(res);
+        await expectRefusalNamingDryRunRoutes(res);
         expectNoBroadcastSideEffects();
+      });
+
+      it("body simulate:false is accepted: it asks for the real execution", async () => {
+        const res = await harness.post(`/api/execute/${routeKey}`, {
+          ...harness.executableBody,
+          simulate: false,
+        });
+
+        await expectNotRefused(res);
+      });
+
+      it("?simulate=false is accepted", async () => {
+        const res = await harness.post(
+          `/api/execute/${routeKey}?simulate=false`,
+          harness.executableBody
+        );
+
+        await expectNotRefused(res);
       });
     });
   }
@@ -612,8 +762,38 @@ describe("#2004 refusing routes", () => {
       { params: Promise.resolve({ slug: ["test-protocol", "swap"] }) }
     );
 
-    await expectUnsupportedParam(res);
+    await expectRefusalNamingDryRunRoutes(res);
     expectNoBroadcastSideEffects();
+  });
+
+  it("node: config.simulate:true is a 400 before the step runs", async () => {
+    const { executableBody } = REFUSING_HARNESSES.node;
+    const config = executableBody.config as Record<string, unknown>;
+
+    const res = await nodePOST(
+      jsonRequest("/api/execute/node", {
+        ...executableBody,
+        config: { ...config, simulate: true },
+      })
+    );
+
+    await expectRefusalNamingDryRunRoutes(res, "config.simulate");
+    expectNoBroadcastSideEffects();
+  });
+
+  it("node: config.simulate:false is accepted and the step runs", async () => {
+    const { executableBody } = REFUSING_HARNESSES.node;
+    const config = executableBody.config as Record<string, unknown>;
+
+    const res = await nodePOST(
+      jsonRequest("/api/execute/node", {
+        ...executableBody,
+        config: { ...config, simulate: false },
+      })
+    );
+
+    await expectNotRefused(res);
+    expect(stepFn).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -623,25 +803,14 @@ describe("#2004 refusing routes", () => {
 // ---------------------------------------------------------------------------
 
 describe("#2004 non-broadcast routes still refuse the query flag", () => {
-  it("swap: ?simulate=true is a 400, not the 501", async () => {
-    const res = await swapPOST(
-      jsonRequest("/api/execute/swap?simulate=true", {})
-    );
-    await expectUnsupportedParam(res);
-  });
+  for (const [routeKey, send] of Object.entries(QUERY_ONLY_HARNESSES)) {
+    it(`${routeKey}: ?simulate=true is a 400`, async () => {
+      await expectRefusalNamingDryRunRoutes(await send("?simulate=true"));
+    });
+  }
 
   it("swap: without the flag the stub still answers 501", async () => {
-    const res = await swapPOST(jsonRequest("/api/execute/swap", {}));
+    const res = await QUERY_ONLY_HARNESSES.swap("");
     expect(res.status).toBe(501);
-  });
-
-  it("[executionId]/status: GET ?simulate=true is a 400", async () => {
-    const res = await statusGET(
-      new Request("http://localhost/api/execute/exec_1/status?simulate=true", {
-        method: "GET",
-      }),
-      { params: Promise.resolve({ executionId: "exec_1" }) }
-    );
-    await expectUnsupportedParam(res);
   });
 });

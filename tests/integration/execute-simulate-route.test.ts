@@ -319,12 +319,12 @@ describe("/api/execute/contract-call simulate", () => {
     expect(writeContractCore).not.toHaveBeenCalled();
   });
 
-  it("rejects ?simulate=false and ?simulate= the same as ?simulate=true", async () => {
+  it("rejects ?simulate= and ?simulate=0 the same as ?simulate=true", async () => {
     resetSpies();
-    // Any `simulate` query key is refused -- a "false" or empty value must
-    // not read as "no dry run requested" when the caller is plainly holding
-    // the flag in the wrong place.
-    for (const query of ["?simulate=false", "?simulate="]) {
+    // Only the exact value "false" passes (it asks for the broadcast this
+    // request performs); an empty or mistyped value is refused rather than
+    // guessed at, matching the strict-boolean body flag.
+    for (const query of ["?simulate=", "?simulate=0", "?simulate=False"]) {
       const res = await contractCallPOST(
         jsonRequest(`/api/execute/contract-call${query}`, {
           contractAddress: "0xbb0000000000000000000000000000000000bb00",

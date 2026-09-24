@@ -15,6 +15,14 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
+  // #2004: ?simulate= is refused rather than ignored on every /api/execute/*
+  // route, including this stub. The body is never read here, so there is no
+  // body flag to refuse -- the 501 already refuses everything.
+  const simulateQuery = rejectSimulateQuery(request);
+  if (simulateQuery) {
+    return simulateQuery;
+  }
+
   const scopeError = requireScope(apiKeyCtx.scope, SCOPE_MCP_WRITE, {
     organizationId: apiKeyCtx.organizationId,
     credentialId: apiKeyCtx.apiKeyId,
@@ -23,14 +31,6 @@ export async function POST(request: Request): Promise<NextResponse> {
   });
   if (scopeError) {
     return scopeError;
-  }
-
-  // #2004: ?simulate= is refused rather than ignored on every /api/execute/*
-  // route, including this stub. The body is never read here, so there is no
-  // body flag to refuse -- the 501 already refuses everything.
-  const simulateQuery = rejectSimulateQuery(request);
-  if (simulateQuery) {
-    return simulateQuery;
   }
 
   return NextResponse.json({ message: "Coming soon" }, { status: 501 });

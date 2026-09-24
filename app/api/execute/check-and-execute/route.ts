@@ -36,7 +36,11 @@ import {
 } from "../_lib/execution-service";
 import { readGasLimitMultiplier } from "../_lib/gas-limit-multiplier";
 import { checkRateLimit } from "../_lib/rate-limit";
-import { parseSimulateFlag, rejectSimulateQuery } from "../_lib/simulate-flag";
+import {
+  parseSimulateFlag,
+  rejectNestedSimulate,
+  rejectSimulateQuery,
+} from "../_lib/simulate-flag";
 import { checkAndReserveExecution } from "../_lib/spending-cap";
 import { validateCheckAndExecuteInput } from "../_lib/validate";
 import { requireWallet } from "../_lib/wallet-check";
@@ -377,6 +381,13 @@ export async function POST(request: Request): Promise<NextResponse> {
       { error: simulateFlag.error, field: "simulate" },
       { status: HttpStatus.BAD_REQUEST }
     );
+  }
+
+  // #2004: only the top-level flag is read. `action.simulate` used to be
+  // ignored while the action broadcast for real.
+  const nestedSimulate = rejectNestedSimulate(body, "action");
+  if (nestedSimulate) {
+    return nestedSimulate;
   }
 
   // A dry run never signs, broadcasts, or reserves, so mcp:read satisfies it.

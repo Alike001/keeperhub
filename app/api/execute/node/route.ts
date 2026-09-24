@@ -641,9 +641,12 @@ export async function POST(request: Request): Promise<NextResponse> {
   // #2004: this route has no dry-run support. A top-level `simulate` used to
   // be dropped by validateRequest's fixed whitelist and the step broadcast
   // for real -- the same accept-and-broadcast defect as the protocol route,
-  // reached through a different mechanism. Refuse it loudly, before the
-  // whitelist and before the idempotency key is reserved.
-  const simulateBody = refuseSimulateBody(body);
+  // reached through a different mechanism. `config.simulate` survives the
+  // whitelist and stripReservedConfig and reaches the step, which ignores it.
+  // Refuse both loudly, before the whitelist and before the idempotency key
+  // is reserved.
+  const simulateBody =
+    refuseSimulateBody(body) ?? refuseSimulateBody(body, "config");
   if (simulateBody) {
     return simulateBody;
   }

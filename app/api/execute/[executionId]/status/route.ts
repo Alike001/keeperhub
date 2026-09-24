@@ -30,6 +30,14 @@ export async function GET(
     );
   }
 
+  // #2004: ?simulate= is refused rather than ignored on every /api/execute/*
+  // route. This endpoint is read-only, so a dry run has nothing to mean here
+  // -- there is exactly one shape of status request.
+  const simulateQuery = rejectSimulateQuery(request);
+  if (simulateQuery) {
+    return simulateQuery;
+  }
+
   const scopeError = requireScope(apiKeyCtx.scope, SCOPE_MCP_READ, {
     organizationId: apiKeyCtx.organizationId,
     credentialId: apiKeyCtx.apiKeyId,
@@ -38,14 +46,6 @@ export async function GET(
   });
   if (scopeError) {
     return scopeError;
-  }
-
-  // #2004: ?simulate= is refused rather than ignored on every /api/execute/*
-  // route. This endpoint is read-only, so a dry run has nothing to mean here
-  // -- there is exactly one shape of status request.
-  const simulateQuery = rejectSimulateQuery(request);
-  if (simulateQuery) {
-    return simulateQuery;
   }
 
   const rateLimit = checkRateLimit(apiKeyCtx.apiKeyId);
