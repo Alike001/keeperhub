@@ -63,10 +63,6 @@ vi.mock("./lib/db-helpers", () => ({
 vi.mock("../lib/metrics", () => ({
   getMetricsCollector: vi.fn(() => ({ recordLatency: vi.fn() })),
 }));
-vi.mock("../lib/metrics/types", () => ({
-  LabelKeys: {},
-  MetricNames: {},
-}));
 vi.mock("./api-execute", () => ({
   executeViaApi: vi.fn(),
 }));
@@ -277,10 +273,9 @@ describe("executeInProcess broadcast marker cleanup (issue #2289 blocking item)"
     // histogram saw no broadcast sample at all: dispatch and execution
     // legs were recorded (both self-contained, received-anchored), the
     // skewed headline was not.
-    const recorded = collector.recordLatency.mock.calls.filter(
-      (call) => call[0] === "executor.broadcast.latency_ms"
-    );
-    expect(recorded).toHaveLength(0);
+    const names = collector.recordLatency.mock.calls.map((call) => call[0]);
+    expect(names).toContain("executor.execution.latency_ms");
+    expect(names).not.toContain("executor.broadcast.latency_ms");
     const { logInfo } = await import("../lib/logging");
     const line = vi
       .mocked(logInfo)

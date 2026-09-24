@@ -114,10 +114,9 @@ describe("correlation map", () => {
       takeLatency(`corr-fill-${MAX_TRACKED - 1}`);
       trackLatency(stale);
 
-      // Cross the throttle so the next track would scan anyway, then insert
-      // one more young entry: at the cap the scan is forced, the stale
-      // entry must go first, and the young fill entry must survive.
-      vi.setSystemTime(Date.now() + 61_000);
+      // Stay inside the scan throttle (the first fill track scanned), so only
+      // the cap can force this scan: the stale entry must go first, and the
+      // young fill entry must survive.
       trackLatency(new ExecutionLatency("corr-cap-new"));
       expect(peekLatency("corr-cap-stale")).toBeUndefined();
       expect(peekLatency("corr-cap-new")).toBeDefined();
