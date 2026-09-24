@@ -10,7 +10,11 @@ import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { eq } from "drizzle-orm";
 import { ethers } from "ethers";
-import { coerceArgsForAbi, reshapeArgsForAbi } from "@/lib/abi/struct-args";
+import {
+  asRawFunctionArgs,
+  coerceArgsForAbi,
+  reshapeArgsForAbi,
+} from "@/lib/abi/struct-args";
 import { validateArgsForAbi } from "@/lib/abi/validate-args";
 import { db } from "@/lib/db";
 import { explorerConfigs, workflowExecutions } from "@/lib/db/schema";
@@ -25,7 +29,10 @@ import {
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import { rpcRelayErrorClass } from "@/lib/rpc/providers";
-import { findAbiFunction } from "@/lib/abi/utils";
+import {
+  describeAmbiguousKey,
+  resolveAbiFunction,
+} from "@/lib/abi/utils";
 import { getErrorMessage, resolveFailOnError } from "@/lib/utils";
 import { getAbiFunctionKey } from "@/lib/abi/function-key";
 import { generateId } from "@/lib/utils/id";
@@ -44,6 +51,7 @@ import {
   formatContractError,
   type RevertKind,
 } from "@/lib/web3/decode-revert-error";
+import { buildErrorDecodeInterface } from "@/lib/web3/extra-error-abis";
 import {
   parsePriorityFeeGwei,
   resolveGasLimitOverrides,
@@ -68,7 +76,7 @@ export type WriteContractCoreInput = {
   network: string;
   abi: string;
   abiFunction: string;
-  functionArgs?: string;
+  functionArgs?: string | unknown[];
   ethValue?: string;
   gasLimitMultiplier?: string;
   // Explicit caller override for maxPriorityFeePerGas (in gwei). Bypasses the
@@ -85,6 +93,9 @@ export type WriteContractCoreInput = {
   // Per-node Web3 Connection field. See ParsedWeb3Connection / parseWeb3Connection
   // in lib/safe/signer-resolver.ts. Missing -> "default" -> org-policy resolver.
   web3Connection?: string;
+  // #2430: extra ABI documents whose error entries join the decode path, after
+  // `abi`. Decoding only - `abi` still encodes the call.
+  errorAbis?: string[];
   _context?: {
     executionId?: string;
     organizationId?: string;
@@ -224,6 +235,7 @@ export async function writeContractCore(
     usePrivateMempool,
     strict,
     web3Connection,
+    errorAbis,
     _context,
   } = input;
 
@@ -275,9 +287,17 @@ export async function writeContractCore(
     };
   }
 
-  const functionAbi = findAbiFunction(parsedAbi, abiFunction);
+  const resolution = resolveAbiFunction(parsedAbi, abiFunction);
 
-  if (!functionAbi) {
+  if (resolution.status === "ambiguous") {
+    return {
+      success: false,
+      error: describeAmbiguousKey(abiFunction, resolution.candidates),
+      errorClass: ExecutionErrorType.USER,
+    };
+  }
+
+  if (resolution.status !== "found") {
     return {
       success: false,
       error: `Function '${abiFunction}' not found in ABI`,
@@ -285,13 +305,25 @@ export async function writeContractCore(
     };
   }
 
+  const functionAbi = resolution.entry;
   const abiFunctionKey = getAbiFunctionKey(parsedAbi, abiFunction, functionAbi);
 
-  // Parse function arguments
+  // Parse function arguments. A native array is taken as it is and a string
+  // is parsed as JSON; an empty, absent or falsy value means no arguments.
+  //
+  // The shape test used to sit in the condition guarding this try, so an array
+  // - what the executor hands over once a template inside one renders - threw
+  // a TypeError from the condition itself. Nothing catches that: this function
+  // is awaited inside applyWriteFailOnError, so the rejection escapes the
+  // softener and failOnError: false cannot turn it into a step result. On a
+  // path that broadcasts a transaction.
   let args: unknown[] = [];
-  if (functionArgs && functionArgs.trim() !== "") {
+  const rawArgs = asRawFunctionArgs(functionArgs);
+  if (rawArgs !== undefined) {
     try {
-      const parsedArgs = JSON.parse(functionArgs);
+      const parsedArgs: unknown = Array.isArray(rawArgs)
+        ? rawArgs
+        : JSON.parse(rawArgs);
       if (!Array.isArray(parsedArgs)) {
         return {
           success: false,
@@ -746,7 +778,10 @@ export async function writeContractCore(
         (isOnChainPendingError(error) ? ExecutionErrorType.SYSTEM : undefined);
       return {
         success: false,
-        error: formatContractError(error, contractInterface),
+        error: formatContractError(
+          error,
+          buildErrorDecodeInterface(contractInterface, errorAbis)
+        ),
         ...(errorClass ? { errorClass } : {}),
         ...(rejection.kind !== "unknown" ? { rejection } : {}),
         ...(broadcastHash

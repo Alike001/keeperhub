@@ -76,7 +76,9 @@ import type { SystemActionType } from "@/lib/workflow/executor/system-action-typ
 import {
   assertResolved,
   createTracker,
+  liftConditionFields,
   recordUnresolved,
+  restoreConditionFields,
   TemplateResolutionError,
   type TemplateResolutionTracker,
 } from "@/lib/workflow/executor/template-resolution";
@@ -876,7 +878,8 @@ function replaceConfigTemplate(
   nodeId: string,
   rest: string,
   outputs: NodeOutputs,
-  tracker?: TemplateResolutionTracker
+  tracker?: TemplateResolutionTracker,
+  path?: string
 ): string {
   const trimmedNodeId = nodeId.trim();
   const sanitizedNodeId = trimmedNodeId.replace(/[^a-zA-Z0-9]/g, "_");
@@ -900,6 +903,7 @@ function replaceConfigTemplate(
       token: match,
       reason: "no-node",
       detail: `Node "${trimmedNodeId}" has no output yet.`,
+      path,
     });
     return "";
   }
@@ -912,6 +916,7 @@ function replaceConfigTemplate(
       token: match,
       reason: "no-data",
       detail: `Node "${trimmedNodeId}" produced no data.`,
+      path,
     });
     return "";
   }
@@ -940,6 +945,7 @@ function replaceConfigTemplate(
       token: match,
       reason: "no-path",
       detail: `Field "${fieldPath || "(whole output)"}" not found on node "${trimmedNodeId}".`,
+      path,
     });
     return "";
   }
@@ -955,7 +961,14 @@ function replaceConfigTemplate(
 
 /**
  * Process template variables in config.
- * Recurses into nested objects; supports array paths like data.recipes[0].
+ *
+ * Recurses into nested objects and arrays, rendering every string it reaches.
+ * A reference may itself carry an index, `data.recipes[0]`; that is a path
+ * inside the reference and the resolver's business. Array-valued config is a
+ * different thing: each element is rendered here the way an object's values
+ * are. Until #2359 arrays were copied verbatim, so a token in one was never
+ * rendered and was then found by scanForLeftoverLiterals, which does walk
+ * arrays, and the run aborted naming a reference that was correct.
  *
  * KEEP-468: optional `tracker` records every reference that fell through to
  * the empty-string or literal-pass-through path so the caller can fail
@@ -964,48 +977,176 @@ function replaceConfigTemplate(
 export function processTemplates(
   config: Record<string, unknown>,
   outputs: NodeOutputs,
-  tracker?: TemplateResolutionTracker
+  tracker?: TemplateResolutionTracker,
+  path = ""
 ): Record<string, unknown> {
   const processed: Record<string, unknown> = {};
-  const storedPattern = /\{\{@([^:]+):([^}]+)\}\}/g;
-  // Fallback: resolve display-format templates {{Label.field}} that were not
-  // converted to stored format by the editor (mirrors extractTemplateParameters).
-  const displayPattern = /\{\{([^@}][^}]*)\}\}/g;
-
   for (const [key, value] of Object.entries(config)) {
-    if (typeof value === "string") {
-      let result = value.replace(storedPattern, (m, nodeId, rest) =>
-        replaceConfigTemplate(m, nodeId, rest, outputs, tracker)
-      );
-      result = result.replace(displayPattern, (full, displayRef) => {
-        const resolved = resolveDisplayTemplate(displayRef, outputs);
-        if (resolved === null || resolved === undefined) {
-          recordUnresolved(tracker, {
-            token: full,
-            reason: "no-path",
-            detail: `Display reference "${displayRef}" did not resolve.`,
-          });
-          return full;
-        }
-        return formatConfigValue(resolved);
-      });
-      processed[key] = result;
-    } else if (
-      typeof value === "object" &&
-      value !== null &&
-      !Array.isArray(value)
-    ) {
-      processed[key] = processTemplates(
-        value as Record<string, unknown>,
-        outputs,
-        tracker
-      );
-    } else {
-      processed[key] = value;
-    }
+    processed[key] = renderTemplateValue(
+      value,
+      outputs,
+      tracker,
+      path ? `${path}.${key}` : key
+    );
   }
-
   return processed;
+}
+
+/**
+ * One config value. A string is rendered, an array element by element, an
+ * object through processTemplates, and anything else (numbers, booleans,
+ * null) is passed through as it is. Arrays and objects take the same path so
+ * that this and scanForLeftoverLiterals agree on what a container is.
+ */
+/*
+ * No depth limit here. This walk has to render whatever the config actually
+ * holds, so a limit would leave a token unrendered at the bottom of a deep
+ * config and pass it to the action verbatim. It records every unresolved
+ * reference as it goes, at any depth, including one it could not match, so
+ * assertResolved fails the step wherever the token sits. Pinned in
+ * tests/unit/template-fail-closed.test.ts.
+ */
+function renderTemplateValue(
+  value: unknown,
+  outputs: NodeOutputs,
+  tracker?: TemplateResolutionTracker,
+  path = ""
+): unknown {
+  if (typeof value === "string") {
+    return renderTemplateString(value, outputs, tracker, path);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item, index) =>
+      renderTemplateValue(item, outputs, tracker, `${path}[${index}]`)
+    );
+  }
+  if (typeof value === "object" && value !== null) {
+    return processTemplates(
+      value as Record<string, unknown>,
+      outputs,
+      tracker,
+      path
+    );
+  }
+  return value;
+}
+
+/**
+ * Matches a stored ref `{{@nodeId:Label.field}}` OR a display ref
+ * `{{Label.field}}`. The display form is the fallback for tokens the editor
+ * never converted to stored format (mirrors extractTemplateParameters).
+ *
+ * One alternation, so both forms resolve in a single pass. Two passes read
+ * the text the first pass substituted, so every `{{...}}` inside an upstream
+ * node's output became a reference the author appeared to have written.
+ * processCodeTemplates has always resolved code fields in one pass.
+ */
+const configTemplatePattern = (): RegExp =>
+  /\{\{@([^:]+):([^}]+)\}\}|\{\{([^@}][^}]*)\}\}/g;
+
+/** Any `{{...}}`, used to find a token the reference patterns cannot match. */
+const anyTemplateToken = (): RegExp => /\{\{[^}]+\}\}/g;
+
+/** Resolve one matched reference to the text that replaces it. */
+function resolveConfigMatch(
+  match: RegExpExecArray,
+  outputs: NodeOutputs,
+  tracker?: TemplateResolutionTracker,
+  path?: string
+): string {
+  const [full, storedNodeId, storedRest, displayRef] = match;
+  if (storedNodeId !== undefined && storedRest !== undefined) {
+    return replaceConfigTemplate(
+      full,
+      storedNodeId,
+      storedRest,
+      outputs,
+      tracker,
+      path
+    );
+  }
+  if (displayRef === undefined) {
+    return full;
+  }
+  const resolved = resolveDisplayTemplate(displayRef, outputs);
+  if (resolved === null || resolved === undefined) {
+    recordUnresolved(tracker, {
+      token: full,
+      reason: "no-path",
+      detail: `Display reference "${displayRef}" did not resolve.`,
+      path,
+    });
+    return full;
+  }
+  return formatConfigValue(resolved);
+}
+
+/**
+ * Enough entries to diagnose the fault, bounded so a config holding thousands
+ * of tokens cannot grow the tracker without limit on every run. The error
+ * message quotes the first five and counts the rest either way; the old
+ * post-scan capped itself at the same order for the same reason.
+ */
+const MAX_TRACKED_LEFTOVERS = 50;
+
+/**
+ * Report a `{{...}}` the reference patterns could not match, in a stretch of
+ * the author's own text. Only authored stretches reach here, so a token that
+ * arrived inside a resolved value is never reported.
+ */
+function recordAuthoredLeftovers(
+  authored: string,
+  tracker: TemplateResolutionTracker | undefined,
+  path: string
+): void {
+  if (!(tracker && authored.includes("{{"))) {
+    return;
+  }
+  for (const leftover of authored.matchAll(anyTemplateToken())) {
+    if (tracker.unresolved.length >= MAX_TRACKED_LEFTOVERS) {
+      return;
+    }
+    recordUnresolved(tracker, {
+      token: leftover[0],
+      reason: "literal-leftover",
+      detail: "Reference left in rendered config; resolver did not match.",
+      path: path || undefined,
+    });
+  }
+}
+
+/**
+ * Render one config string, tracking where the author's text ends and a
+ * substituted value begins.
+ *
+ * The boundary is the whole point. A rendered string is a blend of the two,
+ * and a node's output is data: a `{{...}}` inside it is not a reference
+ * anyone can fix. Walking the matches keeps the halves apart, so the
+ * leftover check reads the gaps between references and never the text that
+ * replaced one. Comparing the rendered string against the authored one
+ * cannot do this, because an output that quotes the workflow's own config
+ * carries a verbatim copy of the author's token.
+ */
+function renderTemplateString(
+  value: string,
+  outputs: NodeOutputs,
+  tracker?: TemplateResolutionTracker,
+  path = ""
+): string {
+  const pattern = configTemplatePattern();
+  let result = "";
+  let cursor = 0;
+  let match = pattern.exec(value);
+  while (match !== null) {
+    const authored = value.slice(cursor, match.index);
+    recordAuthoredLeftovers(authored, tracker, path);
+    result += authored + resolveConfigMatch(match, outputs, tracker, path);
+    cursor = match.index + match[0].length;
+    match = pattern.exec(value);
+  }
+  const tail = value.slice(cursor);
+  recordAuthoredLeftovers(tail, tracker, path);
+  return result + tail;
 }
 
 /**
@@ -2550,11 +2691,8 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     currentOutputs: NodeOutputs,
     assertContext?: { nodeId?: string; nodeLabel?: string }
   ): Record<string, unknown> {
-    const configWithoutSpecial = { ...config };
-    const originalCondition = config.condition;
-    configWithoutSpecial.condition = undefined;
-    const originalConditionConfig = config.conditionConfig;
-    configWithoutSpecial.conditionConfig = undefined;
+    const { rest: configWithoutSpecial, lifted: conditionFields } =
+      liftConditionFields(config);
     const originalDbQuery = config.dbQuery;
     if (actionType === "Database Query") {
       configWithoutSpecial.dbQuery = undefined;
@@ -2565,9 +2703,9 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     }
 
     // KEEP-468: collect every unresolved reference so we can fail closed
-    // before the step runs. Tracker entries cover empty-string substitutions
-    // (no-node / no-data / no-path); the post-scan inside `assertResolved`
-    // catches the displayPattern literal-passthrough path.
+    // before the step runs. The renderer records all of them, including a
+    // token it could not match, against the field that held it, so a
+    // `{{...}}` carried in by an upstream value is never mistaken for one.
     const tracker = createTracker();
 
     const processedConfig = processTemplates(
@@ -2616,21 +2754,21 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     // otherwise every Condition node downstream of For Each / a Code step
     // false-flags `{{@nodeId:Label.field}}` as a leftover literal and the
     // workflow body cannot run.
-    assertResolved(tracker, processedConfig, {
-      nodeId: assertContext?.nodeId,
-      nodeLabel: assertContext?.nodeLabel,
-      actionType,
-    });
+    assertResolved(
+      tracker,
+      processedConfig,
+      {
+        nodeId: assertContext?.nodeId,
+        nodeLabel: assertContext?.nodeLabel,
+        actionType,
+      },
+      { rendererScanned: true }
+    );
 
     if (renderedCode !== undefined) {
       processedConfig.code = renderedCode;
     }
-    if (originalCondition !== undefined) {
-      processedConfig.condition = originalCondition;
-    }
-    if (originalConditionConfig !== undefined) {
-      processedConfig.conditionConfig = originalConditionConfig;
-    }
+    restoreConditionFields(processedConfig, conditionFields);
 
     return processedConfig;
   }
@@ -3566,11 +3704,16 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
             outputs,
             forEachTracker
           );
-          assertResolved(forEachTracker, forEachConfig, {
-            nodeId: node.id,
-            nodeLabel: getNodeName(node),
-            actionType: "For Each",
-          });
+          assertResolved(
+            forEachTracker,
+            forEachConfig,
+            {
+              nodeId: node.id,
+              nodeLabel: getNodeName(node),
+              actionType: "For Each",
+            },
+            { rendererScanned: true }
+          );
           const iterationSummary = await handleForEachExecution({
             forEachNodeId: nodeId,
             forEachNode: node,
