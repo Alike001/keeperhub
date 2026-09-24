@@ -23,6 +23,7 @@ describe("independent token list chains", () => {
       42_431, // Tempo pays gas in stablecoins
       5042,
       5_042_002, // Arc: USDC is the native gas token
+      130, // Unichain: USD₮0 at its own address, no code at Ethereum's USDT
     ]) {
       expect(hasIndependentTokenList(chainId), `chain ${chainId}`).toBe(true);
     }

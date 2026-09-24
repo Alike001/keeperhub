@@ -1,7 +1,8 @@
 /**
  * Chains whose token lineup does not mirror Ethereum mainnet's stablecoin set
  * (Plasma ships USDT0 with no Circle USDC and no Sky USDS; HyperEVM has USDC
- * and USDT0 but no USDS; Tempo and Arc pay gas in stablecoins). For these chains the
+ * and USDT0 but no USDS; Unichain has no code at Ethereum's USDT address and
+ * ships USD₮0 at a different one; Tempo and Arc pay gas in stablecoins). For these chains the
  * wallet renders the chain's own supported_tokens rows directly instead of
  * overlaying them on the mainnet master list, which would otherwise produce
  * misleading "Not available" entries for assets that do not exist there.
@@ -22,6 +23,7 @@ export const INDEPENDENT_TOKEN_LIST_CHAIN_IDS: readonly number[] = [
   999, // HyperEVM
   5042, // Arc (USDC is the native gas token)
   5_042_002, // Arc Testnet
+  130, // Unichain
 ];
 
 export function hasIndependentTokenList(chainId: number): boolean {

@@ -169,6 +169,8 @@ address a wallet user signed in with - see
 | Arc (Circle) | `5042` | `0x3600000000000000000000000000000000000000` | experimental |
 | Arc Testnet (Circle) | `5042002` | `0x3600000000000000000000000000000000000000` | experimental |
 | HyperEVM | `999` | `0xb88339cb7199b77e23db6e890353e22632ba630f` | experimental |
+| Unichain | `130` | `0x078D782b760474a361dDA0AF3839290b0EF57AD6` | experimental |
+| Unichain Sepolia (testnet) | `1301` | `0x31d0220469e10c4E71834a79b1f276d740d3768F` | experimental |
 
 HyperEVM's regular blocks cap at 3,000,000 gas, and the node rejects a
 transaction above that before it is sent, so KeeperHub sizes gas limits with a
@@ -187,7 +189,7 @@ Chain id 999 is registered as HyperEVM by Etherscan and the node itself, but
 `chainid.network` still lists 999 as Wanchain Testnet, so third-party tooling
 keyed off that registry may label the chain Wanchain.
 
-Arc's USDC is also its native gas token. The address above is the fixed
+Arc's USDC is also its native gas token. The Arc address above is the fixed
 ERC-20-interface precompile Circle documents for programmatic balance and
 transfer access; it reports balances at 6 decimals, distinct from the
 18-decimal native currency accounting used for gas. The same precompile is at

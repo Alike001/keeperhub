@@ -38,6 +38,7 @@ export const DEFILLAMA_CHAIN_SLUGS: Record<number, string> = {
   // is DefiLlama's key, not a KeeperHub network alias - the network resolver
   // deliberately refuses `hyperliquid`, which also names the non-EVM HyperCore.
   999: "hyperliquid",
+  130: "unichain",
 };
 
 type DefillamaCoinsResponse = {
