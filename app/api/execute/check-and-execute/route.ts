@@ -37,7 +37,11 @@ import {
 } from "../_lib/execution-service";
 import { readGasLimitMultiplier } from "../_lib/gas-limit-multiplier";
 import { checkRateLimit } from "../_lib/rate-limit";
-import { parseSimulateFlag } from "../_lib/simulate-flag";
+import {
+  parseSimulateFlag,
+  rejectNestedSimulate,
+  rejectSimulateQuery,
+} from "../_lib/simulate-flag";
 import { checkAndReserveExecution } from "../_lib/spending-cap";
 import { validateCheckAndExecuteInput } from "../_lib/validate";
 import { requireWallet } from "../_lib/wallet-check";
@@ -356,6 +360,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
+  // #2004: ?simulate= is refused on every /api/execute/* route rather than
+  // silently ignored. This route honours the flag only in the body.
+  const simulateQuery = rejectSimulateQuery(request);
+  if (simulateQuery) {
+    return simulateQuery;
+  }
+
   // Parsed before the scope gate because the required scope depends on
   // whether this is a dry run.
   let body: Record<string, unknown>;
@@ -374,6 +385,13 @@ export async function POST(request: Request): Promise<NextResponse> {
       { error: simulateFlag.error, field: "simulate" },
       { status: HttpStatus.BAD_REQUEST }
     );
+  }
+
+  // #2004: only the top-level flag is read. `action.simulate` used to be
+  // ignored while the action broadcast for real.
+  const nestedSimulate = rejectNestedSimulate(body, "action");
+  if (nestedSimulate) {
+    return nestedSimulate;
   }
 
   // A dry run never signs, broadcasts, or reserves, so mcp:read satisfies it.
