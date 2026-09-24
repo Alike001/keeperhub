@@ -33,6 +33,7 @@ Plugins provide the actions available in your workflows. Each plugin adds one or
 | [Lido](/plugins/lido) | Protocol | Wrap/unwrap stETH to wstETH, exchange rates, balances across Ethereum, Base, Sepolia | Wallet (for writes) |
 | [Morpho](/plugins/morpho) | Protocol | Supply, borrow, repay, liquidate, collateral management, position tracking, market monitoring | Wallet (for writes) |
 | [Pendle](/plugins/pendle) | Protocol | Yield tokenization, market data, PT/YT/SY balances, mint/redeem | Wallet (for writes) |
+| [Renzo](/plugins/renzo) | Protocol | Liquid restaking on Ethereum. Deposit ETH to mint ezETH, both halves of the deposit pause gate, ezETH balances and total supply | Wallet (for writes) |
 | [Rocket Pool](/plugins/rocket-pool) | Protocol | rETH exchange rate, balances, total supply, ETH deposits and withdrawals | Wallet (for writes) |
 | [Sky](/plugins/sky) | Protocol | USDS savings and staking vaults, token balances, approvals, DAI/MKR converters | Wallet (for writes) |
 | [Spark](/plugins/spark) | Protocol | Lending, borrowing, sDAI savings, health factor monitoring | Wallet (for writes) |
@@ -44,6 +45,7 @@ Plugins provide the actions available in your workflows. Each plugin adds one or
 | [Slack](/plugins/slack) | Notifications | Send messages to channels | Bot token |
 | [Telegram](/plugins/telegram) | Notifications | Send messages to chats | Bot token |
 | [SendGrid](/plugins/sendgrid) | Notifications | Send emails | API key |
+| [PagerDuty](/plugins/pagerduty) | Notifications | Trigger, acknowledge and resolve incidents on a service picked from your account | Read-only API token, or scoped OAuth |
 | [Webhook](/plugins/webhook) | Integrations | Send HTTP requests to external services | None |
 | [Hyperliquid](/plugins/hyperliquid) | Data | Read-only Info API queries: clearinghouse state, vault details, validators, funding history, spot deploy state, referrals, sub-accounts, active asset data | None |
 | [Blockscout](/plugins/blockscout) | Data | Read-only block explorer queries: address balance, transaction details, token info | None (optional instance URL/API key) |
@@ -76,7 +78,7 @@ Security-focused actions for transaction analysis, risk assessment, and Safe mul
 
 ### Notifications
 
-Send alerts and messages through Discord, Slack, Telegram, email, and webhooks. Typically used as the final step in monitoring workflows to notify your team when conditions are met.
+Send alerts and messages through Discord, Slack, Telegram, email, PagerDuty and webhooks. Typically used as the final step in monitoring workflows to notify your team when conditions are met. PagerDuty differs from the rest: it opens an incident that someone is paged for and that the workflow can resolve again, rather than posting a message.
 
 ### Integrations
 
