@@ -47,6 +47,20 @@ describe("parseArrayValue", () => {
     ]);
   });
 
+  it("keeps a JSON object as raw text for scalar arrays", () => {
+    expect(parseArrayValue('{"amount":"1"}', () => 1)).toEqual([
+      { id: 1, value: '{"amount":"1"}' },
+    ]);
+  });
+
+  it("keeps a parsed JSON object for tuple arrays", () => {
+    expect(
+      parseArrayValue('{"amount":"1"}', () => 1, [
+        { name: "amount", type: "uint256" },
+      ])
+    ).toEqual([{ id: 1, value: { amount: "1" } }]);
+  });
+
   it("keeps an encoded empty array empty", () => {
     expect(parseArrayValue("[]", () => 1)).toEqual([]);
   });

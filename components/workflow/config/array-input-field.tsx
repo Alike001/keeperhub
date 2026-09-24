@@ -36,7 +36,8 @@ function makeArrayItem(value: unknown, nextId: () => number): ArrayItem {
 
 function parseArrayValueWithMigration(
   value: unknown,
-  nextId: () => number
+  nextId: () => number,
+  components?: AbiComponent[]
 ): ParsedArrayValue {
   if (Array.isArray(value) && value.length > 0) {
     return {
@@ -57,17 +58,14 @@ function parseArrayValueWithMigration(
 
       // Before scalar arrays had a structured editor, a single scalar could be
       // stored directly. Keep it visible as one row rather than presenting a
-      // misleading empty array. Objects receive the same treatment for tuple
-      // arrays.
+      // misleading empty array. Only tuple arrays can edit parsed objects;
+      // scalar arrays must show and preserve the original JSON text.
+      const itemValue =
+        typeof parsed === "object" && parsed !== null && components?.length
+          ? parsed
+          : value.trim();
       return {
-        items: [
-          makeArrayItem(
-            typeof parsed === "object" && parsed !== null
-              ? parsed
-              : value.trim(),
-            nextId
-          ),
-        ],
+        items: [makeArrayItem(itemValue, nextId)],
         shouldMigrateLegacyValue: false,
       };
     } catch {
@@ -100,9 +98,10 @@ function parseArrayValueWithMigration(
 
 export function parseArrayValue(
   value: unknown,
-  nextId: () => number
+  nextId: () => number,
+  components?: AbiComponent[]
 ): ArrayItem[] {
-  return parseArrayValueWithMigration(value, nextId).items;
+  return parseArrayValueWithMigration(value, nextId, components).items;
 }
 
 function serializeItems(items: ArrayItem[]): unknown[] {
@@ -157,11 +156,11 @@ export function ArrayInputField({
   };
 
   const [items, setItems] = useState<ArrayItem[]>(() =>
-    parseArrayValue(value, nextId)
+    parseArrayValue(value, nextId, components)
   );
 
   useEffect(() => {
-    const parsed = parseArrayValueWithMigration(value, nextId);
+    const parsed = parseArrayValueWithMigration(value, nextId, components);
     const incoming = parsed.items;
     setItems((current) => preserveRowIds(current, incoming));
 
@@ -174,7 +173,7 @@ export function ArrayInputField({
       migratedLegacyValue.current = String(value);
       onChange(serializeItems(incoming));
     }
-  }, [disabled, value]);
+  }, [components, disabled, value]);
 
   function updateItems(updated: ArrayItem[]): void {
     setItems(updated);

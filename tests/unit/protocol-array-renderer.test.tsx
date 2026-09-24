@@ -76,4 +76,42 @@ describe("registered protocol-array renderer", () => {
       );
     }
   );
+
+  it("shows and preserves a legacy JSON object as raw text", async () => {
+    const renderer = getCustomFieldRenderer("protocol-array");
+    const onUpdateConfig = vi.fn();
+    const legacyValue = '{"amount":"1"}';
+
+    expect(renderer).toBeDefined();
+    await act(async () =>
+      root.render(
+        renderer?.({
+          config: { requestIds: legacyValue },
+          field: {
+            key: "requestIds",
+            label: "Request IDs",
+            solidityType: "uint256[]",
+            type: "protocol-array",
+          },
+          onUpdateConfig,
+        })
+      )
+    );
+
+    expect(container.querySelector('[role="textbox"]')?.textContent).toBe(
+      legacyValue
+    );
+    expect(onUpdateConfig).not.toHaveBeenCalled();
+
+    const addButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Add Item")
+    );
+    expect(addButton).toBeDefined();
+    await act(async () => addButton?.click());
+
+    expect(onUpdateConfig).toHaveBeenCalledWith(
+      "requestIds",
+      JSON.stringify([legacyValue, ""])
+    );
+  });
 });
