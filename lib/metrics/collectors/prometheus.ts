@@ -1632,7 +1632,8 @@ const histogramMap: Record<string, Histogram> = {
 
 const counterMap: Record<string, Counter> = {
   "executor.broadcasts.total": executorBroadcastsTotal,
-  "executor.broadcast.write_failures.total": executorBroadcastWriteFailuresTotal,
+  "executor.broadcast.write_failures.total":
+    executorBroadcastWriteFailuresTotal,
   "plugin.invocations.total": pluginInvocations,
   "workflow.executions.started.total": workflowExecutionsStartedTotal,
   "db.query.slow_count": slowQueries,
