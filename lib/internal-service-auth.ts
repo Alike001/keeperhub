@@ -1,4 +1,3 @@
-import { parseAuthTimestamp } from "@/lib/auth-timestamp";
 /**
  * @security Internal service-to-service authentication.
  *
@@ -29,6 +28,7 @@ import { parseAuthTimestamp } from "@/lib/auth-timestamp";
  */
 
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { parseAuthTimestamp } from "@/lib/auth-timestamp";
 import {
   listActiveHmacSecrets,
   lookupHmacSecret,
@@ -201,7 +201,14 @@ async function verifyHmac(
 
   const now = Math.floor(Date.now() / 1000);
   const ts = parseAuthTimestamp(timestamp);
-  if (ts === null || Math.abs(now - ts) > REPLAY_WINDOW_SECONDS) {
+  if (ts === null) {
+    return {
+      authenticated: false,
+      error: "Malformed timestamp",
+      status: 401,
+    };
+  }
+  if (Math.abs(now - ts) > REPLAY_WINDOW_SECONDS) {
     return {
       authenticated: false,
       error: "Timestamp outside replay window",

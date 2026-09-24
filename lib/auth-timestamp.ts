@@ -1,5 +1,7 @@
+const CANONICAL_UNIX_SECONDS = /^(0|[1-9]\d*)$/;
+
 export function parseAuthTimestamp(value: string): number | null {
-  if (!/^(0|[1-9]\d*)$/.test(value)) {
+  if (!CANONICAL_UNIX_SECONDS.test(value)) {
     return null;
   }
 

@@ -377,8 +377,13 @@ describe("verifyHmacRequest", () => {
     }
   });
 
-  it.each(["123abc", "123.5", "+123", "123e2", "00123"])(
-    "returns 401 for non-canonical timestamp %s",
+  it.each([
+    `${FROZEN_NOW_UNIX}abc`,
+    `0${FROZEN_NOW_UNIX}`,
+    `+${FROZEN_NOW_UNIX}`,
+    `${FROZEN_NOW_UNIX}.0`,
+  ])(
+    "returns 401 for non-canonical in-window timestamp %s",
     async (timestamp) => {
       const body = '{"chain":"base"}';
       const sig = expectedSig(
@@ -395,10 +400,11 @@ describe("verifyHmacRequest", () => {
 
       const result = await verifyHmacRequest(request, body);
 
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.status).toBe(401);
-      }
+      expect(result).toEqual({
+        ok: false,
+        status: 401,
+        error: "Malformed timestamp",
+      });
     }
   );
 
