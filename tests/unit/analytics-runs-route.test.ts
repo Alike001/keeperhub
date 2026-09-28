@@ -34,6 +34,7 @@ vi.mock("@/lib/analytics/queries", () => ({
 
 import { GET } from "@/app/api/analytics/runs/route";
 import { getUnifiedRuns } from "@/lib/analytics/queries";
+import { MAX_RUN_LIMIT } from "@/lib/analytics/runs-query";
 
 function oauthRequest(status: string): NextRequest {
   return {
@@ -241,13 +242,13 @@ describe("GET /api/analytics/runs pagination parsing", () => {
     // at 100 too; bound at 200 the arithmetic in the comment was wrong.
     const options = await optionsFor({ page: "999999", limit: "250" });
     const page = options?.page as number;
-    const pageLimit = Math.min((options?.limit as number) ?? 50, 100);
+    const pageLimit = Math.min((options?.limit as number) ?? 50, MAX_RUN_LIMIT);
 
     expect((page - 1) * pageLimit + pageLimit + 1).toBe(20_001);
   });
 
   it("drops a page below the first one instead of clamping silently", async () => {
-    // A falsy "0" also took the undefined branch before; a negative did not,
+    // params.get returns the string "0", which is truthy, so this went through
     // and Math.max carried it to 1. Both now read as absent, so the query
     // applies its own default.
     for (const page of ["0", "-3"]) {

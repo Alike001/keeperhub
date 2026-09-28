@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { parseRunFilters } from "@/lib/analytics/parse-run-filters";
 import { getUnifiedRuns } from "@/lib/analytics/queries";
-import { MAX_PAGE } from "@/lib/analytics/runs-query";
+import { MAX_PAGE, MAX_RUN_LIMIT } from "@/lib/analytics/runs-query";
 import { parseTimeRange } from "@/lib/analytics/time-range";
 import { apiError } from "@/lib/api-error";
 import { SCOPE_MCP_READ } from "@/lib/mcp/oauth-scopes";
@@ -10,8 +10,8 @@ import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 import { requireScope } from "@/lib/middleware/require-scope";
 
 /**
- * Ceiling for `limit`, matching the `Math.min(limit, 100)` in
- * lib/analytics/queries.ts:1449 that decides the page size.
+ * Ceiling for `limit`, imported from the query layer that applies it so the two
+ * cannot drift.
  *
  * Validating against a larger figure accepts a value the query then halves:
  * `?limit=150` was admitted and served 100. Nothing downstream was incoherent
@@ -19,7 +19,7 @@ import { requireScope } from "@/lib/middleware/require-scope";
  * when the two ceilings agree: with both bound, the largest fetchLimit
  * getUnifiedRuns can be asked for is `199 * 100 + 100 + 1` = 20001 rows.
  */
-const MAX_LIMIT = 100;
+const MAX_LIMIT = MAX_RUN_LIMIT;
 
 /**
  * Floor for `limit`. Zero is legal and deliberate: with a page size of 0 the

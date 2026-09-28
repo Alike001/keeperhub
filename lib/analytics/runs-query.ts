@@ -25,6 +25,9 @@ import type {
  */
 export const MAX_PAGE = 200;
 
+/** Ceiling on rows per page. The route validates against it and getUnifiedRuns applies it. */
+export const MAX_RUN_LIMIT = 100;
+
 /**
  * How many pages the pager may offer. The route clamps `page` at MAX_PAGE, so
  * a count taken from the real total alone leaves Next enabled on a page the

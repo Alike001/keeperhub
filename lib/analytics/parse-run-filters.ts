@@ -31,8 +31,13 @@ function parseNonNegativeInt(raw: string | null): number | undefined {
   if (raw === null || raw.trim() === "") {
     return undefined;
   }
-  const value = Number(raw);
-  return Number.isFinite(value) && value >= 0 ? Math.floor(value) : undefined;
+  // Same rule the route applies to page and limit: the string has to round-trip,
+  // or the value is not the one the caller wrote. Number() reads "0x10" as 16.
+  const value = Number.parseInt(raw, 10);
+  if (Number.isNaN(value) || String(value) !== raw.trim() || value < 0) {
+    return undefined;
+  }
+  return value;
 }
 
 /**
