@@ -167,12 +167,8 @@ describe("agent-gateway redirect containment & fail-closed security", () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain("Connection failed: HTTP 302");
     expect(fetchSpy).toHaveBeenCalledTimes(1);
-    const [, options] = fetchSpy.mock.calls[0] as [
-      string,
-      RequestInit,
-    ];
+    const [, options] = fetchSpy.mock.calls[0] as [string, RequestInit];
     expect(options.redirect).toBe("manual");
     fetchSpy.mockRestore();
   });
 });
-
