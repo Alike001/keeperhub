@@ -713,8 +713,9 @@ async function executeActionStep(input: {
 
   // Special handling for Condition action - needs template evaluation
   if (actionType === "Condition") {
-    const originalExpression =
-      resolveConditionExpression(stepInput) ?? stepInput.condition;
+    // resolveConditionExpression already reads `condition`; falling back to it here would
+    // re-admit the expression it refused, so it decides alone.
+    const originalExpression = resolveConditionExpression(stepInput);
 
     // KEEP-1284: Catch evaluation errors and pass to step so it gets logged
     let evaluatedCondition = false;
