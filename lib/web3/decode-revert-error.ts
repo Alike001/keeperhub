@@ -1,4 +1,5 @@
 import { ethers } from "ethers";
+import type { SimulateFailureCode } from "@/lib/execute/simulate";
 import { redactAllUrls } from "@/lib/rpc/scrub-rpc-urls";
 
 /**
@@ -46,68 +47,85 @@ export const SOLIDITY_PANIC_CODES: Record<
   0: {
     name: "GenericCompilerPanic",
     description: "Generic compiler panic",
-    remediation: "Check contract compilation and constructor invariants.",
+    remediation:
+      "The contract hit a generic compiler panic, which points at its compilation or constructor invariants.",
   },
   1: {
     name: "AssertFalse",
     description: "Assertion evaluated to false",
     remediation:
-      "A contract invariant failed via assert(). Verify pre-conditions or state before retrying.",
+      "A contract invariant checked with assert() evaluated to false for these inputs and this contract state.",
   },
   17: {
     name: "ArithmeticOverflowUnderflow",
     description:
       "Arithmetic operation underflowed or overflowed outside an unchecked block",
     remediation:
-      "The transaction attempted a calculation that exceeded numeric bounds. Reduce amounts or check token decimals.",
+      "The transaction attempted a calculation that exceeded numeric bounds. The amounts or token decimals in the request can cause this.",
   },
   18: {
     name: "DivisionByZero",
     description: "Division or modulo by zero",
     remediation:
-      "The contract attempted to divide by zero. Ensure denominator parameters or token prices are non-zero.",
+      "The contract attempted to divide by zero. A zero denominator argument or a zero token price causes this.",
   },
   33: {
     name: "InvalidEnumValue",
     description: "Tried to convert a value into an enum that was out of bounds",
-    remediation: "Ensure the enum option argument is within valid range.",
+    remediation: "An enum argument is outside the enum's valid range.",
   },
   34: {
     name: "StorageByteSliceOutOfBounds",
     description: "Access to incorrectly encoded storage byte array",
-    remediation: "Storage layout mismatch or corrupted byte array.",
+    remediation:
+      "The contract read an incorrectly encoded storage byte array, which points at a storage layout mismatch or a corrupted byte array.",
   },
   49: {
     name: "EmptyArrayPop",
     description: "Called .pop() on an empty array",
     remediation:
-      "Cannot pop elements from an empty array. Verify queue or list state.",
+      "The contract called pop() on an empty array. The queue or list it reads is empty.",
   },
   50: {
     name: "ArrayOutOfBounds",
     description: "Array index out of bounds or negative slice index",
     remediation:
-      "Array index out of bounds. Verify collection length before accessing the specified index.",
+      "An array index is out of bounds for the collection's current length.",
   },
   65: {
     name: "OutOfMemory",
     description: "Allocated too much memory or memory pointer overflowed",
-    remediation: "Memory limit exceeded. Reduce payload size or array lengths.",
+    remediation:
+      "The call exceeded the memory limit. The payload size or array lengths in the request can cause this.",
   },
   81: {
     name: "ZeroInitializedInternalFunction",
     description: "Called a zero-initialized variable of internal function type",
-    remediation: "Uninitialized function pointer in smart contract.",
+    remediation:
+      "The contract called an uninitialized internal function pointer.",
   },
 };
+
+// Panic(uint256) carries a contract-supplied uint256, so the table lookup
+// only converts to a number once the value is known to be small enough.
+const MAX_KNOWN_PANIC_CODE = 0xff;
+
+function lookupPanicCode(
+  code: bigint
+): (typeof SOLIDITY_PANIC_CODES)[number] | undefined {
+  if (code < 0 || code > MAX_KNOWN_PANIC_CODE) {
+    return;
+  }
+  return SOLIDITY_PANIC_CODES[Number(code)];
+}
 
 const COMMON_ERRORS_INTERFACE = new ethers.Interface(COMMON_ERROR_FRAGMENTS);
 
 function formatDecodedError(decoded: ethers.ErrorDescription): string {
   if (decoded.name === "Panic" && decoded.args.length > 0) {
-    const code = Number(decoded.args[0]);
-    const info = SOLIDITY_PANIC_CODES[code];
-    return info ? `Panic(${info.name})` : `Panic(${code})`;
+    const code = BigInt(decoded.args[0]);
+    const info = lookupPanicCode(code);
+    return info ? `Panic(${info.name})` : `Panic(${code.toString()})`;
   }
   if (decoded.args.length === 0) {
     return decoded.name;
@@ -548,7 +566,8 @@ export type RevertKind =
   | { kind: "reentrancy" }
   | {
       kind: "panic";
-      code: number;
+      /** Exact hex of the Panic(uint256) argument, e.g. "0x11". */
+      panicCode: string;
       name: string;
       description: string;
     }
@@ -685,17 +704,15 @@ export function classifyRevert(
     try {
       const decoded = COMMON_ERRORS_INTERFACE.parseError(revertData);
       if (decoded && decoded.args.length > 0) {
-        const panicCode = Number(decoded.args[0]);
-        const panicInfo = SOLIDITY_PANIC_CODES[panicCode] ?? {
-          name: `Panic(${panicCode})`,
-          description: `Solidity panic code ${panicCode}`,
-          remediation: `Contract panicked with code ${panicCode}. Check input arguments and state.`,
-        };
+        const code = BigInt(decoded.args[0]);
+        const panicCode = `0x${code.toString(16)}`;
+        const panicInfo = lookupPanicCode(code);
         return {
           kind: "panic",
-          code: panicCode,
-          name: panicInfo.name,
-          description: panicInfo.description,
+          panicCode,
+          name: panicInfo?.name ?? `Panic(${code.toString()})`,
+          description:
+            panicInfo?.description ?? `Solidity panic code ${panicCode}`,
         };
       }
     } catch {
@@ -807,108 +824,114 @@ function extractSafeGsCode(
 }
 
 export type RevertRemediation = {
-  reasonCode: string;
+  reasonCode: SimulateFailureCode;
   remediation: string;
 };
 
 /**
- * Generate structured, plain-English remediation advice from a classified revert.
+ * Map a classified revert to a closed reason code and a plain-English diagnosis.
  *
- * Designed for Model Context Protocol (MCP) clients and autonomous AI agents
- * that need to reason about smart-contract transaction failures and autonomously
- * self-correct without human intervention.
+ * The remediation states what is wrong, with the numbers and addresses behind
+ * it, and may point at request inputs the caller controls (amount, arguments,
+ * gas limit, signer mode). It never tells the caller to make an on-chain call.
  */
 export function getRemediationForRevert(
   kind: RevertKind
 ): RevertRemediation | null {
   switch (kind.kind) {
     case "erc20-insufficient-allowance": {
-      const spenderStr = kind.spender ? ` for spender ${kind.spender}` : "";
+      const spenderStr = kind.spender
+        ? `spender ${kind.spender}`
+        : "the spender";
       return {
         reasonCode: "insufficient_allowance",
-        remediation: `Allowance shortfall: current allowance (${kind.allowance}) is less than required (${kind.needed})${spenderStr}. Grant additional spending allowance before retrying.`,
+        remediation: `Allowance shortfall: the allowance the simulated sender has granted to ${spenderStr} is ${kind.allowance} base units, less than the required ${kind.needed} base units. The allowance is read for the simulated sender.`,
       };
     }
     case "erc20-insufficient-balance": {
       return {
         reasonCode: "insufficient_token_balance",
-        remediation: `Fund the sender account with at least ${kind.needed} tokens before retrying.`,
+        remediation: `The sender account holds less than the required ${kind.needed} base units of the token (balance: ${kind.balance} base units).`,
       };
     }
     case "paused": {
       return {
         reasonCode: "contract_paused",
         remediation:
-          "Wait for the contract owner to unpause the contract or invoke an unpause() action if authorized.",
+          "The target contract is paused, and this function reverts while it is paused. The caller cannot change the pause state.",
       };
     }
     case "expected-pause": {
       return {
         reasonCode: "contract_not_paused",
         remediation:
-          "Contract must be paused to perform this operation. Pause the contract or verify execution prerequisites.",
+          "The target contract is not paused, and this function only runs while it is paused. The caller cannot change the pause state.",
       };
     }
     case "ownable-unauthorized": {
       return {
-        reasonCode: "unauthorized",
-        remediation:
-          "Switch to an authorized owner wallet or request ownership permissions.",
+        reasonCode: "caller_not_authorized",
+        remediation: "The simulated sender is not the owner of the contract.",
       };
     }
     case "access-control-unauthorized": {
-      const acc = kind.account ? ` Account ${kind.account}` : " Caller";
-      const role = kind.neededRole ? ` role ${kind.neededRole}` : " required role";
+      const acc = kind.account ? ` ${kind.account}` : "";
+      const role = kind.neededRole
+        ? `role ${kind.neededRole}`
+        : "the required role";
       return {
-        reasonCode: "unauthorized",
-        remediation: `Grant${role} to${acc} before executing this function.`,
+        reasonCode: "caller_not_authorized",
+        remediation: `The simulated sender${acc} lacks ${role}.`,
       };
     }
     case "role-not-authorized": {
       return {
-        reasonCode: "unauthorized",
-        remediation: "Verify caller permissions and role membership.",
+        reasonCode: "caller_not_authorized",
+        remediation:
+          "The simulated sender is not authorized for this call under the contract's role permissions.",
       };
     }
     case "reentrancy": {
       return {
         reasonCode: "reentrancy_blocked",
         remediation:
-          "Avoid nested or recursive calls to this function in the same transaction.",
+          "The call re-entered a function guarded against reentrancy within the same transaction.",
       };
     }
     case "panic": {
-      const info = SOLIDITY_PANIC_CODES[kind.code];
-      const codeSuffix = info ? kind.name.toLowerCase() : String(kind.code);
-      const rem = info?.remediation ?? "Review input values and contract state.";
+      const info = lookupPanicCode(BigInt(kind.panicCode));
       return {
-        reasonCode: `panic_${codeSuffix}`,
-        remediation: rem,
+        reasonCode: "panic",
+        remediation:
+          info?.remediation ??
+          `The contract panicked with code ${kind.panicCode}, which is not a known Solidity panic code. The input arguments or the contract state caused it.`,
       };
     }
     case "safe-signature-invalid": {
       return {
         reasonCode: "safe_signature_invalid",
         remediation:
-          "Check Safe signer signatures, threshold, and signature ordering.",
+          "The Safe rejected the signatures: they are invalid, below the threshold, or out of order.",
       };
     }
     case "safe-insufficient-gas": {
       return {
         reasonCode: "safe_insufficient_gas",
-        remediation: "Increase gas limit for Safe execution.",
+        remediation:
+          "The Safe execution ran out of gas. The gas limit in the request is too low for it.",
       };
     }
     case "safe-not-authorized": {
       return {
         reasonCode: "safe_not_authorized",
-        remediation: "Ensure the caller is an owner or enabled module of the Safe.",
+        remediation:
+          "The caller is not an owner or an enabled module of the Safe.",
       };
     }
     case "role-condition-violation": {
       return {
         reasonCode: "role_condition_violation",
-        remediation: `Adjust call parameters to comply with role restriction: ${kind.status}.`,
+        remediation: `The call parameters violate a role restriction: ${kind.status}.`,
       };
     }
     case "string-revert": {
@@ -921,7 +944,7 @@ export function getRemediationForRevert(
         return {
           reasonCode: "insufficient_token_balance",
           remediation:
-            "Fund the sender account with sufficient token balance before retrying.",
+            "The sender account holds less of the token than the transfer amount.",
         };
       }
       if (
@@ -933,21 +956,21 @@ export function getRemediationForRevert(
         return {
           reasonCode: "insufficient_allowance",
           remediation:
-            "Allowance shortfall: the spender does not have sufficient allowance for this transfer amount. Grant additional spending allowance before retrying.",
+            "Allowance shortfall: the allowance the simulated sender has granted to the spender is less than the transfer amount. The allowance is read for the simulated sender.",
         };
       }
       if (lower === "pausable: paused" || lower === "enforcedpause()") {
         return {
           reasonCode: "contract_paused",
           remediation:
-            "Wait for the contract owner to unpause the contract or invoke an unpause() action if authorized.",
+            "The target contract is paused, and this function reverts while it is paused. The caller cannot change the pause state.",
         };
       }
       if (lower === "expectedpause()") {
         return {
           reasonCode: "contract_not_paused",
           remediation:
-            "Contract must be paused to perform this operation. Pause the contract or verify execution prerequisites.",
+            "The target contract is not paused, and this function only runs while it is paused. The caller cannot change the pause state.",
         };
       }
       if (
@@ -956,9 +979,9 @@ export function getRemediationForRevert(
         lower === "not authorized"
       ) {
         return {
-          reasonCode: "unauthorized",
+          reasonCode: "caller_not_authorized",
           remediation:
-            "Switch to an authorized owner wallet or request ownership permissions.",
+            "The simulated sender is not the owner of the contract or lacks the required role.",
         };
       }
       if (
@@ -968,7 +991,7 @@ export function getRemediationForRevert(
         return {
           reasonCode: "reentrancy_blocked",
           remediation:
-            "Avoid nested or recursive calls to this function in the same transaction.",
+            "The call re-entered a function guarded against reentrancy within the same transaction.",
         };
       }
       return null;
@@ -977,4 +1000,3 @@ export function getRemediationForRevert(
       return null;
   }
 }
-

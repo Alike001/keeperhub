@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
 import { ethers } from "ethers";
+import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
@@ -8,10 +8,7 @@ import { formatSafeDeployError } from "@/lib/safe/deploy-errors";
 describe("formatSafeDeployError", () => {
   it("formats Panic errors with their numeric code", () => {
     // Panic(uint256) selector 0x4e487b71 followed by code 17 (0x11, overflow)
-    const encoded = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["uint256"],
-      [17]
-    );
+    const encoded = ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [17]);
     const panicData = `0x4e487b71${encoded.slice(2)}`;
     const report = formatSafeDeployError({ data: panicData });
 
@@ -20,15 +17,26 @@ describe("formatSafeDeployError", () => {
   });
 
   it("formats division by zero panic (code 18)", () => {
-    const encoded = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["uint256"],
-      [18]
-    );
+    const encoded = ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [18]);
     const panicData = `0x4e487b71${encoded.slice(2)}`;
     const report = formatSafeDeployError({ data: panicData });
 
     expect(report.kind).toBe("unknown");
     expect(report.message).toBe("Safe deploy failed: Panic(18)");
+  });
+
+  it("formats an unmapped uint256 panic code as its exact decimal", () => {
+    const huge = ethers.MaxUint256;
+    const encoded = ethers.AbiCoder.defaultAbiCoder().encode(
+      ["uint256"],
+      [huge]
+    );
+    const panicData = `0x4e487b71${encoded.slice(2)}`;
+    const report = formatSafeDeployError({ data: panicData });
+
+    expect(report.message).toBe(
+      `Safe deploy failed: Panic(${huge.toString()})`
+    );
   });
 
   it("formats create2 call failed as already-deployed", () => {

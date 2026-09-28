@@ -8,7 +8,13 @@ import {
   decodeRevertReason,
   formatContractError,
   getRemediationForRevert,
+  type RevertKind,
 } from "@/lib/web3/decode-revert-error";
+
+const TOKENS_WORD_RE = /\btokens\b/i;
+// Imperative on-chain actions the remediation text must never prescribe.
+const ON_CHAIN_INSTRUCTION_RE =
+  /\b(grant|approve|unpause|pause the|fund|invoke|call \w+\(\)|increase|switch to|request (?:the|ownership|role))\b/i;
 
 /**
  * Coverage for the revert-decode + classify pipeline. Most of these
@@ -340,7 +346,7 @@ describe("classifyRevert: Solidity Panic codes", () => {
     const result = classifyRevert({ data: panicData });
     expect(result).toEqual({
       kind: "panic",
-      code: 18,
+      panicCode: "0x12",
       name: "DivisionByZero",
       description: "Division or modulo by zero",
     });
@@ -355,11 +361,30 @@ describe("classifyRevert: Solidity Panic codes", () => {
     const result = classifyRevert({ data: panicData });
     expect(result).toEqual({
       kind: "panic",
-      code: 17,
+      panicCode: "0x11",
       name: "ArithmeticOverflowUnderflow",
       description:
         "Arithmetic operation underflowed or overflowed outside an unchecked block",
     });
+  });
+
+  it("carries the exact hex of an unmapped uint256 panic code", () => {
+    const huge = ethers.MaxUint256;
+    const encoded = ethers.AbiCoder.defaultAbiCoder().encode(
+      ["uint256"],
+      [huge]
+    );
+    const panicData = `0x4e487b71${encoded.slice(2)}`;
+    const result = classifyRevert({ data: panicData });
+    expect(result).toEqual({
+      kind: "panic",
+      panicCode: `0x${"f".repeat(64)}`,
+      name: `Panic(${huge.toString()})`,
+      description: `Solidity panic code 0x${"f".repeat(64)}`,
+    });
+    expect(decodeRevertReason({ data: panicData })).toBe(
+      `Panic(${huge.toString()})`
+    );
   });
 });
 
@@ -378,32 +403,134 @@ describe("getRemediationForRevert: actionable agent remediation", () => {
       "0xspender00000000000000000000000000000001"
     );
     expect(remediation?.remediation).toContain("1000000000000000000");
+    expect(remediation?.remediation).toContain("simulated sender");
+  });
+
+  it("states a token balance shortfall in base units, never tokens", () => {
+    const remediation = getRemediationForRevert({
+      kind: "erc20-insufficient-balance",
+      balance: "500000",
+      needed: "1000000",
+    });
+    expect(remediation?.reasonCode).toBe("insufficient_token_balance");
+    expect(remediation?.remediation).toBe(
+      "The sender account holds less than the required 1000000 base units of the token (balance: 500000 base units)."
+    );
+    expect(remediation?.remediation).not.toMatch(TOKENS_WORD_RE);
+  });
+
+  it("uses caller_not_authorized for owner and role reverts", () => {
+    const owner = getRemediationForRevert({ kind: "ownable-unauthorized" });
+    expect(owner?.reasonCode).toBe("caller_not_authorized");
+    expect(owner?.remediation).toContain("simulated sender is not the owner");
+
+    const role = getRemediationForRevert({
+      kind: "access-control-unauthorized",
+      account: "0xacc0000000000000000000000000000000000001",
+      neededRole: "0xrole",
+    });
+    expect(role?.reasonCode).toBe("caller_not_authorized");
+    expect(role?.remediation).toBe(
+      "The simulated sender 0xacc0000000000000000000000000000000000001 lacks role 0xrole."
+    );
+
+    const zodiac = getRemediationForRevert({ kind: "role-not-authorized" });
+    expect(zodiac?.reasonCode).toBe("caller_not_authorized");
   });
 
   it("provides actionable remediation for paused contracts", () => {
     const remediation = getRemediationForRevert({ kind: "paused" });
     expect(remediation).not.toBeNull();
     expect(remediation?.reasonCode).toBe("contract_paused");
-    expect(remediation?.remediation).toContain("unpause");
+    expect(remediation?.remediation).toContain("is paused");
+    expect(remediation?.remediation).toContain(
+      "The caller cannot change the pause state."
+    );
   });
 
   it("provides actionable remediation for expected-pause contracts", () => {
     const remediation = getRemediationForRevert({ kind: "expected-pause" });
     expect(remediation).not.toBeNull();
     expect(remediation?.reasonCode).toBe("contract_not_paused");
-    expect(remediation?.remediation).toContain("Contract must be paused");
+    expect(remediation?.remediation).toContain("is not paused");
+    expect(remediation?.remediation).toContain(
+      "The caller cannot change the pause state."
+    );
   });
 
   it("provides actionable remediation for panics", () => {
     const remediation = getRemediationForRevert({
       kind: "panic",
-      code: 18,
+      panicCode: "0x12",
       name: "DivisionByZero",
       description: "Division or modulo by zero",
     });
     expect(remediation).not.toBeNull();
-    expect(remediation?.reasonCode).toBe("panic_divisionbyzero");
+    expect(remediation?.reasonCode).toBe("panic");
     expect(remediation?.remediation).toContain("divide by zero");
+  });
+
+  it("uses the closed panic code for an unmapped panic number", () => {
+    const panicCode = `0x${ethers.MaxUint256.toString(16)}`;
+    const remediation = getRemediationForRevert({
+      kind: "panic",
+      panicCode,
+      name: "Panic(unmapped)",
+      description: "unmapped",
+    });
+    expect(remediation?.reasonCode).toBe("panic");
+    expect(remediation?.remediation).toContain(panicCode);
+  });
+
+  it("never instructs an on-chain call in any remediation", () => {
+    const kinds: RevertKind[] = [
+      {
+        kind: "erc20-insufficient-allowance",
+        allowance: "0",
+        needed: "1",
+        spender: "0xspender00000000000000000000000000000001",
+      },
+      { kind: "erc20-insufficient-allowance", allowance: "0", needed: "1" },
+      { kind: "erc20-insufficient-balance", balance: "0", needed: "1" },
+      { kind: "paused" },
+      { kind: "expected-pause" },
+      { kind: "ownable-unauthorized" },
+      { kind: "access-control-unauthorized", neededRole: "0xrole" },
+      { kind: "role-not-authorized" },
+      { kind: "reentrancy" },
+      ...[0, 1, 17, 18, 33, 34, 49, 50, 65, 81, 99].map(
+        (n): RevertKind => ({
+          kind: "panic",
+          panicCode: `0x${n.toString(16)}`,
+          name: "x",
+          description: "x",
+        })
+      ),
+      { kind: "safe-signature-invalid", gsCode: "GS013", description: "x" },
+      { kind: "safe-insufficient-gas", gsCode: "GS010", description: "x" },
+      { kind: "safe-not-authorized", gsCode: "GS030", description: "x" },
+      {
+        kind: "role-condition-violation",
+        status: "AllowanceExceeded",
+        statusCode: 1,
+        paramOrKey: "0x",
+      },
+      ...[
+        "ERC20: transfer amount exceeds balance",
+        "ERC20: transfer amount exceeds allowance",
+        "Pausable: paused",
+        "ExpectedPause()",
+        "Ownable: caller is not the owner",
+        "ReentrancyGuard: reentrant call",
+      ].map((reason): RevertKind => ({ kind: "string-revert", reason })),
+    ];
+    for (const kind of kinds) {
+      const remediation = getRemediationForRevert(kind);
+      expect(remediation, kind.kind).not.toBeNull();
+      expect(remediation?.remediation, kind.kind).not.toMatch(
+        ON_CHAIN_INSTRUCTION_RE
+      );
+    }
   });
 
   it("provides actionable remediation for classic string reverts", () => {
@@ -441,7 +568,7 @@ describe("getRemediationForRevert: actionable agent remediation", () => {
       reason: "Ownable: caller is not the owner",
     });
     expect(ownerRem).not.toBeNull();
-    expect(ownerRem?.reasonCode).toBe("unauthorized");
+    expect(ownerRem?.reasonCode).toBe("caller_not_authorized");
 
     const reentrantRem = getRemediationForRevert({
       kind: "string-revert",
@@ -468,7 +595,7 @@ describe("classifyRevert with contractInterface (built-ins vs custom errors)", (
     const result = classifyRevert({ data: panicData }, dummyInterface);
     expect(result.kind).toBe("panic");
     if (result.kind === "panic") {
-      expect(result.code).toBe(17);
+      expect(result.panicCode).toBe("0x11");
       expect(result.name).toBe("ArithmeticOverflowUnderflow");
     }
   });
@@ -497,7 +624,10 @@ describe("classifyRevert with contractInterface (built-ins vs custom errors)", (
   });
 
   it("falls through to contract-custom for non-builtin ABI errors", () => {
-    const customData = dummyInterface.encodeErrorResult("CustomContractError", [42]);
+    const customData = dummyInterface.encodeErrorResult(
+      "CustomContractError",
+      [42]
+    );
     const result = classifyRevert({ data: customData }, dummyInterface);
     expect(result).toEqual({
       kind: "contract-custom",
@@ -505,4 +635,3 @@ describe("classifyRevert with contractInterface (built-ins vs custom errors)", (
     });
   });
 });
-

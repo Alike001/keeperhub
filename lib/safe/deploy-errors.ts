@@ -58,7 +58,7 @@ export function formatSafeDeployError(error: unknown): SafeDeployErrorReport {
   if (classified.kind === "panic") {
     return {
       kind: "unknown",
-      message: `${SAFE_DEPLOY_PREFIX}: Panic(${classified.code})`,
+      message: `${SAFE_DEPLOY_PREFIX}: Panic(${BigInt(classified.panicCode).toString()})`,
     };
   }
 

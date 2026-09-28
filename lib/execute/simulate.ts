@@ -103,12 +103,13 @@ export const INSUFFICIENT_ALLOWANCE_CODE = "insufficient_allowance";
 export const INSUFFICIENT_TOKEN_BALANCE_CODE = "insufficient_token_balance";
 export const CONTRACT_PAUSED_CODE = "contract_paused";
 export const CONTRACT_NOT_PAUSED_CODE = "contract_not_paused";
-export const UNAUTHORIZED_CODE = "unauthorized";
+export const CALLER_NOT_AUTHORIZED_CODE = "caller_not_authorized";
 export const REENTRANCY_CODE = "reentrancy_blocked";
 export const SAFE_SIGNATURE_INVALID_CODE = "safe_signature_invalid";
 export const SAFE_INSUFFICIENT_GAS_CODE = "safe_insufficient_gas";
 export const SAFE_NOT_AUTHORIZED_CODE = "safe_not_authorized";
 export const ROLE_CONDITION_VIOLATION_CODE = "role_condition_violation";
+export const PANIC_CODE = "panic";
 
 /**
  * Machine-readable causes the simulator can attribute a failure to.
@@ -123,13 +124,13 @@ export type SimulateFailureCode =
   | typeof INSUFFICIENT_TOKEN_BALANCE_CODE
   | typeof CONTRACT_PAUSED_CODE
   | typeof CONTRACT_NOT_PAUSED_CODE
-  | typeof UNAUTHORIZED_CODE
+  | typeof CALLER_NOT_AUTHORIZED_CODE
   | typeof REENTRANCY_CODE
   | typeof SAFE_SIGNATURE_INVALID_CODE
   | typeof SAFE_INSUFFICIENT_GAS_CODE
   | typeof SAFE_NOT_AUTHORIZED_CODE
   | typeof ROLE_CONDITION_VIOLATION_CODE
-  | `panic_${string}`;
+  | typeof PANIC_CODE;
 
 export type SimulationFailureKind = "validation" | "revert" | "unavailable";
 
@@ -147,10 +148,12 @@ type SimulateFailureBase = {
    */
   code?: SimulateFailureCode;
   /**
-   * Plain-English remediation instructions describing the exact corrective action
-   * an autonomous agent or user must take before retrying the transaction.
+   * Plain-English diagnosis of the decoded revert: what is wrong, with the
+   * numbers and addresses behind it. It never instructs an on-chain call.
    */
   remediation?: string;
+  /** Set with `code: "panic"`: exact hex of the Panic(uint256) argument, e.g. "0x11". */
+  panicCode?: string;
   /** Set with `code: "insufficient_allowance"`: current allowance, in wei / token units. */
   allowance?: string;
   /** Set with `code: "insufficient_allowance"`: needed allowance, in wei / token units. */
@@ -411,7 +414,7 @@ function simulationFailureFromError(
     const classified = classifyRevert(error, contractInterface);
     const remediationInfo = getRemediationForRevert(classified);
 
-    const code = remediationInfo?.reasonCode as SimulateFailureCode | undefined;
+    const code = remediationInfo?.reasonCode;
     const baseFailure = simulationFailure(
       from,
       to,
@@ -436,6 +439,7 @@ function simulationFailureFromError(
         classified.kind === "erc20-insufficient-allowance"
           ? classified.spender
           : undefined,
+      panicCode: classified.kind === "panic" ? classified.panicCode : undefined,
       originalError: getErrorMessage(error),
     };
   }
@@ -493,7 +497,7 @@ async function failureFromPreflightError(input: {
     const classified = classifyRevert(input.err, input.iface);
     const remediationInfo = getRemediationForRevert(classified);
 
-    const code = remediationInfo?.reasonCode as SimulateFailureCode | undefined;
+    const code = remediationInfo?.reasonCode;
     const baseFailure = simulationFailure(
       input.from,
       input.to,
@@ -518,6 +522,7 @@ async function failureFromPreflightError(input: {
         classified.kind === "erc20-insufficient-allowance"
           ? classified.spender
           : undefined,
+      panicCode: classified.kind === "panic" ? classified.panicCode : undefined,
       originalError: getErrorMessage(input.err),
     };
   }

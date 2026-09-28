@@ -36,7 +36,8 @@ const REMEDIATION_SECTION_RE = /^Remediation:/m;
 const REMEDIATION_ALLOWANCE_RE = /Allowance shortfall/;
 const ALLOWANCE_CODE_RE = /Reason code: insufficient_allowance/;
 const PAUSED_CODE_RE = /Reason code: contract_paused/;
-const PANIC_CODE_RE = /Reason code: panic_divisionbyzero/;
+const PANIC_CODE_RE = /^Reason code: panic \(/m;
+const CALLER_NOT_AUTHORIZED_CODE_RE = /^Reason code: caller_not_authorized \(/m;
 
 const AUTH_HEADER = "Bearer test_api_key";
 
@@ -173,7 +174,7 @@ const ALLOWANCE_BODY = JSON.stringify({
   revertReason:
     "ERC20InsufficientAllowance(0xspender00000000000000000000000000000001, 0, 1000000000000000000)",
   remediation:
-    "Allowance shortfall: current allowance (0) is less than required (1000000000000000000) for spender 0xspender00000000000000000000000000000001. Grant additional spending allowance before retrying.",
+    "Allowance shortfall: the allowance the simulated sender has granted to spender 0xspender00000000000000000000000000000001 is 0 base units, less than the required 1000000000000000000 base units. The allowance is read for the simulated sender.",
   error:
     "ERC20InsufficientAllowance(0xspender00000000000000000000000000000001, 0, 1000000000000000000)",
 });
@@ -190,7 +191,7 @@ const PAUSED_BODY = JSON.stringify({
   code: "contract_paused",
   revertReason: "EnforcedPause()",
   remediation:
-    "Wait for the contract owner to unpause the contract or invoke an unpause() action if authorized.",
+    "The target contract is paused, and this function reverts while it is paused. The caller cannot change the pause state.",
   error: "EnforcedPause()",
 });
 
@@ -203,10 +204,11 @@ const PANIC_BODY = JSON.stringify({
   value: "0",
   failureKind: "revert",
   wouldRevert: true,
-  code: "panic_divisionbyzero",
+  code: "panic",
+  panicCode: "0x12",
   revertReason: "Panic(DivisionByZero)",
   remediation:
-    "The contract attempted to divide by zero. Ensure denominator parameters or token prices are non-zero.",
+    "The contract attempted to divide by zero. A zero denominator argument or a zero token price causes this.",
   error: "Panic(DivisionByZero)",
 });
 
@@ -554,7 +556,7 @@ describe("MCP dry-run actionable agent remediation", () => {
     const message = (error as Error).message;
     expect(message).toMatch(PAUSED_CODE_RE);
     expect(message).toMatch(REMEDIATION_SECTION_RE);
-    expect(message).toContain("unpause");
+    expect(message).toContain("The caller cannot change the pause state.");
   });
 
   it("surfaces typed panic reason code and actionable remediation for arithmetic panics", async () => {
@@ -569,5 +571,34 @@ describe("MCP dry-run actionable agent remediation", () => {
     expect(message).toMatch(REMEDIATION_SECTION_RE);
     expect(message).toContain("divide by zero");
   });
-});
 
+  it("renders the on-chain authorization code distinct from the API auth code", async () => {
+    mock400(
+      JSON.stringify({
+        success: false,
+        status: "simulated",
+        from: "0xeoa0000000000000000000000000000000000001",
+        to: "0xvault00000000000000000000000000000000002",
+        value: "0",
+        failureKind: "revert",
+        wouldRevert: true,
+        code: "caller_not_authorized",
+        revertReason:
+          "OwnableUnauthorizedAccount(0xeoa0000000000000000000000000000000000001)",
+        remediation: "The simulated sender is not the owner of the contract.",
+        error:
+          "OwnableUnauthorizedAccount(0xeoa0000000000000000000000000000000000001)",
+      })
+    );
+    const error = await invoke("execute_contract_call").then(
+      () => undefined,
+      (caught: unknown) => caught
+    );
+    expect(error).toBeInstanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).toMatch(CALLER_NOT_AUTHORIZED_CODE_RE);
+    expect(message).toContain(
+      "Remediation: The simulated sender is not the owner of the contract."
+    );
+  });
+});
