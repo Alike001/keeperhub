@@ -421,7 +421,7 @@ organization's signers the transaction is sent from:
 
 | Value | Signer |
 |-------|--------|
-| omitted, `""`, or `"default"` | Organization policy — the configured Safe and its active role. All three are the same branch. |
+| omitted, `""`, or `"default"` | Organization policy: the Safe configured for that chain and its active role, or the organization EOA when no Safe is active there. All three are the same branch. |
 | `"eoa"` | The Turnkey EOA directly, bypassing the organization's Safe policy. |
 | `"safe:<safeWalletId>"` | A specific Safe belonging to the organization. |
 

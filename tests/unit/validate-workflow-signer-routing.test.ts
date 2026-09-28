@@ -157,36 +157,48 @@ describe("validateWorkflow — signer routing, cases that must stay silent", () 
 // changes nothing. `integrationId` is inert regardless of what sits beside it.
 // ---------------------------------------------------------------------------
 
+// Pinned verbatim. "eoa" and "safe:<id>" both override organization policy,
+// so the message may not claim this node signs from that policy.
+const EXPECTED_MESSAGE =
+  'nodes[1].config sets "integrationId", which no web3 step reads. The signer for a signed write is resolved from "web3Connection" only, so this value has no effect on which wallet signs; remove it. Set "web3Connection" only to deliberately override the organization\'s signing policy for this node; leaving it absent routes the node through that policy.';
+
+const warnFor = (value: string | undefined) => {
+  const overrides: Record<string, unknown> = { integrationId: "int_x" };
+  if (value !== undefined) {
+    overrides.web3Connection = value;
+  }
+  return routingWarnings(
+    makeWorkflow({
+      nodes: [triggerNode(), writeNode("write-1", overrides)],
+    })
+  );
+};
+
+// Every branch `parseWeb3Connection` distinguishes, plus a value it rejects.
+const WEB3_CONNECTION_BRANCHES: [string, string | undefined][] = [
+  ["absent", undefined],
+  ["an empty string", ""],
+  ["default", "default"],
+  ["eoa", "eoa"],
+  ["a specific safe", "safe:sw_123"],
+  ["a value the resolver rejects", "not-a-connection"],
+];
+
 describe("validateWorkflow — integrationId warns regardless of web3Connection", () => {
-  it.each([
-    ["absent", undefined],
-    ["an empty string", ""],
-    ["default", "default"],
-    ["eoa", "eoa"],
-    ["a specific safe", "safe:sw_123"],
-  ])("still warns when web3Connection is %s", (_label, value) => {
-    const overrides: Record<string, unknown> = { integrationId: "int_x" };
-    if (value !== undefined) {
-      overrides.web3Connection = value;
+  it.each(WEB3_CONNECTION_BRANCHES)(
+    "warns with the same true message when web3Connection is %s",
+    (_label, value) => {
+      const warnings = warnFor(value);
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0].message).toBe(EXPECTED_MESSAGE);
+      expect(warnings[0].message).not.toMatch(
+        /signs from organization policy/i
+      );
     }
-    expect(
-      routingWarnings(
-        makeWorkflow({
-          nodes: [triggerNode(), writeNode("write-1", overrides)],
-        })
-      )
-    ).toHaveLength(1);
-  });
+  );
 
   it("never describes routing as unset, and never suggests eoa", () => {
-    const [warning] = routingWarnings(
-      makeWorkflow({
-        nodes: [
-          triggerNode(),
-          writeNode("write-1", { integrationId: "int_x" }),
-        ],
-      })
-    );
+    const [warning] = warnFor(undefined);
     // Absence routes to org policy, and "eoa" is the branch that bypasses it:
     // telling an agent routing is unset would point it at the bypass.
     expect(warning.message).not.toMatch(/unset|unrouted|no sender routing/i);

@@ -396,7 +396,6 @@ type NodeActionConfig = {
   actionType: unknown;
   abiFunction: unknown;
   calls: unknown;
-  web3Connection: unknown;
   integrationId: unknown;
 };
 
@@ -419,7 +418,6 @@ function readNodeActionConfig(node: unknown): NodeActionConfig | null {
     actionType,
     abiFunction: cfg.abiFunction,
     calls: cfg.calls,
-    web3Connection: cfg.web3Connection,
     integrationId: cfg.integrationId,
   };
 }
@@ -644,6 +642,11 @@ function isAllowanceGated(gate: AllowanceGate, node: unknown): boolean {
 // Zodiac Role. The message therefore never describes routing as "unset" and
 // never suggests `"eoa"`, which is the branch that bypasses that policy.
 //
+// The message also makes no claim about which signer this node resolves to.
+// `integrationId` can sit beside any `web3Connection` value, and `"eoa"` and
+// `"safe:<id>"` both override org policy, so a policy clause would be false on
+// those branches. Every sentence describes the fields, not this node's signer.
+//
 // Scoped to the action types `isWriteActionType` covers plus the three below.
 // No seed workflow sets `integrationId`, so this rule starts at zero against
 // the 43 workflows under `scripts/seed/workflows`.
@@ -686,7 +689,7 @@ function runSignerRoutingCheck(
     }
     warnings.push({
       code: VALIDATION_WARNING_CODES.SIGNER_ROUTING_KEY_IGNORED,
-      message: `nodes[${idx}].config sets "integrationId", which no web3 step reads. The signer for a signed write is resolved from "web3Connection" only, so this value has no effect and the node signs from organization policy either way — remove it. Set "web3Connection" only to deliberately override that policy for this node; leaving it absent keeps the organization's configured wallet and its active role.`,
+      message: `nodes[${idx}].config sets "integrationId", which no web3 step reads. The signer for a signed write is resolved from "web3Connection" only, so this value has no effect on which wallet signs; remove it. Set "web3Connection" only to deliberately override the organization's signing policy for this node; leaving it absent routes the node through that policy.`,
       parameterPath: `nodes[${idx}].config.integrationId`,
     });
   }
