@@ -284,6 +284,49 @@ describe("GET /api/analytics/runs pagination parsing", () => {
     expect(options?.page).toBeUndefined();
     expect(options?.limit).toBeUndefined();
   });
+
+  it("drops an unparseable cursor rather than sending an Invalid Date", async () => {
+    // queries.ts does lt(startedAt, new Date(cursor)). An Invalid Date reached
+    // Postgres as an invalid timestamp and the route answered 500, so a
+    // malformed query parameter read as a server fault.
+    for (const cursor of [
+      "abc",
+      "",
+      "not-a-date",
+      "2026-13-45T00:00:00.000Z",
+    ]) {
+      const options = await optionsFor({ cursor });
+      expect(options?.cursor, `cursor=${cursor}`).toBeUndefined();
+    }
+  });
+
+  it("forwards a cursor the listing itself minted", async () => {
+    // nextCursor is the last row's startedAt, a Date#toISOString() string.
+    const cursor = new Date("2026-09-01T12:34:56.789Z").toISOString();
+    const options = await optionsFor({ cursor });
+
+    expect(options?.cursor).toBe(cursor);
+  });
+
+  it("only ever forwards a cursor that parses to a real date", async () => {
+    for (const cursor of ["abc", "2026-09-01T12:34:56.789Z", ""]) {
+      const options = await optionsFor({ cursor });
+      const forwarded = options?.cursor as string | undefined;
+      if (forwarded !== undefined) {
+        expect(
+          Number.isNaN(new Date(forwarded).getTime()),
+          `cursor=${cursor}`
+        ).toBe(false);
+      }
+    }
+  });
+
+  it("serves a request with a malformed cursor instead of failing it", async () => {
+    vi.mocked(getUnifiedRuns).mockClear();
+    const res = await GET(paginationRequest({ cursor: "abc" }));
+
+    expect(res.status).toBe(200);
+  });
 });
 
 describe("GET /api/analytics/runs auth", () => {

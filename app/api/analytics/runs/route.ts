@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { parseRunFilters } from "@/lib/analytics/parse-run-filters";
 import { getUnifiedRuns } from "@/lib/analytics/queries";
+import { MAX_PAGE } from "@/lib/analytics/runs-query";
 import { parseTimeRange } from "@/lib/analytics/time-range";
 import { apiError } from "@/lib/api-error";
 import { SCOPE_MCP_READ } from "@/lib/mcp/oauth-scopes";
@@ -9,35 +10,14 @@ import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 import { requireScope } from "@/lib/middleware/require-scope";
 
 /**
- * Ceiling for `page`. getUnifiedRuns turns the page into
- * `fetchLimit = (page - 1) * pageLimit + pageLimit + 1`, and that value becomes
- * the SQL LIMIT on both source queries, so an unbounded page removes the
- * limit's effect entirely: `?page=999999999` asks Postgres for 49999999951
- * rows, which is every run in range for the organization. Both sources are
- * then concatenated and sorted in Node before an empty window is sliced out of
- * them - O(all runs) of work to return nothing.
- *
- * With `limit` bounded at the same figure the query honours, the worst case is
- * `199 * 100 + 100 + 1` = 20001 rows. The UI does page past the ceiling - the
- * table sizes its pager off the real total - so the bound clamps rather than
- * rejects, and the response echoes the clamped page so the pager and the rows
- * describe the same window.
- *
- * Its own figure rather than MAX_PAGE_SIZE from lib/pagination.ts: that
- * constant is the ceiling on a page *size*, and raising it for the list
- * endpoints it governs would move this ceiling and the 20001 figure above with
- * it, silently.
- */
-const MAX_PAGE = 200;
-
-/**
  * Ceiling for `limit`, matching the `Math.min(limit, 100)` in
  * lib/analytics/queries.ts:1449 that decides the page size.
  *
  * Validating against a larger figure accepts a value the query then halves:
  * `?limit=150` was admitted and served 100. Nothing downstream was incoherent
- * - `pageSize` echoes the honoured value - but the two ceilings disagreeing is
- * what made the fetchLimit figure above wrong, so they are pinned together.
+ * - `pageSize` echoes the honoured value - but the worst case is only pinned
+ * when the two ceilings agree: with both bound, the largest fetchLimit
+ * getUnifiedRuns can be asked for is `199 * 100 + 100 + 1` = 20001 rows.
  */
 const MAX_LIMIT = 100;
 
@@ -81,13 +61,28 @@ function parsePaginationParam(
   }
   // Clamp rather than drop. A dropped value is indistinguishable from an
   // absent one, so getUnifiedRuns would fall back to page 1 and echo it: the
-  // caller asks for page 201 and silently receives the first page. The table
-  // computes totalPages from the real total and keeps Next enabled past the
-  // ceiling, so an organization with more than MAX_PAGE * 50 runs in range
-  // would page forwards into the first rows with the pager still reading 201.
-  // Clamping keeps the echoed page and the returned rows describing the same
-  // window.
+  // caller asks for page 201 and silently receives the first page. Clamping
+  // keeps the echoed page and the returned rows describing the same window,
+  // and the table caps its pager at MAX_PAGE so it stops where the route does.
   return Math.min(value, max);
+}
+
+/**
+ * A cursor is the ISO `startedAt` of the last row of the previous page, and
+ * lib/analytics/queries.ts hands it to `new Date(...)` for the keyset
+ * comparison. An unparseable value became an Invalid Date, which Postgres
+ * rejected and the route surfaced as a 500: `?cursor=abc` was a server error
+ * rather than a bad parameter.
+ *
+ * Treated as absent, matching how a page this route will not honour behaves,
+ * so the listing restarts from the newest row instead of failing. Every cursor
+ * the listing issues is a `Date#toISOString()` string and still round-trips.
+ */
+function parseCursor(raw: string | null): string | undefined {
+  if (raw === null || Number.isNaN(Date.parse(raw))) {
+    return undefined;
+  }
+  return raw;
 }
 
 export async function GET(req: NextRequest): Promise<Response> {
@@ -110,7 +105,7 @@ export async function GET(req: NextRequest): Promise<Response> {
     const range = parseTimeRange(params.get("range"));
     const customStart = params.get("customStart") ?? undefined;
     const customEnd = params.get("customEnd") ?? undefined;
-    const cursor = params.get("cursor") ?? undefined;
+    const cursor = parseCursor(params.get("cursor"));
 
     const page = parsePaginationParam(params.get("page"), {
       min: 1,
