@@ -10,7 +10,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/db", () => ({ db: {} }));
 
-import { daysBefore, getRetentionConfig } from "@/lib/retention/config";
+import {
+  daysBefore,
+  getRetentionConfig,
+  PLAN_WINDOW_MIN_CEILING_MS,
+} from "@/lib/retention/config";
 import {
   buildRetentionSchedule,
   resolveRetentionDays,
@@ -102,6 +106,23 @@ describe("getRetentionConfig", () => {
       planChangeGraceMs: 21_600_000,
       planWindowSliceMs: 7_200_000,
     });
+  });
+
+  it("clamps the plan-window slice up off the narrowing floor", () => {
+    // The lever an operator reaches for to be safer per read. At exactly the
+    // ceiling minimum the first narrowing step has nowhere to go, so a single
+    // transient cancelled read would fail the organization outright.
+    process.env.EXECUTION_RETENTION_PLAN_WINDOW_SLICE_HOURS = "1";
+
+    expect(getRetentionConfig().planWindowSliceMs).toBe(
+      2 * PLAN_WINDOW_MIN_CEILING_MS
+    );
+  });
+
+  it("leaves a plan-window slice above the floor alone", () => {
+    process.env.EXECUTION_RETENTION_PLAN_WINDOW_SLICE_HOURS = "6";
+
+    expect(getRetentionConfig().planWindowSliceMs).toBe(6 * 60 * 60 * 1000);
   });
 
   it('accepts "1" as well as "true" for the switches', () => {

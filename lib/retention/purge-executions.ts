@@ -29,6 +29,7 @@ import { logWarn } from "@/lib/logging";
 import {
   daysBefore,
   getRetentionConfig,
+  PLAN_WINDOW_MIN_CEILING_MS,
   type RetentionConfig,
 } from "@/lib/retention/config";
 import {
@@ -42,7 +43,7 @@ import {
   RETENTION_EPOCH,
   setPurgeWatermark,
 } from "@/lib/retention/progress";
-import { HOUR_MS, SECOND_MS } from "@/lib/utils/duration";
+import { SECOND_MS } from "@/lib/utils/duration";
 
 /**
  * Statuses a run can still be picked up from. Their step logs carry
@@ -112,21 +113,6 @@ export const PLAN_WINDOW_MIN_SLICE_MS = 1000;
  * even over a wide slice.
  */
 export const PLAN_WINDOW_READ_TIMEOUT_MS = 5 * SECOND_MS;
-
-/**
- * Narrowest slice the timeout may drive the ceiling down to. Below it the
- * organization fails rather than crawling.
- *
- * Distinct from PLAN_WINDOW_MIN_SLICE_MS, which the overflow branch still
- * halves down to: too many runs in a second is a real shape, but a read that
- * cannot answer an hour-wide slice inside the timeout is not using the
- * per-workflow index at all, and narrowing further only trades one long read
- * for thousands of short ones. A year-wide range at this width is about 8,600
- * slices, which a run can still make progress through; at a second it would be
- * 31.5M, and the budget would stop the pass with every organization behind it
- * skipped and nothing said out loud.
- */
-export const PLAN_WINDOW_MIN_CEILING_MS = HOUR_MS;
 
 /**
  * Drained slices with no cancelled read that earn the ceiling a doubling back
@@ -603,16 +589,22 @@ function withIndexPlans<T>(
 /**
  * One organization's drain, in time slices of its runs' `started_at`.
  *
- * A slice starts at PLAN_WINDOW_INITIAL_SLICE_MS, or at the whole remaining
+ * A slice starts at config.planWindowSliceMs, or at the whole remaining
  * range when that is narrower, and never grows past it. Two things make it
  * narrower still, and both resume the walk at the chunk that hit them -- the
  * chunks before it were read in full over the larger range, so they are already
  * done for the smaller one:
  *
  * - a workflow chunk with more eligible runs in it than one read may return;
- * - a read the tighter statement_timeout cancels, which is how a slice too wide
- *   for the planner to answer from (workflow_id, started_at) announces itself
- *   (KEEP-1360). That one lowers the ceiling as well as the slice.
+ * - a cancelled runs read, which is how a slice too wide for the planner to
+ *   answer from (workflow_id, started_at) announces itself (KEEP-1360). That one
+ *   lowers the ceiling as well as the slice.
+ *
+ * Narrowing works for those two because each reads exactly the slice. The
+ * skipped-run read does not: it is anchored at `from`, so the slice width is not
+ * what makes it expensive, and a cancellation there ends the organization's
+ * drain instead. See the branch itself for why that converges and narrowing
+ * would not.
  *
  * The ceiling is not a one-way ratchet. A cancelled read is not proof of a
  * planner flip -- contention or a cold cache produces one too -- so after
@@ -655,6 +647,9 @@ async function drainPlanWindow(
   let spanCeiling = cap;
   let span = cap;
   let cleanSlices = 0;
+  // Slices whose watermark this run actually wrote, so a drain that has to stop
+  // early can tell progress from a standstill.
+  let slicesDrained = 0;
   let firstChunk = 0;
 
   while (sliceStart < end) {
@@ -773,31 +768,41 @@ async function drainPlanWindow(
         if (!isStatementTimeout(error)) {
           throw error;
         }
-        // Same meaning as a cancelled runs read: too wide. Narrow and walk the
-        // slice again rather than failing the organization, and write no
-        // watermark for a slice whose skipped run is unknown.
-        if (span <= PLAN_WINDOW_MIN_CEILING_MS) {
+        // Narrowing the slice cannot answer this one, unlike a cancelled runs
+        // read. That read covers exactly [sliceStart, sliceEnd), so halving the
+        // slice halves what it scans; this one covers [from, sliceEnd), whose
+        // width is (sliceStart - from) + span, and halving span leaves the first
+        // term untouched -- hundreds of slices in, a halving moves the range by
+        // less than a percent. Retrying would also re-walk a slice that has
+        // already drained, probing the step logs of every run in it for nothing.
+        //
+        // Ending the drain here does converge: the next run starts at the last
+        // watermark this one wrote, so `from` itself moves up and the range
+        // really does shrink. Everything already deleted stands.
+        logWarn(
+          "[Retention] Ending a plan-window drain: the skipped-run read timed out",
+          {
+            organization_id: organizationId,
+            slices_drained: String(slicesDrained),
+          }
+        );
+        if (slicesDrained === 0) {
+          // Nothing was written, so the next run would start here and stall the
+          // same way. When the planner answers this read from the status index
+          // its cost does not depend on the range at all, so that is the likely
+          // case rather than a rare one -- report it instead of repeating it
+          // silently every run.
           throw new Error(
-            `Reading the oldest still-resumable run of this organization took longer than ${PLAN_WINDOW_READ_TIMEOUT_MS} ms over a ${PLAN_WINDOW_MIN_CEILING_MS} ms slice`
+            "Reading the oldest still-resumable run of this organization timed out before any slice drained"
           );
         }
-        spanCeiling = Math.max(
-          Math.floor(span / 2),
-          PLAN_WINDOW_MIN_CEILING_MS
-        );
-        span = spanCeiling;
-        cleanSlices = 0;
-        logWarn(
-          "[Retention] Narrowing a plan-window slice a resumable-run read timed out on",
-          { organization_id: organizationId, slice_ms: String(spanCeiling) }
-        );
-        firstChunk = 0;
-        continue;
+        return { budgetExhausted: false };
       }
       await setPurgeWatermark(
         organizationId,
         skipped && skipped.getTime() < sliceEnd ? skipped : new Date(sliceEnd)
       );
+      slicesDrained += 1;
     }
 
     sliceStart = sliceEnd;

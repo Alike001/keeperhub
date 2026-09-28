@@ -99,6 +99,18 @@ export type RetentionConfig = {
  */
 const MIN_EXECUTION_RETENTION_DAYS = 400;
 
+/**
+ * Narrowest slice a cancelled runs read may drive the plan-window ceiling down
+ * to. Below it the drain fails the organization instead of crawling.
+ *
+ * Lives here rather than beside the drain because it is the floor the
+ * configurable slice width is clamped against, and because it is deliberately
+ * not configurable itself. A read that cannot answer an hour-wide slice inside
+ * the read timeout is not using the per-workflow index at all, and narrowing
+ * further only trades one long read for thousands of short ones.
+ */
+export const PLAN_WINDOW_MIN_CEILING_MS = HOUR_MS;
+
 const DEFAULTS = {
   defaultLogRetentionDays: 7,
   minLogRetentionDays: 7,
@@ -179,11 +191,19 @@ export function getRetentionConfig(): RetentionConfig {
       "EXECUTION_RETENTION_BATCH_SIZE",
       DEFAULTS.batchSize
     ),
-    planWindowSliceMs:
+    // Clamped up, like every other window here, so the lever an operator
+    // reaches for to be safer per read cannot make things worse. At exactly
+    // PLAN_WINDOW_MIN_CEILING_MS the first narrowing step has nowhere to go: a
+    // cancelled read would hit the floor on its first try and fail the
+    // organization, so one transient 5 s read would cost it the run. Two
+    // ceiling-minimums leaves room for one halving.
+    planWindowSliceMs: Math.max(
+      2 * PLAN_WINDOW_MIN_CEILING_MS,
       readPositiveInt(
         "EXECUTION_RETENTION_PLAN_WINDOW_SLICE_HOURS",
         DEFAULTS.planWindowSliceHours
-      ) * HOUR_MS,
+      ) * HOUR_MS
+    ),
     maxRuntimeMs:
       readPositiveInt(
         "EXECUTION_RETENTION_MAX_RUNTIME_SECONDS",

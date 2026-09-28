@@ -197,10 +197,12 @@ const { state, dbStub } = vi.hoisted(() => {
 
 vi.mock("@/lib/db", () => ({ db: dbStub }));
 
-import { getRetentionConfig } from "@/lib/retention/config";
+import {
+  getRetentionConfig,
+  PLAN_WINDOW_MIN_CEILING_MS,
+} from "@/lib/retention/config";
 import {
   PLAN_WINDOW_CEILING_RECOVERY_SLICES,
-  PLAN_WINDOW_MIN_CEILING_MS,
   PLAN_WINDOW_MIN_SLICE_MS,
   PLAN_WINDOW_RUNS_PER_READ,
   PLAN_WINDOW_WORKFLOW_CHUNK,
@@ -960,30 +962,55 @@ describe("runRetentionPurge", () => {
     expect(spans[1 + PLAN_WINDOW_CEILING_RECOVERY_SLICES]).toBe(SLICE_MS);
   });
 
-  it("narrows the slice when the skipped-run read is cancelled, rather than failing the organization", async () => {
-    // That read runs under the same bound as the runs read, so a cancellation
-    // means the same thing: too wide. It must not cost the organization its run.
-    state.selectPages = [ORG_ROWS, [], [watermarkRow(2)], [{ id: "wf-1" }]];
-    state.oldest = [cancelledRead()];
+  it("ends the drain when the skipped-run read is cancelled after a slice has drained", async () => {
+    // Narrowing cannot answer this read: it covers [from, sliceEnd), so its
+    // width is dominated by (sliceStart - from), which the slice width does not
+    // change. Stopping does converge, because the next run starts at the last
+    // watermark this one wrote.
+    state.selectPages = [ORG_ROWS, [], [watermarkRow(3)], [{ id: "wf-1" }]];
+    state.oldest = [null, cancelledRead()];
 
     const result = await runRetentionPurge(enabledConfig(), NOW);
     const planPass = result.passes.find(
       (pass) => pass.pass === "logs_plan_window"
     );
+    const from = FREE_CUTOFF.getTime() - 3 * SLICE_MS;
 
+    // The first slice drained and kept its watermark; the second stopped the
+    // drain and claimed nothing.
+    expect(state.watermarks).toEqual([new Date(from + SLICE_MS)]);
+    // Progress was made, so this is not a failure.
     expect(planPass?.failedOrganizationIds).toBeUndefined();
-    expect(sliceSpans()[0]).toBe(SLICE_MS);
-    expect(sliceSpans()[1]).toBe(SLICE_MS / 2);
-    // Narrowed, not abandoned: it still drains to the cutoff.
-    expect(state.watermarks.at(-1)).toEqual(FREE_CUTOFF);
+    // And it did not re-walk the slice it had already drained.
+    expect(sliceSpans()).toEqual([SLICE_MS, SLICE_MS]);
+  });
+
+  it("fails an organization whose skipped-run read is cancelled before any slice drains", async () => {
+    // With nothing written, the next run would start in the same place and
+    // stall the same way. That read's cost does not depend on its range when the
+    // planner answers it from the status index, so this is the likely shape
+    // rather than a rare one, and it has to be reported rather than repeated.
+    state.selectPages = [ORG_ROWS, [], [watermarkRow(3)], [{ id: "wf-1" }]];
+    state.oldest = [cancelledRead()];
+
+    const error = await runRetentionPurge(enabledConfig(), NOW).catch(
+      (caught: unknown) => caught
+    );
+
+    expect(error).toBeInstanceOf(RetentionPurgeIncompleteError);
+    expect(
+      (error as RetentionPurgeIncompleteError).failedOrganizationIds
+    ).toEqual(["org-free"]);
+    expect(state.watermarks).toEqual([]);
   });
 
   it("skips every organization behind the one the budget stopped, and every later group", async () => {
     // The consequence that makes a crawling organization worse than a slow one.
-    // budgetExhausted breaks the organization loop (purge-executions.ts:511)
-    // and then the group loop (:522), so one organization that cannot finish
-    // takes every organization behind it down with it for that run -- and the
-    // report says only "budgetExhausted", never which ones were skipped.
+    // In purgeLogsPastPlanWindow, budgetExhausted breaks out of the loop over a
+    // group's organizations and then out of the loop over groups, so one
+    // organization that cannot finish takes every organization behind it down
+    // with it for that run -- and the report says only "budgetExhausted", never
+    // which ones were skipped.
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-09-07T03:48:00.000Z"));
     state.selectPages = [

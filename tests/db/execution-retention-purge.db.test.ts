@@ -610,7 +610,7 @@ describe("execution retention purge (real database)", () => {
     // year back. That whole year used to be one slice, and for an organization
     // whose runs cannot fill a page early in it the planner answered the read
     // from the global started_at index and the statement timed out. Every slice
-    // is now capped at PLAN_WINDOW_INITIAL_SLICE_MS, so this is the test that
+    // is now capped at config.planWindowSliceMs, so this is the test that
     // walking the range in capped slices strands none of the runs in between.
     const orgSparse = `${PREFIX}org_sparse`;
     const workflowId = (index: number) => `${orgSparse}_wf_${index}`;
