@@ -329,12 +329,13 @@ function runWriteActionCheck(
   if (workflow.workflowType === "read" && hasWriteAction) {
     // The stored type can lag the nodes (create, duplicate and import do not
     // derive it), so the fix an agent is told to make has to work: an unlisted
-    // save derives the type, but a listed row's type is frozen and a save that
-    // touches nodes is refused with WORKFLOW_TYPE_FROZEN.
+    // save derives the type, but on a listed row update_workflow will not
+    // change it, and an edit that keeps a write node is refused with
+    // WORKFLOW_TYPE_FROZEN.
     warnings.push({
       code: VALIDATION_WARNING_CODES.WRITE_ACTION_ON_READ_WORKFLOW,
       message: workflow.isListed
-        ? 'workflowType is "read" but workflow contains a write-action node. The workflow is listed, so its type is frozen: a save that changes nodes is refused with WORKFLOW_TYPE_FROZEN. Unlist the workflow before saving changes to its type.'
+        ? 'workflowType is "read" but workflow contains a write-action node. The workflow is listed, so update_workflow will not change its type: an edit that keeps a write-action node is refused with WORKFLOW_TYPE_FROZEN. Remove the write-action node, or unlist the workflow and save it to derive "write".'
         : 'workflowType is "read" but workflow contains a write-action node. The stored type is derived from nodes on save, so saving the workflow once sets it to "write".',
       parameterPath: "workflowType",
     });
