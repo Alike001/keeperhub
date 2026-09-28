@@ -1,5 +1,29 @@
 import { describe, expect, it } from "vitest";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
+import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
+
+/** Run a single Condition node through the real sanitizer and return its stored config */
+function sanitizeConditionConfig(
+  config: Record<string, unknown>
+): Record<string, unknown> {
+  const { nodes } = sanitizeWorkflowData(
+    [
+      {
+        id: "c1",
+        type: "action",
+        data: { label: "Condition", type: "action", config },
+      },
+    ],
+    []
+  );
+  const data = nodes[0].data as Record<string, unknown>;
+  return data.config as Record<string, unknown>;
+}
+
+function storedGroup(config: Record<string, unknown>): Record<string, unknown> {
+  const conditionConfig = config.conditionConfig as Record<string, unknown>;
+  return conditionConfig.group as Record<string, unknown>;
+}
 
 describe("sanitizeWorkflowData", () => {
   describe("React Flow UI state stripping", () => {
@@ -465,12 +489,7 @@ describe("sanitizeWorkflowData", () => {
       expect(rules[1].operator).toBe(">=");
     });
 
-    // KEEP-2305: some producers emit `group` at the config root instead of
-    // nested under `conditionConfig` (matching the ConditionConfig type's
-    // own `{ group }` shape). Previously this was silently dropped because
-    // the function bailed out whenever `conditionConfig` didn't already
-    // exist, leaving the condition to resolve as `undefined` with no
-    // signal pointing at the real cause.
+    // A root-level group is the only copy of the rules, and the resolver never reads it.
     it("folds a root-level group into conditionConfig instead of dropping it", () => {
       const { nodes } = sanitizeWorkflowData(
         [
@@ -557,10 +576,7 @@ describe("sanitizeWorkflowData", () => {
       expect(group.logic).toBe("OR");
     });
 
-    // The array-shaped root-group producer emits `logicalOperator` as a
-    // sibling of `group`, not nested under it. Folding the array without
-    // carrying `logicalOperator` along silently defaults to "AND" and can
-    // invert the branch's actual logic.
+    // The array-shaped producer emits `logicalOperator` as a sibling of `group`.
     it("preserves logicalOperator when folding an array-shaped root-level group", () => {
       const { nodes } = sanitizeWorkflowData(
         [
@@ -595,11 +611,7 @@ describe("sanitizeWorkflowData", () => {
       expect(rules).toHaveLength(2);
     });
 
-    // A nested `conditionConfig` that exists but has no usable `group`
-    // (e.g. `{}` or `{ logicalOperator: "OR" }`) is truthy, so checking
-    // only "does conditionConfig exist" treats it as authoritative and
-    // discards a real root-level group sitting right next to it - the
-    // same data loss as the original bug, one shape over.
+    // A `conditionConfig` with no usable group is truthy but carries no rules.
     it("falls through to a root-level group when the nested conditionConfig has no usable group", () => {
       const { nodes } = sanitizeWorkflowData(
         [
@@ -637,6 +649,185 @@ describe("sanitizeWorkflowData", () => {
       const group = conditionConfig.group as Record<string, unknown>;
       expect(group).toBeDefined();
       expect(group.id).toBe("real-group");
+    });
+  });
+
+  describe("Degenerate condition groups", () => {
+    it("drops an empty nested group instead of storing an always-open gate", () => {
+      const config = sanitizeConditionConfig({
+        actionType: "Condition",
+        conditionConfig: { group: {} },
+      });
+
+      expect(config.conditionConfig).toBeUndefined();
+      expect(resolveConditionExpression(config)).toBeUndefined();
+    });
+
+    it("drops an empty array-shaped nested group", () => {
+      const config = sanitizeConditionConfig({
+        actionType: "Condition",
+        conditionConfig: { group: [] },
+      });
+
+      expect(config.conditionConfig).toBeUndefined();
+      expect(resolveConditionExpression(config)).toBeUndefined();
+    });
+
+    it("drops an empty root-level group", () => {
+      const config = sanitizeConditionConfig({
+        actionType: "Condition",
+        group: {},
+      });
+
+      expect(config.group).toBeUndefined();
+      expect(config.conditionConfig).toBeUndefined();
+      expect(resolveConditionExpression(config)).toBeUndefined();
+    });
+
+    it("drops an empty array-shaped root-level group", () => {
+      const config = sanitizeConditionConfig({
+        actionType: "Condition",
+        group: [],
+        logicalOperator: "OR",
+      });
+
+      expect(config.group).toBeUndefined();
+      expect(config.logicalOperator).toBeUndefined();
+      expect(config.conditionConfig).toBeUndefined();
+      expect(resolveConditionExpression(config)).toBeUndefined();
+    });
+
+    it("drops a group whose only rule has no operands", () => {
+      const config = sanitizeConditionConfig({
+        actionType: "Condition",
+        conditionConfig: {
+          group: {
+            logic: "AND",
+            rules: [{ leftOperand: "", operator: "===", rightOperand: "" }],
+          },
+        },
+      });
+
+      expect(config.conditionConfig).toBeUndefined();
+      expect(resolveConditionExpression(config)).toBeUndefined();
+    });
+
+    it("leaves the expression in charge when the group is degenerate", () => {
+      const config = sanitizeConditionConfig({
+        actionType: "Condition",
+        conditionConfig: { group: { logic: "AND", rules: [] } },
+        condition: "{{@a:B.x}} > 1",
+      });
+
+      expect(config.conditionConfig).toBeUndefined();
+      expect(resolveConditionExpression(config)).toBe("{{@a:B.x}} > 1");
+    });
+  });
+
+  describe("logicalOperator casing", () => {
+    it("reads a lowercase logicalOperator as OR when folding an array-shaped group", () => {
+      const config = sanitizeConditionConfig({
+        actionType: "Condition",
+        group: [
+          { leftOperand: "{{@a:B.x}}", operator: "===", rightOperand: "1" },
+          { leftOperand: "{{@a:B.y}}", operator: "===", rightOperand: "2" },
+        ],
+        logicalOperator: "or",
+      });
+
+      expect(storedGroup(config).logic).toBe("OR");
+      expect(resolveConditionExpression(config)).toBe(
+        "{{@a:B.x}} === 1 || {{@a:B.y}} === 2"
+      );
+    });
+
+    it("reads a lowercase group logic as OR", () => {
+      const config = sanitizeConditionConfig({
+        actionType: "Condition",
+        conditionConfig: {
+          group: {
+            logic: "or",
+            rules: [
+              { leftOperand: "{{@a:B.x}}", operator: "===", rightOperand: "1" },
+              { leftOperand: "{{@a:B.y}}", operator: "===", rightOperand: "2" },
+            ],
+          },
+        },
+      });
+
+      expect(storedGroup(config).logic).toBe("OR");
+      expect(resolveConditionExpression(config)).toBe(
+        "{{@a:B.x}} === 1 || {{@a:B.y}} === 2"
+      );
+    });
+  });
+
+  describe("Root-level group versus condition expression", () => {
+    it("strips a stale root-level group when an expression is present", () => {
+      const config = sanitizeConditionConfig({
+        actionType: "Condition",
+        group: {
+          id: "stale",
+          logic: "AND",
+          rules: [
+            {
+              id: "r1",
+              leftOperand: "{{@a:B.stale}}",
+              operator: "===",
+              rightOperand: "1",
+            },
+          ],
+        },
+        condition: "{{@a:B.authored}} === 2",
+      });
+
+      expect(config.group).toBeUndefined();
+      expect(config.conditionConfig).toBeUndefined();
+      expect(config.condition).toBe("{{@a:B.authored}} === 2");
+      expect(resolveConditionExpression(config)).toBe(
+        "{{@a:B.authored}} === 2"
+      );
+    });
+
+    it("folds a root-level group when the expression is blank", () => {
+      const config = sanitizeConditionConfig({
+        actionType: "Condition",
+        group: {
+          logic: "AND",
+          rules: [
+            { leftOperand: "{{@a:B.x}}", operator: "===", rightOperand: "1" },
+          ],
+        },
+        condition: "  \n ",
+      });
+
+      expect(config.group).toBeUndefined();
+      expect(storedGroup(config).logic).toBe("AND");
+      expect(resolveConditionExpression(config)).toBe("{{@a:B.x}} === 1");
+    });
+
+    it("keeps a nested group in charge when an expression is present too", () => {
+      const config = sanitizeConditionConfig({
+        actionType: "Condition",
+        conditionConfig: {
+          group: {
+            id: "real-group",
+            logic: "AND",
+            rules: [
+              {
+                id: "r1",
+                leftOperand: "{{@a:B.x}}",
+                operator: "===",
+                rightOperand: "1",
+              },
+            ],
+          },
+        },
+        condition: "{{@a:B.x}} === 1",
+      });
+
+      expect(storedGroup(config).id).toBe("real-group");
+      expect(resolveConditionExpression(config)).toBe("{{@a:B.x}} === 1");
     });
   });
 

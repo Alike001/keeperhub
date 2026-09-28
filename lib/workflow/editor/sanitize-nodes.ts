@@ -14,7 +14,12 @@
 import type { Edge, Node } from "@xyflow/react";
 import { nanoid } from "nanoid";
 import { computeAutoLayout } from "@/lib/workflow/editor/auto-layout";
-import type { ConditionOperator } from "@/lib/workflow/nodes/condition/builder-types";
+import type {
+  ConditionGroup,
+  ConditionOperator,
+  ConditionRule,
+} from "@/lib/workflow/nodes/condition/builder-types";
+import { visualConditionToExpression } from "@/lib/workflow/nodes/condition/expression";
 
 /** Map common MCP/AI operator aliases to canonical ConditionOperator values */
 const OPERATOR_ALIASES: Record<string, ConditionOperator> = {
@@ -106,9 +111,7 @@ function normalizeOperator(op: unknown): ConditionOperator {
 }
 
 /** Normalize a single condition rule to the canonical format */
-function normalizeConditionRule(
-  raw: Record<string, unknown>
-): Record<string, unknown> {
+function normalizeConditionRule(raw: Record<string, unknown>): ConditionRule {
   return {
     id: (raw.id as string) || nanoid(),
     leftOperand: String(raw.leftOperand ?? raw.field ?? ""),
@@ -117,14 +120,19 @@ function normalizeConditionRule(
   };
 }
 
+/** Read a group's logic regardless of case, so a stored "or" is not silently an AND */
+function normalizeLogic(raw: unknown): "AND" | "OR" {
+  return typeof raw === "string" && raw.trim().toUpperCase() === "OR"
+    ? "OR"
+    : "AND";
+}
+
 /** Normalize a condition group, recursively handling nested groups */
-function normalizeConditionGroup(
-  raw: Record<string, unknown>
-): Record<string, unknown> {
+function normalizeConditionGroup(raw: Record<string, unknown>): ConditionGroup {
   const rules = Array.isArray(raw.rules) ? raw.rules : [];
   return {
     id: (raw.id as string) || nanoid(),
-    logic: raw.logic === "OR" ? "OR" : "AND",
+    logic: normalizeLogic(raw.logic),
     rules: rules.map((item: Record<string, unknown>) => {
       if ("rules" in item || "logic" in item) {
         return normalizeConditionGroup(item);
@@ -134,19 +142,33 @@ function normalizeConditionGroup(
   };
 }
 
+/** The resolver reads `condition` only when it is a non-blank string */
+function hasConditionExpression(config: Record<string, unknown>): boolean {
+  return typeof config.condition === "string" && config.condition.trim() !== "";
+}
+
+/** Drop every rule-group key, leaving `condition` as the only thing the resolver can read */
+function withoutConditionGroups(
+  config: Record<string, unknown>
+): Record<string, unknown> {
+  const {
+    group: _group,
+    logicalOperator: _logicalOperator,
+    conditionConfig: _conditionConfig,
+    ...rest
+  } = config;
+  return rest;
+}
+
 /**
  * Normalize conditionConfig inside a Condition node's config.
  * Fixes: missing ids, wrong operator formats, field name aliases, array-shaped groups.
  *
- * KEEP-2305: some producers (certain MCP/import/AI-generated paths) emit
- * `group` at the config root - matching the `ConditionConfig` type's own
- * literal `{ group }` shape - instead of nested under `conditionConfig`,
- * which is what the resolver (resolveConditionExpression) actually reads.
- * The previous guard required `config.conditionConfig` to already exist
- * before normalizing anything, so a root-level `group` was silently never
- * migrated in and the condition resolved to `undefined` with no signal
- * pointing at the real cause. Treat a root-level `group` as an alternate
- * input to the same normalization instead of a separate, unhandled shape.
+ * Some producers (MCP, import, AI generation) emit `group` at the config root instead
+ * of nested under `conditionConfig`, the only place the resolver reads it, so the node
+ * resolves to `undefined`. Fold a root-level group in under the same rule as migration
+ * 0158: only when there is no expression to outrank. Otherwise the stale group is
+ * dropped and `condition` stays in charge.
  */
 function normalizeConditionConfig(
   config: Record<string, unknown>
@@ -158,59 +180,57 @@ function normalizeConditionConfig(
   const nestedConditionConfig = config.conditionConfig as
     | Record<string, unknown>
     | undefined;
-  const rootGroup = config.group as
-    | Record<string, unknown>
-    | Record<string, unknown>[]
-    | undefined;
-
-  // Check the nested config's own `group` field, not just whether the
-  // wrapper object exists - a nested `conditionConfig` that is `{}` or
-  // `{ logicalOperator: "OR" }` with no usable group is truthy but has
-  // nothing to normalize, and should fall through to a root-level group
-  // the same way a fully-absent conditionConfig does.
-  const nestedGroup = nestedConditionConfig?.group as
-    | Record<string, unknown>
-    | Record<string, unknown>[]
-    | undefined;
+  const rootGroup = config.group;
+  const nestedGroup = nestedConditionConfig?.group;
 
   if (nestedGroup === undefined && rootGroup === undefined) {
     return config;
   }
 
+  // An expression already decides this node, so a root-level group is stale, not a
+  // fold candidate. Promoting it would start evaluating rules the author replaced.
+  if (nestedGroup === undefined && hasConditionExpression(config)) {
+    return withoutConditionGroups(config);
+  }
+
+  // Check the nested config's own `group`, not just the wrapper: a `conditionConfig`
+  // of `{}` is truthy but has nothing to normalize, so a root-level group still wins.
   const conditionConfig: Record<string, unknown> =
     nestedGroup === undefined
       ? {
+          // The array-shaped producer emits `logicalOperator` as a sibling of `group`.
           group: rootGroup,
-          // The array-shaped root-group producer emits `logicalOperator` as
-          // a sibling of `group` at the config root, not nested - carry it
-          // through instead of silently defaulting to "AND" below.
           logicalOperator:
             nestedConditionConfig?.logicalOperator ?? config.logicalOperator,
         }
-      : // nestedGroup came from nestedConditionConfig?.group, so
-        // nestedConditionConfig must be defined here.
-        (nestedConditionConfig as Record<string, unknown>);
-  let group = conditionConfig.group as
-    | Record<string, unknown>
-    | Record<string, unknown>[];
+      : (nestedConditionConfig as Record<string, unknown>);
+
+  const rawGroup = conditionConfig.group;
 
   // Handle group as array (broken format from some MCP outputs)
-  if (Array.isArray(group)) {
-    group = {
-      id: nanoid(),
-      logic: (conditionConfig.logicalOperator as string) ?? "AND",
-      rules: group.flatMap((g: Record<string, unknown>) =>
-        Array.isArray(g.rules) ? g.rules : [g]
-      ),
-    };
+  const groupObject = Array.isArray(rawGroup)
+    ? {
+        id: nanoid(),
+        logic: normalizeLogic(conditionConfig.logicalOperator),
+        rules: rawGroup.flatMap((entry: Record<string, unknown>) =>
+          Array.isArray(entry.rules) ? entry.rules : [entry]
+        ),
+      }
+    : rawGroup;
+
+  if (typeof groupObject !== "object" || groupObject === null) {
+    return withoutConditionGroups(config);
   }
 
-  if (typeof group !== "object" || group === null) {
-    return config;
+  const group = normalizeConditionGroup(groupObject as Record<string, unknown>);
+
+  // A group with no usable rule generates the expression "true", a gate that is always
+  // open. Drop it so the node resolves to nothing and the branch fails closed.
+  if (visualConditionToExpression(group) === "true") {
+    return withoutConditionGroups(config);
   }
 
-  // Drop a stray root-level `group`/`logicalOperator` once folded into
-  // conditionConfig, so the copies can't drift out of sync.
+  // Drop the stray root-level copies once folded in, so they cannot drift out of sync.
   const {
     group: _rootGroup,
     logicalOperator: _rootLogicalOperator,
@@ -220,7 +240,7 @@ function normalizeConditionConfig(
   return {
     ...rest,
     conditionConfig: {
-      group: normalizeConditionGroup(group),
+      group,
     },
   };
 }
