@@ -647,9 +647,12 @@ async function drainPlanWindow(
   let spanCeiling = cap;
   let span = cap;
   let cleanSlices = 0;
-  // Slices whose watermark this run actually wrote, so a drain that has to stop
-  // early can tell progress from a standstill.
-  let slicesDrained = 0;
+  // The last watermark this drain claimed, so a stop can tell progress from a
+  // standstill. Counting writes would not: setPurgeWatermark upserts with
+  // GREATEST, and a run still sitting in a resumable status pins the claim to its
+  // own started_at, which can be `from` itself -- so the write happens, changes
+  // nothing, and the next run begins in the same place.
+  let claimed: Date | null = null;
   let firstChunk = 0;
 
   while (sliceStart < end) {
@@ -783,26 +786,26 @@ async function drainPlanWindow(
           "[Retention] Ending a plan-window drain: the skipped-run read timed out",
           {
             organization_id: organizationId,
-            slices_drained: String(slicesDrained),
+            claimed_through: claimed?.toISOString() ?? "nothing",
           }
         );
-        if (slicesDrained === 0) {
-          // Nothing was written, so the next run would start here and stall the
-          // same way. When the planner answers this read from the status index
-          // its cost does not depend on the range at all, so that is the likely
-          // case rather than a rare one -- report it instead of repeating it
-          // silently every run.
+        if (!claimed || claimed.getTime() <= from.getTime()) {
+          // The lower bound did not move, so the next run starts here and stops
+          // in the same place, for good. Both halves of that arrive together: an
+          // inflated status index is what makes this read expensive AND what pins
+          // the claim, because the runs pinning it are the ones in a resumable
+          // status. Silence there would leave every log past this slice waiting
+          // for the floor pass while the run reported success.
           throw new Error(
-            "Reading the oldest still-resumable run of this organization timed out before any slice drained"
+            "Reading the oldest still-resumable run of this organization timed out without moving its watermark"
           );
         }
         return { budgetExhausted: false };
       }
-      await setPurgeWatermark(
-        organizationId,
-        skipped && skipped.getTime() < sliceEnd ? skipped : new Date(sliceEnd)
-      );
-      slicesDrained += 1;
+      const claim =
+        skipped && skipped.getTime() < sliceEnd ? skipped : new Date(sliceEnd);
+      await setPurgeWatermark(organizationId, claim);
+      claimed = claim;
     }
 
     sliceStart = sliceEnd;

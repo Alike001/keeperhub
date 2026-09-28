@@ -985,6 +985,30 @@ describe("runRetentionPurge", () => {
     expect(sliceSpans()).toEqual([SLICE_MS, SLICE_MS]);
   });
 
+  it("fails an organization whose watermark was written but never moved", async () => {
+    // The write is not the progress. setPurgeWatermark upserts with GREATEST, and
+    // a run still in a resumable status pins the claim to its own started_at --
+    // which can be `from` itself, so the write lands and changes nothing. Both
+    // halves arrive together: the resumable runs that pin the claim are the same
+    // rows that make the skipped-run read expensive. Counting writes would read
+    // this as progress and stop quietly, and the organization would stop at the
+    // same slice on every run while the run reported success.
+    const from = new Date(FREE_CUTOFF.getTime() - 3 * SLICE_MS);
+    state.selectPages = [ORG_ROWS, [], [watermarkRow(3)], [{ id: "wf-1" }]];
+    state.oldest = [from, cancelledRead()];
+
+    const error = await runRetentionPurge(enabledConfig(), NOW).catch(
+      (caught: unknown) => caught
+    );
+
+    // Slice 1 claimed `from` again, so the lower bound never moved.
+    expect(state.watermarks).toEqual([from]);
+    expect(error).toBeInstanceOf(RetentionPurgeIncompleteError);
+    expect(
+      (error as RetentionPurgeIncompleteError).failedOrganizationIds
+    ).toEqual(["org-free"]);
+  });
+
   it("fails an organization whose skipped-run read is cancelled before any slice drains", async () => {
     // With nothing written, the next run would start in the same place and
     // stall the same way. That read's cost does not depend on its range when the
