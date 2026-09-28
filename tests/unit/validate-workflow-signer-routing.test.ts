@@ -160,7 +160,7 @@ describe("validateWorkflow — signer routing, cases that must stay silent", () 
 // Pinned verbatim. "eoa" and "safe:<id>" both override organization policy,
 // so the message may not claim this node signs from that policy.
 const EXPECTED_MESSAGE =
-  'nodes[1].config sets "integrationId", which no web3 step reads. The signer for a signed write is resolved from "web3Connection" only, so this value has no effect on which wallet signs; remove it. Set "web3Connection" only to deliberately override the organization\'s signing policy for this node; leaving it absent routes the node through that policy.';
+  'nodes[1].config sets "integrationId", which no web3 step reads. The signer for a signed write is resolved from "web3Connection" only, so this value has no effect on which wallet signs; remove it. Use "web3Connection" only when this node needs a signer other than the one organization policy would pick; leaving it absent, empty or "default" routes the node through that policy.';
 
 const warnFor = (value: string | undefined) => {
   const overrides: Record<string, unknown> = { integrationId: "int_x" };

@@ -689,7 +689,7 @@ function runSignerRoutingCheck(
     }
     warnings.push({
       code: VALIDATION_WARNING_CODES.SIGNER_ROUTING_KEY_IGNORED,
-      message: `nodes[${idx}].config sets "integrationId", which no web3 step reads. The signer for a signed write is resolved from "web3Connection" only, so this value has no effect on which wallet signs; remove it. Set "web3Connection" only to deliberately override the organization's signing policy for this node; leaving it absent routes the node through that policy.`,
+      message: `nodes[${idx}].config sets "integrationId", which no web3 step reads. The signer for a signed write is resolved from "web3Connection" only, so this value has no effect on which wallet signs; remove it. Use "web3Connection" only when this node needs a signer other than the one organization policy would pick; leaving it absent, empty or "default" routes the node through that policy.`,
       parameterPath: `nodes[${idx}].config.integrationId`,
     });
   }
