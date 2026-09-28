@@ -82,6 +82,16 @@ describe("createLoopBackTracker", () => {
     expect(tracker.iterationOf("Z")).toBe(0);
   });
 
+  it("counts re-entries per node across every loop that covers it", () => {
+    const tracker = createLoopBackTracker();
+    tracker.admit("C", "B", ["B", "C"]);
+    tracker.admit("D", "A", ["A", "B", "C", "D"]);
+    expect(tracker.reentriesOf("C")).toBe(2);
+    expect(tracker.iterationOf("C")).toBe(1);
+    expect(tracker.reentriesOf("D")).toBe(1);
+    expect(tracker.reentriesOf("Z")).toBe(0);
+  });
+
   it("ships caps that bound a runaway loop", () => {
     expect(MAX_LOOP_ITERATIONS).toBeGreaterThan(0);
     expect(MAX_LOOP_TRAVERSALS_PER_EXECUTION).toBeGreaterThanOrEqual(
@@ -109,6 +119,20 @@ describe("resetLoopBodyState", () => {
     expect(state.convergenceArrivals.has("J")).toBe(true);
     expect(state.convergenceSkipArrivals.has("C")).toBe(false);
     expect([...state.skippedNodes]).toEqual(["Z"]);
+  });
+
+  it("keeps a join's arrivals from branches outside the loop", () => {
+    const state = {
+      visited: new Set(["T", "O", "F", "C"]),
+      convergenceArrivals: new Map([["J", new Set(["O", "C"])]]),
+      convergenceSkipArrivals: new Map([["J", new Set(["C", "X"])]]),
+      skippedNodes: new Set<string>(),
+    };
+
+    resetLoopBodyState(["F", "C", "J"], state);
+
+    expect([...(state.convergenceArrivals.get("J") ?? [])]).toEqual(["O"]);
+    expect([...(state.convergenceSkipArrivals.get("J") ?? [])]).toEqual(["X"]);
   });
 });
 

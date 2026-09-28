@@ -17,6 +17,7 @@ import {
   buildEdgesBySource,
   buildEdgesByTarget,
   getReadyDownstreamIds,
+  propagateConvergenceSkips,
 } from "@/lib/workflow/executor/convergence-barrier";
 import {
   createLoopBackTracker,
@@ -30,11 +31,15 @@ type RunOutcome = {
   ran: string[];
   /** Cap refusals, as [node that asked to loop, message]. */
   refusals: [string, string][];
+  /** Nodes left marked skipped when the run ends. */
+  skipped: string[];
 };
 
 type RunOptions = {
   /** Returns the targets a node routes to, given how many times it has run. */
   route?: (nodeId: string, runCount: number) => string[] | undefined;
+  /** A condition's not-taken targets, given how many times it has run. */
+  notTaken?: (nodeId: string, runCount: number) => string[] | undefined;
   maxIterationsPerLoop?: number;
   maxTraversalsPerExecution?: number;
 };
@@ -80,7 +85,30 @@ function runGraph(
 
     const targets =
       options.route?.(nodeId, runCount) ?? edgesBySource.get(nodeId) ?? [];
+    const reentriesBefore = tracker.reentriesOf(nodeId);
     dispatch(nodeId, targets);
+
+    const notTaken = (options.notTaken?.(nodeId, runCount) ?? []).filter(
+      (target) => !isBackEdge(backEdgesBySource, nodeId, target)
+    );
+    if (
+      notTaken.length === 0 ||
+      tracker.reentriesOf(nodeId) !== reentriesBefore
+    ) {
+      return;
+    }
+    for (const readyId of propagateConvergenceSkips(
+      nodeId,
+      notTaken,
+      forwardEdgesBySource,
+      edgesByTarget,
+      state.convergenceArrivals,
+      state.convergenceSkipArrivals,
+      state.skippedNodes,
+      state.visited
+    )) {
+      executeNode(readyId);
+    }
   };
 
   const dispatch = (fromNodeId: string, targets: string[]): void => {
@@ -117,7 +145,7 @@ function runGraph(
   };
 
   executeNode(startId);
-  return { ran, refusals };
+  return { ran, refusals, skipped: [...state.skippedNodes].sort() };
 }
 
 describe("loop-back dispatch", () => {
@@ -204,6 +232,60 @@ describe("loop-back dispatch", () => {
     // J is a real join: it runs once per pass, after both branches arrive.
     expect(ran.filter((id) => id === "J")).toHaveLength(2);
     expect(ran).toEqual(["T", "B", "P", "Q", "J", "B", "P", "Q", "J"]);
+  });
+
+  it("does not mark the loop or its exit branch skipped when the loop ends", () => {
+    // F -> C; C.false loops back to F, C.true -> X. C exits on its third pass.
+    const exitNodeIds = ["T", "F", "C", "X"];
+    const exitEdges: Edge[] = [
+      { source: "T", target: "F" },
+      { source: "F", target: "C" },
+      { source: "C", target: "X" },
+      { source: "C", target: "F" },
+    ];
+    const exits = (runCount: number): boolean => runCount >= 3;
+
+    const { ran, skipped } = runGraph(exitNodeIds, exitEdges, "T", {
+      route: (nodeId, runCount) => {
+        if (nodeId !== "C") {
+          return;
+        }
+        return exits(runCount) ? ["X"] : ["F"];
+      },
+      notTaken: (nodeId, runCount) => {
+        if (nodeId !== "C") {
+          return;
+        }
+        return exits(runCount) ? ["F"] : ["X"];
+      },
+    });
+
+    expect(ran.filter((id) => id === "X")).toHaveLength(1);
+    expect(skipped).toEqual([]);
+  });
+
+  it("keeps an outside branch's arrival at a join across loop passes", () => {
+    // T -> O -> J and T -> F -> C; C loops back to F once, then feeds J.
+    const joinNodeIds = ["T", "O", "F", "C", "J"];
+    const joinEdges: Edge[] = [
+      { source: "T", target: "O" },
+      { source: "T", target: "F" },
+      { source: "O", target: "J" },
+      { source: "F", target: "C" },
+      { source: "C", target: "J" },
+      { source: "C", target: "F" },
+    ];
+
+    const { ran } = runGraph(joinNodeIds, joinEdges, "T", {
+      route: (nodeId, runCount) => {
+        if (nodeId !== "C") {
+          return;
+        }
+        return runCount < 2 ? ["F"] : ["J"];
+      },
+    });
+
+    expect(ran).toEqual(["T", "O", "F", "C", "F", "C", "J"]);
   });
 
   it("bounds nested loops with the per-execution cap", () => {

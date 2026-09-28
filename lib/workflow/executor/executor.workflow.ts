@@ -2764,6 +2764,10 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     const handleId = conditionResult === true ? "true" : "false";
     const notTakenHandle = conditionResult === true ? "false" : "true";
     const handleTargets = handleMap.get(handleId) ?? [];
+    // A not-taken back edge just means the loop is not repeated; its entry is
+    // not a skipped branch, and skipping it would mark the whole loop skipped.
+    const isForwardTarget = (targetId: string): boolean =>
+      !isBackEdge(backEdgesBySource, nodeId, targetId);
 
     // Record decision for branch-aware finalSuccess
     conditionDecisions.set(nodeId, {
@@ -2772,10 +2776,18 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         nodeId,
         notTakenHandle,
         edgesBySourceHandle
-      ),
+      ).filter(isForwardTarget),
       takenTargets: handleTargets,
     });
+    const reentriesBefore = loopTracker.reentriesOf(nodeId);
     await executeReadyDownstream(nodeId, handleTargets, visited);
+
+    // The taken branch looped back and a later pass ran this condition again.
+    // That pass has already routed both of its branches, so skipping here would
+    // mark nodes the later pass executed as skipped and hide their failures.
+    if (loopTracker.reentriesOf(nodeId) !== reentriesBefore) {
+      return;
+    }
 
     // Propagate skip signals for the not-taken branch so convergence nodes
     // downstream receive arrival signals from skipped sources. A convergence
@@ -2783,7 +2795,9 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     // skipped it is added to `skippedNodes` and the skip continues downstream.
     // This both unblocks genuine convergence and stops an all-skipped OR-join
     // from firing.
-    const skippedTargets = handleMap.get(notTakenHandle) ?? [];
+    const skippedTargets = (handleMap.get(notTakenHandle) ?? []).filter(
+      isForwardTarget
+    );
     if (skippedTargets.length > 0) {
       const unblockedIds = propagateConvergenceSkips(
         nodeId,

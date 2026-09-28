@@ -48,6 +48,12 @@ export type LoopBackTracker = {
   ): LoopAdmission;
   /** Pass a node is on: 0 until a loop has re-entered it. */
   iterationOf(nodeId: string): number;
+  /**
+   * Times any loop has re-entered a node, across all loops. Unlike
+   * `iterationOf` it only ever grows, so a change between two reads proves a
+   * newer pass ran the node in between.
+   */
+  reentriesOf(nodeId: string): number;
   /** Total admitted traversals, for run-completion logging. */
   totalTraversals(): number;
 };
@@ -62,6 +68,7 @@ export function createLoopBackTracker(
 
   const iterationsPerLoop = new Map<string, number>();
   const iterationPerNode = new Map<string, number>();
+  const reentriesPerNode = new Map<string, number>();
   let traversals = 0;
 
   return {
@@ -92,12 +99,20 @@ export function createLoopBackTracker(
       iterationsPerLoop.set(loopKey, nextIteration);
       for (const bodyNodeId of bodyNodeIds) {
         iterationPerNode.set(bodyNodeId, nextIteration);
+        reentriesPerNode.set(
+          bodyNodeId,
+          (reentriesPerNode.get(bodyNodeId) ?? 0) + 1
+        );
       }
       return { admitted: true, iteration: nextIteration };
     },
 
     iterationOf(nodeId) {
       return iterationPerNode.get(nodeId) ?? 0;
+    },
+
+    reentriesOf(nodeId) {
+      return reentriesPerNode.get(nodeId) ?? 0;
     },
 
     totalTraversals() {
@@ -117,6 +132,8 @@ export type LoopBodyState = {
  * Clear the per-pass traversal state for a loop body so the next pass runs it
  * from scratch: the nodes become unvisited, and convergence barriers inside the
  * body re-arm instead of counting the previous pass's arrivals as this one's.
+ * Only arrivals from inside the body are cleared: a join fed by a branch outside
+ * the loop never hears from that branch again, so its arrival has to carry over.
  *
  * `results` and `outputs` are deliberately left alone. They are keyed by node
  * and each pass overwrites them, so downstream templates and the run panel read
@@ -126,11 +143,31 @@ export function resetLoopBodyState(
   bodyNodeIds: Iterable<string>,
   state: LoopBodyState
 ): void {
-  for (const nodeId of bodyNodeIds) {
+  const body = new Set(bodyNodeIds);
+  for (const nodeId of body) {
     state.visited.delete(nodeId);
-    state.convergenceArrivals.delete(nodeId);
-    state.convergenceSkipArrivals.delete(nodeId);
+    clearArrivalsFrom(state.convergenceArrivals, nodeId, body);
+    clearArrivalsFrom(state.convergenceSkipArrivals, nodeId, body);
     state.skippedNodes.delete(nodeId);
+  }
+}
+
+function clearArrivalsFrom(
+  arrivalsByNode: Map<string, Set<string>>,
+  nodeId: string,
+  sources: ReadonlySet<string>
+): void {
+  const arrivals = arrivalsByNode.get(nodeId);
+  if (arrivals === undefined) {
+    return;
+  }
+  for (const source of arrivals) {
+    if (sources.has(source)) {
+      arrivals.delete(source);
+    }
+  }
+  if (arrivals.size === 0) {
+    arrivalsByNode.delete(nodeId);
   }
 }
 
