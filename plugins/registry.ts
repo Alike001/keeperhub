@@ -41,6 +41,7 @@ export type ActionConfigFieldBase = {
     | "text" // Regular text input
     | "number" // Number input
     | "fail-on-error-switch" // "Fail workflow on error" toggle, shares HTTP Request's default-on resolution; not a generic boolean switch, ignores defaultValue in the renderer
+    | "gas-sponsorship-switch" // "Sponsor gas" toggle on a write action; default-on, skips the sponsored route entirely when off
     | "datetime" // Native date + time picker (stores an ISO 8601 string)
     | "select" // Dropdown select
     | "chain-select" // Dynamic chain selector that fetches from /api/chains
@@ -50,6 +51,7 @@ export type ActionConfigFieldBase = {
     | "abi-with-auto-fetch" // ABI textarea with automatic fetch from Etherscan
     | "token-select" // Token selector with supported/custom toggle
     | "abi-event-select" // Dynamic dropdown that parses ABI and shows events
+    | "abi-event-args" // One input per indexed parameter of the selected event
     | "gas-limit-multiplier" // Gas limit multiplier with chain default display
     | "code-editor" // Monaco-based JavaScript code editor
     | "json-editor" // Monaco-based JSON editor
@@ -109,6 +111,18 @@ export type ActionConfigFieldBase = {
   // Number of rows (for textarea)
   rows?: number;
 
+  // For a template-textarea field whose value is JSON: offers a Beautify
+  // action in a strip along the top of the field. Named valueFormat rather
+  // than format because a plugin's own config can carry a field keyed
+  // "format" (data/encode does), and the two would read as the same thing.
+  //
+  // Set it only where the value is always JSON. On a message body or a
+  // line-oriented format there is nothing to reformat and the action would
+  // report a parse error; on a field that takes either a bare reference or
+  // JSON it is worse than that, because a lone `{{ref}}` formats to itself
+  // and the button appears to do nothing at all.
+  valueFormat?: "json";
+
   // Min value (for number fields)
   min?: number;
 
@@ -138,6 +152,9 @@ export type ActionConfigFieldBase = {
 
   // For abi-function-args: which field contains the ABI JSON and selected function
   abiFunctionField?: string;
+
+  // For abi-event-args: which field holds the selected event name
+  abiEventField?: string;
 
   // For abi-with-auto-fetch: which field contains the contract address
   contractAddressField?: string;
@@ -329,6 +346,12 @@ export type IntegrationPlugin = {
   // Set to false for plugins that don't need authentication (e.g., webhook)
   // Defaults to true for backward compatibility
   requiresCredentials?: boolean;
+
+  // Set alongside requiresCredentials: false when formFields hold real,
+  // optional settings (a custom instance URL, an API key override) that steps
+  // read when a connection is chosen. Offers the connection form in the picker
+  // and the node's Connection block without requiring one before a run.
+  optionalConnection?: boolean;
 
   // Whether only one connection is allowed per user
   // Set to true for integrations with unique constraints (e.g., web3 wallet)
