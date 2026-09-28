@@ -8,6 +8,7 @@ import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
 import {
   beginIdempotentFromRequest,
+  dispositionForExecutionOutcome,
   type IdempotencyOutcome,
   idempotencyEarlyResponse,
   recordIdempotentResponse,
@@ -19,7 +20,10 @@ import { getProtocol, resolveContractAddress } from "@/lib/protocol-registry";
 import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { PLUGIN_STEP_IMPORTERS } from "@/lib/step-registry";
-import { resolveProtocolMeta } from "@/plugins/protocol/steps/resolve-protocol-meta";
+import {
+  type ProtocolMeta,
+  resolveProtocolMeta,
+} from "@/plugins/protocol/steps/resolve-protocol-meta";
 import {
   type ReadContractCoreInput,
   readContractCore,
@@ -38,84 +42,22 @@ import {
   redactInput,
   withRejectedSignerOverride,
 } from "../_lib/execution-service";
+import { buildProtocolFunctionArgs } from "../_lib/protocol-function-args";
 import { checkRateLimit } from "../_lib/rate-limit";
-import { parseNativeValueWei } from "../_lib/reserved-value";
+import { parseNativeValueEther } from "../_lib/reserved-value";
+import { refuseSimulateBody, rejectSimulateQuery } from "../_lib/simulate-flag";
 import { checkAndReserveExecution } from "../_lib/spending-cap";
+import type { ExecuteResponse } from "../_lib/types";
 import { requireWallet } from "../_lib/wallet-check";
-
-function buildFunctionArgs(
-  input: Record<string, unknown>,
-  protocolSlug: string,
-  contractKey: string,
-  functionName: string
-): string | undefined {
-  const protocol = getProtocol(protocolSlug);
-  if (!protocol) {
-    return undefined;
-  }
-
-  const protocolAction = protocol.actions.find(
-    (a) => a.function === functionName && a.contract === contractKey
-  );
-
-  if (!protocolAction || protocolAction.inputs.length === 0) {
-    return undefined;
-  }
-
-  const args = protocolAction.inputs.map((inp) => {
-    const value = input[inp.name];
-    return value === undefined ? "" : String(value);
-  });
-
-  return JSON.stringify(args);
-}
 
 async function executeProtocolAction(
   actionType: string,
+  chainFreeMeta: ProtocolMeta,
   body: Record<string, unknown>,
   organizationId: string,
   apiKeyId: string,
   idem: IdempotencyOutcome | null
 ): Promise<NextResponse> {
-  const meta = resolveProtocolMeta({ _actionType: actionType });
-  if (!meta) {
-    return recordIdempotentResponse(
-      idem,
-      NextResponse.json(
-        {
-          success: false,
-          error: `Could not resolve protocol metadata for: ${actionType}`,
-        },
-        { status: HttpStatus.BAD_REQUEST }
-      )
-    );
-  }
-
-  const protocol = getProtocol(meta.protocolSlug);
-  if (!protocol) {
-    return recordIdempotentResponse(
-      idem,
-      NextResponse.json(
-        { success: false, error: `Unknown protocol: ${meta.protocolSlug}` },
-        { status: HttpStatus.BAD_REQUEST }
-      )
-    );
-  }
-
-  const contract = protocol.contracts[meta.contractKey];
-  if (!contract) {
-    return recordIdempotentResponse(
-      idem,
-      NextResponse.json(
-        {
-          success: false,
-          error: `Unknown contract key "${meta.contractKey}" in protocol "${meta.protocolSlug}"`,
-        },
-        { status: HttpStatus.BAD_REQUEST }
-      )
-    );
-  }
-
   // KEEP-490: accept `chainId` as the canonical input, with `network` as a
   // deprecated alias. Either field may carry the numeric chain ID (1, 11155111)
   // or a known chain name/slug ("ethereum", "sepolia", "base"). Downstream
@@ -152,6 +94,49 @@ async function executeProtocolAction(
     );
   }
   const network = String(resolvedChainId);
+
+  // The L2 slug aliases are chain-scoped, so the chain has to be normalized
+  // before the action type can be resolved: an integration still calling a
+  // slug the wstETH/sUSDS L2 split renamed binds the L2 contract key here,
+  // matching what the workflow read/write steps do.
+  //
+  // The `??` never fires. The caller only dispatches here after resolving the
+  // same action type without a chain, and the chain steers nothing but
+  // resolveRenamedAction, which returns the declared action unchanged when no
+  // alias applies. Adding a network cannot turn a resolvable action type into
+  // an unresolvable one, so there is no unresolvable case left to answer with
+  // a 400 - an action type that names nothing is already rejected with a 501
+  // by the handler below.
+  const meta =
+    resolveProtocolMeta({ _actionType: actionType, network }) ?? chainFreeMeta;
+
+  const protocol = getProtocol(meta.protocolSlug);
+  if (!protocol) {
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json(
+        {
+          success: false,
+          error: `Unknown protocol: ${meta.protocolSlug}`,
+        },
+        { status: HttpStatus.BAD_REQUEST }
+      )
+    );
+  }
+
+  const contract = protocol.contracts[meta.contractKey];
+  if (!contract) {
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json(
+        {
+          success: false,
+          error: `Unknown contract key "${meta.contractKey}" in protocol "${meta.protocolSlug}"`,
+        },
+        { status: HttpStatus.BAD_REQUEST }
+      )
+    );
+  }
 
   const contractAddress = resolveContractAddress(
     contract,
@@ -195,12 +180,29 @@ async function executeProtocolAction(
     );
   }
 
-  const functionArgs = buildFunctionArgs(
+  const argsResult = buildProtocolFunctionArgs(
     body,
     meta.protocolSlug,
     meta.contractKey,
     meta.functionName
   );
+  if (!argsResult.ok) {
+    // Pre-broadcast validation: release so the same key can retry with a
+    // complete body instead of caching a client mistake for 24h.
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json(
+        {
+          success: false,
+          error: argsResult.error,
+          field: argsResult.field,
+        },
+        { status: HttpStatus.BAD_REQUEST }
+      ),
+      "release"
+    );
+  }
+  const { functionArgs } = argsResult;
 
   if (meta.actionType === "read") {
     const coreInput: ReadContractCoreInput = {
@@ -239,7 +241,7 @@ async function executeProtocolAction(
 
   const ethValue = body.ethValue ? String(body.ethValue) : undefined;
   // Charge any native value forwarded by the protocol write against the cap.
-  const parsedValue = parseNativeValueWei(ethValue);
+  const parsedValue = parseNativeValueEther(ethValue);
   if (!parsedValue.ok) {
     return recordIdempotentResponse(
       idem,
@@ -258,6 +260,7 @@ async function executeProtocolAction(
     network,
     input: redactInput(withRejectedSignerOverride(body, body)),
     reserved: { kind: "evm", valueWei: parsedValue.valueWei },
+    paygOverflow: executionGuard.limitResult?.paygOverflow === true,
   });
   if (!reserve.allowed) {
     return recordIdempotentResponse(
@@ -288,10 +291,7 @@ async function executeProtocolAction(
   // completeExecution independently re-verifies the claimed transaction
   // against the chain (KEEP-966) -- its returned outcome, not result.success,
   // is authoritative for the response and idempotency cache.
-  let outcome: CompleteExecutionOutcome = {
-    status: "failed",
-    error: result.success ? undefined : result.error,
-  };
+  let outcome: CompleteExecutionOutcome;
   if (result.success) {
     outcome = await completeExecution(executionId, {
       transactionHash: result.transactionHash,
@@ -310,21 +310,51 @@ async function executeProtocolAction(
       transactionHash: result.transactionHash,
       chainId: result.chainId,
       sponsored: result.sponsored,
+      broadcastAttempted: result.broadcastAttempted,
+      transactionLink: result.transactionLink,
+      rejection: result.rejection,
+      errorClass: result.errorClass,
     });
-    outcome = { status: settled.status, error: result.error };
+    outcome = {
+      status: settled.status,
+      ...(settled.status === "failed" ? { error: result.error } : {}),
+    };
   }
 
-  const responseBody =
-    outcome.status === "completed"
-      ? result
-      : { ...result, success: false, error: outcome.error };
+  // Match contract-call / transfer: expose executionId so callers can poll
+  // /api/execute/{executionId}/status and idempotency can bind resourceId.
+  // write-contract-core sets transactionHash and transactionLink whenever a
+  // broadcast hash exists, including on failure, so reverted txs stay
+  // look-up-able in the explorer.
+  // `error` is only on status "failed". `unconfirmed` is poll-only: a caller
+  // that treats any error string as a terminal failure will rotate the key
+  // and double-broadcast a tx that may still land.
+  const responseBody: ExecuteResponse = {
+    executionId,
+    status: outcome.status,
+    ...(result.transactionHash
+      ? { transactionHash: result.transactionHash }
+      : {}),
+    ...(result.transactionLink
+      ? { transactionLink: result.transactionLink }
+      : {}),
+    ...(outcome.status === "failed" && outcome.error
+      ? { error: outcome.error }
+      : {}),
+    ...(!result.success && outcome.status === "failed" && result.rejection
+      ? { rejection: result.rejection }
+      : {}),
+    ...(!result.success && outcome.status === "failed" && result.errorClass
+      ? { errorClass: result.errorClass }
+      : {}),
+  };
 
-  // The tx reached the broadcast path, so finalize as success or failed and
-  // never release: a retry on the same key must not re-broadcast.
+  const disposition = dispositionForExecutionOutcome(outcome.status, result);
+
   return recordIdempotentResponse(
     idem,
-    NextResponse.json(responseBody),
-    outcome.status === "completed" ? "success" : "failed"
+    NextResponse.json(responseBody, { status: HttpStatus.ACCEPTED }),
+    disposition
   );
 }
 
@@ -356,6 +386,13 @@ export async function POST(
       { error: apiKeyCtx.error },
       { status: apiKeyCtx.status }
     );
+  }
+
+  // #2004: ?simulate= is refused on every /api/execute/* route rather than
+  // silently ignored.
+  const simulateQuery = rejectSimulateQuery(request);
+  if (simulateQuery) {
+    return simulateQuery;
   }
 
   const scopeError = requireScope(apiKeyCtx.scope, SCOPE_MCP_WRITE, {
@@ -392,6 +429,16 @@ export async function POST(
     );
   }
 
+  // #2004 (the severe half): this route has no dry-run support, and a body
+  // `simulate` used to fall through as an unknown field while the protocol
+  // action broadcast for real (issue #1929). Refuse it loudly, before the
+  // idempotency key is reserved so a refused request consumes no execution
+  // and leaves no lock to release.
+  const simulateBody = refuseSimulateBody(body);
+  if (simulateBody) {
+    return simulateBody;
+  }
+
   const idem = await beginIdempotentFromRequest({
     request,
     organizationId: apiKeyCtx.organizationId,
@@ -414,6 +461,7 @@ export async function POST(
     if (meta) {
       const response = await executeProtocolAction(
         actionType,
+        meta,
         body,
         apiKeyCtx.organizationId,
         apiKeyCtx.apiKeyId,

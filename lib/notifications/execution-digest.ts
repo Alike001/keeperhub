@@ -1,6 +1,17 @@
 import "server-only";
 
-import { and, count, desc, eq, gte, inArray, lt, ne, sql } from "drizzle-orm";
+import {
+  and,
+  count,
+  desc,
+  eq,
+  gte,
+  inArray,
+  lt,
+  ne,
+  type SQL,
+  sql,
+} from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   workflowExecutionLogs,
@@ -9,6 +20,16 @@ import {
 } from "@/lib/db/schema";
 import { ERROR_STATUSES } from "@/lib/errors/execution-status";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
+
+/**
+ * A sponsored step run. idx_exec_logs_sponsored_execution (lib/db/schema.ts) is
+ * partial on this same expression, and the planner uses a partial index only
+ * when it can match the query clause to the index predicate, so the two change
+ * together or the count goes back to reading every log row in the window.
+ */
+export function sponsoredStepFilter(): SQL {
+  return sql`${workflowExecutionLogs.output}->>'sponsored' = 'true'`;
+}
 
 export type DigestCadence = "daily" | "weekly" | "monthly";
 
@@ -119,6 +140,8 @@ export type SkippedWorkflow = {
 export type OrgExecutionDigest = {
   total: number;
   success: number;
+  // Every failed run in the window, platform failures included, so the digest
+  // rates a run the same way the analytics dashboard does.
   error: number;
   // Runs the platform refused before they started, over the plan's execution
   // limit or on a gated action. They never ran, so they are reported on their
@@ -166,9 +189,9 @@ export async function getOrgExecutionDigest(
     .select({
       total: sql<number>`SUM(CASE WHEN ${workflowExecutions.status} <> 'skipped' THEN 1 ELSE 0 END)`,
       success: sql<number>`SUM(CASE WHEN ${workflowExecutions.status} = 'success' THEN 1 ELSE 0 END)`,
-      error: sql<number>`SUM(CASE WHEN ${workflowExecutions.status} = 'error' THEN 1 ELSE 0 END)`,
+      error: sql<number>`SUM(CASE WHEN ${inArray(workflowExecutions.status, [...ERROR_STATUSES])} THEN 1 ELSE 0 END)`,
       skipped: sql<number>`SUM(CASE WHEN ${workflowExecutions.status} = 'skipped' THEN 1 ELSE 0 END)`,
-      distinctWorkflows: sql<number>`COUNT(DISTINCT ${workflowExecutions.workflowId})`,
+      distinctWorkflows: sql<number>`COUNT(DISTINCT CASE WHEN ${workflowExecutions.status} <> 'skipped' THEN ${workflowExecutions.workflowId} END)`,
       transactionCount: sql<number>`COALESCE(SUM(CASE WHEN jsonb_typeof(${workflowExecutions.transactionHashes}) = 'array' THEN jsonb_array_length(${workflowExecutions.transactionHashes}) ELSE 0 END), 0)`,
       gasUsedWei: sql<string>`COALESCE(SUM(${workflowExecutions.gasUsedWei}), 0)`,
     })
@@ -233,7 +256,13 @@ export async function getOrgExecutionDigest(
       : ([] as SkippedWorkflow[]);
 
   // Sponsored-tx count is only meaningful (and only queried) when gas
-  // sponsorship is enabled. Sponsored step runs stamp output_raw.sponsored.
+  // sponsorship is enabled. Sponsored step runs stamp the marker on both output
+  // and output_raw, and this reads `output` deliberately. KEEP-1042 nulls
+  // `output_raw` once a run can no longer resume, which is well inside a monthly
+  // window, so counting off it would report roughly the last week of the month
+  // and print it as the month's total. `sponsored` is not a redacted key
+  // (lib/utils/redact.ts), so the two carry the same value and `output` is never
+  // stripped.
   let sponsoredTransactionCount: number | undefined;
   if (isGasSponsorshipEnabled()) {
     const [sponsoredRow] = await db
@@ -244,12 +273,7 @@ export async function getOrgExecutionDigest(
         eq(workflowExecutionLogs.executionId, workflowExecutions.id)
       )
       .innerJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
-      .where(
-        and(
-          windowFilter,
-          sql`${workflowExecutionLogs.outputRaw}->>'sponsored' = 'true'`
-        )
-      );
+      .where(and(windowFilter, sponsoredStepFilter()));
     sponsoredTransactionCount = Number(sponsoredRow?.value) || 0;
   }
 

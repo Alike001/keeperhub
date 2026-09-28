@@ -8,7 +8,11 @@
  * diverge from a fragment goes back to an inline literal in its action - do
  * not add override parameters here.
  */
-import type { ActionConfigField, OutputField } from "@/plugins/registry";
+import type {
+  ActionConfigField,
+  ActionConfigFieldBase,
+  OutputField,
+} from "@/plugins/registry";
 
 export function solanaNetworkField(): ActionConfigField {
   return {
@@ -76,6 +80,45 @@ export function contractAddressField(): ActionConfigField {
   };
 }
 
+/**
+ * The "Fail workflow on error" toggle shared by the web3 read actions. When
+ * off, a failed on-chain read hands the next node a soft error instead of
+ * failing the run, so one bad item inside a For Each loop does not abort it.
+ * See softenReadFailure in plugins/web3/steps/read-fail-on-error-core.ts for
+ * which failures qualify.
+ */
+export function readFailOnErrorField(): ActionConfigField {
+  return {
+    defaultValue: "true",
+    helpTip:
+      "When off, a failed read passes a soft error to the next node instead of failing the run, so one bad item in a For Each loop does not abort it. This covers the call itself and the ABI, function and arguments you send. Only problems that leave the step with nowhere to call - an invalid address, an unknown network, or unresolved RPC config - still fail the run, matching HTTP Request, which softens every response but refuses to soften an unusable URL.",
+    key: "failOnError",
+    label: "Fail workflow on error",
+    type: "fail-on-error-switch",
+  };
+}
+
+/**
+ * The "Sponsor gas" toggle shared by the web3 write actions that have a
+ * sponsored route. On (the default) the action tries Turnkey Gas Station
+ * first and falls back to direct signing; off skips the sponsored route
+ * outright, so the transaction is always signed and paid for by the org's
+ * own wallet. See resolveSponsorGas in lib/web3/sponsorship-feature-flag.ts.
+ */
+export function sponsorGasField(): ActionConfigFieldBase {
+  return {
+    defaultValue: "true",
+    helpTip:
+      "When on, the transaction goes through gas sponsorship first and falls back to your own wallet if sponsorship is unavailable on this network or your credits are spent. Turn it off to always pay gas from your own wallet. Sponsorship is skipped regardless when the node routes through a private mempool or signs through a Safe.",
+    key: "sponsorGas",
+    label: "Sponsor gas",
+    // Hidden on a network the Gas Station does not cover, where the toggle
+    // could only ever turn off something that was never available.
+    showWhen: { computed: "sponsorshipSupported", networkField: "network" },
+    type: "gas-sponsorship-switch",
+  };
+}
+
 export function transactionLinkOutput(): OutputField {
   return {
     description: "Explorer link to view the transaction",
@@ -85,7 +128,8 @@ export function transactionLinkOutput(): OutputField {
 
 export function checkErrorOutput(): OutputField {
   return {
-    description: "Error message if the check failed",
+    description:
+      "Error message if the check failed. Also set when failOnError is off and a failed read was softened into success=true.",
     field: "error",
   };
 }
@@ -120,7 +164,8 @@ export function tempoChainIdOutput(): OutputField {
 
 export function balanceCheckSuccessOutput(): OutputField {
   return {
-    description: "Whether the balance check succeeded",
+    description:
+      "Whether the balance check succeeded. Also true when failOnError is off and a failed read was softened; the balance fields are null and `error` is set.",
     field: "success",
   };
 }
@@ -150,6 +195,14 @@ export function executedCallArgsOutput(): OutputField {
   return {
     description: "Decoded arguments of the executed call, keyed by name",
     field: "executedCall.args",
+  };
+}
+
+export function executedCallFromOutput(): OutputField {
+  return {
+    description:
+      "Sender of the trace frame that hit the target: the organization's wallet even when a relayer sent the transaction, the Safe when routed through one, or the delegating proxy when the target is an implementation reached by DELEGATECALL",
+    field: "executedCall.from",
   };
 }
 
@@ -205,6 +258,7 @@ export const outputFragmentFactories: Record<string, () => OutputField> = {
   tokenSymbolOutput,
   executedCallContractAddressOutput,
   executedCallArgsOutput,
+  executedCallFromOutput,
   executedCallSponsoredOutput,
   executedCallRevertedOutput,
   querySuccessOutput,

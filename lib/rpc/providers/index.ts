@@ -1,5 +1,5 @@
 import { ethers, isError } from "ethers";
-import { ErrorCategory, logUserError } from "@/lib/logging";
+import { ErrorCategory, logSystemError, logSystemWarn } from "@/lib/logging";
 import { sleep } from "@/lib/sleep";
 import { safeEthersGetUrl } from "../safe-ethers-fetch";
 import { redactAllUrls, scrubRpcUrls } from "../scrub-rpc-urls";
@@ -180,6 +180,16 @@ export function classifyRpcError(error: unknown): RpcErrorType {
   return "rpc_error";
 }
 
+function isConnectionRefusal(error: unknown): boolean {
+  const message =
+    error instanceof Error
+      ? error.message.toLowerCase()
+      : String(error).toLowerCase();
+  return (
+    message.includes("econnrefused") || message.includes("connection refused")
+  );
+}
+
 export type RpcProviderConfig = {
   primaryRpcUrl: string;
   fallbackRpcUrl?: string;
@@ -327,8 +337,9 @@ export class RpcProviderManager {
           return fallbackResult.result as T;
         }
 
-        // Fallback failed - try primary in case it recovered
-        logUserError(
+        // Fallback failed - try primary in case it recovered. Not an outage
+        // yet, so a Sentry warning with no error metric and no page.
+        logSystemWarn(
           ErrorCategory.NETWORK_RPC,
           `[RPC] Fallback RPC failed for ${this.config.chainName}, attempting primary recovery`,
           fallbackResult.error,
@@ -371,7 +382,11 @@ export class RpcProviderManager {
 
         // Both failed -- throw without redundant retry
         this.metricsCollector.recordBothFailed(this.config.chainName);
-        logUserError(
+        // Both endpoints are KeeperHub-managed, so exhausting them is a
+        // platform fault: error level and the system-error metric. The Sentry
+        // event only reaches Sentry from the Next.js runtimes - the
+        // workflow-runner pods initialise no Sentry client.
+        logSystemError(
           ErrorCategory.NETWORK_RPC,
           `[RPC] Both primary and fallback RPC failed for ${this.config.chainName}`,
           `Fallback: ${fallbackResult.error}. Primary: ${primaryResult.error}`,
@@ -386,8 +401,18 @@ export class RpcProviderManager {
         throw this.failoverError(
           `RPC failed on both endpoints. Fallback: ${fallbackResult.error}. Primary: ${primaryResult.error}`,
           [
-            { endpoint: "fallback", transport: fallbackResult.transport },
-            { endpoint: "primary", transport: primaryResult.transport },
+            {
+              endpoint: "fallback",
+              transport: fallbackResult.transport,
+              allAttemptsConnectionRefused:
+                fallbackResult.allAttemptsConnectionRefused,
+            },
+            {
+              endpoint: "primary",
+              transport: primaryResult.transport,
+              allAttemptsConnectionRefused:
+                primaryResult.allAttemptsConnectionRefused,
+            },
           ]
         );
       }
@@ -426,7 +451,9 @@ export class RpcProviderManager {
       );
 
       if (fallbackResult.success) {
-        logUserError(
+        // The call was served, so this is a recovery event rather than an
+        // outage: Sentry warning, no error metric, no page.
+        logSystemWarn(
           ErrorCategory.NETWORK_RPC,
           `[RPC] Primary RPC failed for ${this.config.chainName}, switching to fallback`,
           primaryResult.error,
@@ -443,7 +470,7 @@ export class RpcProviderManager {
       }
 
       this.metricsCollector.recordBothFailed(this.config.chainName);
-      logUserError(
+      logSystemError(
         ErrorCategory.NETWORK_RPC,
         `[RPC] Both primary and fallback RPC failed for ${this.config.chainName}`,
         `Primary: ${primaryResult.error}. Fallback: ${fallbackResult.error}`,
@@ -455,15 +482,32 @@ export class RpcProviderManager {
       throw this.failoverError(
         `RPC failed on both endpoints. Primary: ${primaryResult.error}. Fallback: ${fallbackResult.error}`,
         [
-          { endpoint: "primary", transport: primaryResult.transport },
-          { endpoint: "fallback", transport: fallbackResult.transport },
+          {
+            endpoint: "primary",
+            transport: primaryResult.transport,
+            allAttemptsConnectionRefused:
+              primaryResult.allAttemptsConnectionRefused,
+          },
+          {
+            endpoint: "fallback",
+            transport: fallbackResult.transport,
+            allAttemptsConnectionRefused:
+              fallbackResult.allAttemptsConnectionRefused,
+          },
         ]
       );
     }
 
     throw this.failoverError(
       `RPC failed on primary endpoint: ${primaryResult.error}`,
-      [{ endpoint: "primary", transport: primaryResult.transport }]
+      [
+        {
+          endpoint: "primary",
+          transport: primaryResult.transport,
+          allAttemptsConnectionRefused:
+            primaryResult.allAttemptsConnectionRefused,
+        },
+      ]
     );
   }
 
@@ -481,18 +525,30 @@ export class RpcProviderManager {
     failures: readonly {
       endpoint: "primary" | "fallback";
       transport?: boolean;
+      allAttemptsConnectionRefused?: boolean;
     }[]
   ): Error {
     const redacted = redactAllUrls(message);
+    const allAttemptsConnectionRefused =
+      failures.length > 0 &&
+      failures.every(
+        (failure) => failure.allAttemptsConnectionRefused === true
+      );
     const allOnTheRelay = failures.every(
       (failure) =>
         failure.transport &&
         failure.endpoint === "primary" &&
         this.config.primaryIsPrivateRelay
     );
-    return allOnTheRelay
+    const result = allOnTheRelay
       ? new RpcRelayTransportError(redacted)
       : new Error(redacted);
+    // A write-broadcast classifier must know whether *every retry attempt*
+    // was refused. The rendered message only contains each endpoint's final
+    // error, so text alone can turn "timeout, then refused" into "never sent".
+    // Duck-typed by submit-signed.ts to avoid coupling callers to this class.
+    Object.assign(result, { allAttemptsConnectionRefused });
+    return result;
   }
 
   private recordAttempt(
@@ -596,8 +652,12 @@ export class RpcProviderManager {
     error?: string;
     /** Whether the last attempt failed on transport rather than on an answer. */
     transport?: boolean;
+    /** True only when every retry attempt ended in a connection refusal. */
+    allAttemptsConnectionRefused?: boolean;
   }> {
     let lastError: Error | undefined;
+    let attemptCount = 0;
+    let allAttemptsConnectionRefused = true;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       const startTime = performance.now();
@@ -628,6 +688,9 @@ export class RpcProviderManager {
         );
 
         lastError = error instanceof Error ? error : new Error(String(error));
+        attemptCount += 1;
+        allAttemptsConnectionRefused =
+          allAttemptsConnectionRefused && isConnectionRefusal(error);
         this.recordFailure(providerType, operationType);
         this.metricsCollector.recordErrorType(
           this.config.chainName,
@@ -656,6 +719,8 @@ export class RpcProviderManager {
       // mask the key before the message reaches thrown errors and logs.
       error: scrubRpcUrls(lastError?.message ?? "") || "Unknown error",
       transport: isTransportFailure(lastError),
+      allAttemptsConnectionRefused:
+        attemptCount > 0 && allAttemptsConnectionRefused,
     };
   }
 

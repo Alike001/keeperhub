@@ -1,4 +1,6 @@
 import "server-only";
+import { classifyRevert } from "@/lib/web3/decode-revert-error";
+import { isPreBroadcastNetworkError } from "@/lib/web3/submit-signed";
 
 import { ethers } from "ethers";
 import { ErrorCategory, logUserError } from "@/lib/logging";
@@ -16,6 +18,7 @@ import {
   preflightGasBalance,
   resolveFundingHolder,
 } from "@/lib/web3/gas-preflight";
+import { broadcastTransactionHash } from "@/lib/web3/onchain-revert";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
 import {
   convertAmountForWrite,
@@ -96,7 +99,16 @@ export type TradeStockTokenResult =
       poolFee: number;
       poolTickSpacing: number;
     }
-  | { success: false; error: string };
+  | {
+      success: false;
+      error: string;
+      // Set only when a transaction reached the chain and failed there, so the
+      // finalizer can persist a receipt for the failure. Absent on
+      // pre-broadcast failures, where no transaction exists.
+      transactionHash?: string;
+      chainId?: number;
+      broadcastAttempted?: boolean;
+    };
 
 /** Refusals that are the caller's to fix, phrased so they can fix them. */
 function refuse(error: string): TradeStockTokenResult {
@@ -154,7 +166,7 @@ async function checkPermit2Allowances(
 }
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: a fund-moving path whose refusals are the point; splitting them would hide the gate sequence
-export async function tradeStockTokenCore(
+async function tradeStockTokenCoreImpl(
   input: TradeStockTokenCoreInput
 ): Promise<TradeStockTokenResult> {
   let chainId: number;
@@ -457,6 +469,31 @@ export async function tradeStockTokenCore(
       error,
       { plugin_name: "robinhood", action_name: "trade-stock-token" }
     );
-    return refuse(getErrorMessage(error));
+    const broadcastHash = broadcastTransactionHash(error);
+    const rejection = classifyRevert(
+      error,
+      new ethers.Interface(UNIVERSAL_ROUTER_ABI)
+    );
+    return {
+      success: false,
+      error: getErrorMessage(error),
+      broadcastAttempted: broadcastHash
+        ? true
+        : rejection.kind !== "unknown" ||
+            isPreBroadcastNetworkError(error)
+          ? false
+          : true,
+      ...(broadcastHash ? { transactionHash: broadcastHash, chainId } : {}),
+    };
   }
+}
+
+export async function tradeStockTokenCore(
+  input: TradeStockTokenCoreInput
+): Promise<TradeStockTokenResult> {
+  const result = await tradeStockTokenCoreImpl(input);
+  if (result.success || result.broadcastAttempted !== undefined) {
+    return result;
+  }
+  return { ...result, broadcastAttempted: false };
 }

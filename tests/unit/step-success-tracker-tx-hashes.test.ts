@@ -17,6 +17,9 @@ import {
   recordTransactionHashIfPresent,
 } from "@/lib/workflow/executor/step-success-tracker";
 
+const SOLANA_SIGNATURE =
+  "5VERv8NMvzbJMEkV8xnrLkEaWRtSz9CosKDYjCJjBRnbJLgp8uirBgmQpjKhoR4tjF3ZpRzrFmBV6UjKdiSZkQUW";
+
 function ctx(overrides: Partial<StepContext> = {}): StepContext {
   return {
     executionId: "exec_keep_470_default",
@@ -28,6 +31,47 @@ function ctx(overrides: Partial<StepContext> = {}): StepContext {
 }
 
 describe("recordTransactionHashIfPresent (KEEP-470)", () => {
+  it("records one on-chain write once even when the step is recorded twice", () => {
+    // A replay that reuses a completed step records it so the tracker stays
+    // complete. resolveTransactionHashesForSuccess feeds this list straight
+    // into the run's transactionHashes, so a duplicate would be re-verified
+    // against the chain and counted twice in the digest.
+    const executionId = "exec_repeat";
+    const output = { transactionHash: "0xabc123", chainId: 1 };
+    recordTransactionHashIfPresent(ctx({ executionId }), output);
+    recordTransactionHashIfPresent(ctx({ executionId }), output);
+    recordTransactionHashIfPresent(ctx({ executionId }), output);
+
+    expect(getTransactionHashes(executionId)).toHaveLength(1);
+  });
+
+  it("keeps the same hash from two different nodes", () => {
+    const executionId = "exec_two_nodes";
+    const output = { transactionHash: "0xabc123", chainId: 1 };
+    recordTransactionHashIfPresent(ctx({ executionId }), output);
+    recordTransactionHashIfPresent(
+      ctx({ executionId, nodeId: "write-contract-2" }),
+      output
+    );
+
+    expect(getTransactionHashes(executionId)).toHaveLength(2);
+  });
+
+  it("keeps the same hash from two iterations of one node", () => {
+    const executionId = "exec_two_iterations";
+    const output = { transactionHash: "0xabc123", chainId: 1 };
+    recordTransactionHashIfPresent(
+      ctx({ executionId, iterationIndex: 0 }),
+      output
+    );
+    recordTransactionHashIfPresent(
+      ctx({ executionId, iterationIndex: 1 }),
+      output
+    );
+
+    expect(getTransactionHashes(executionId)).toHaveLength(2);
+  });
+
   it("records a hash with node + chain context when output has a 0x string", () => {
     const executionId = "exec_basic";
     recordTransactionHashIfPresent(ctx({ executionId }), {
@@ -157,6 +201,65 @@ describe("recordTransactionHashIfPresent (KEEP-470)", () => {
     });
     recordTransactionHashIfPresent(ctx({ executionId }), {
       transactionHash: "",
+    });
+
+    expect(getTransactionHashes(executionId)).toEqual([]);
+
+    clearExecution(executionId);
+  });
+
+  it("records a base58 signature when the step reported a Solana chainId", () => {
+    const executionId = "exec_solana";
+    recordTransactionHashIfPresent(ctx({ executionId }), {
+      transactionHash: SOLANA_SIGNATURE,
+      chainId: 101,
+      network: "solana-mainnet",
+    });
+
+    expect(getTransactionHashes(executionId)).toEqual([
+      {
+        hash: SOLANA_SIGNATURE,
+        nodeId: "write-contract-1",
+        nodeName: "Write Contract",
+        chainId: 101,
+        network: "solana-mainnet",
+      },
+    ]);
+
+    clearExecution(executionId);
+  });
+
+  it("ignores a Solana chainId whose hash is not a 64-byte base58 signature", () => {
+    const executionId = "exec_solana_junk";
+    recordTransactionHashIfPresent(ctx({ executionId }), {
+      transactionHash: "not a signature",
+      chainId: 101,
+    });
+    // Valid base58, wrong length (a pubkey, not a signature).
+    recordTransactionHashIfPresent(ctx({ executionId }), {
+      transactionHash: "So11111111111111111111111111111111111111112",
+      chainId: 101,
+    });
+    // 0x-hex is not what a Solana chain produces either.
+    recordTransactionHashIfPresent(ctx({ executionId }), {
+      transactionHash: "0xabc123",
+      chainId: 101,
+    });
+
+    expect(getTransactionHashes(executionId)).toEqual([]);
+
+    clearExecution(executionId);
+  });
+
+  // The Solana steps that report no chainId (transfer-spl-token,
+  // call-solana-program-anchor, send-raw-solana-instruction) stay dropped:
+  // reconcileTransactionHashes fails a batch conclusively for a hash it cannot
+  // attribute to a chain, so recording theirs would fail runs that succeeded.
+  it("ignores a base58 signature from a step that reported no chainId", () => {
+    const executionId = "exec_solana_no_chain";
+    recordTransactionHashIfPresent(ctx({ executionId }), {
+      transactionHash: SOLANA_SIGNATURE,
+      network: "solana-mainnet",
     });
 
     expect(getTransactionHashes(executionId)).toEqual([]);

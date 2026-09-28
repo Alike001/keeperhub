@@ -82,34 +82,37 @@ describe("EvmChainAdapter.readContract — BaseContract name collision", () => {
     vi.clearAllMocks();
   });
 
-  it.each(
-    COLLIDING_NAMES
-  )("returns the ABI function result for `%s` (bare name), not the contract address", async (name) => {
-    const adapter = createAdapter();
-    const encoded = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["address"],
-      [D3M_JOB_ADDRESS]
-    );
-    const { executeWithFailover, callMock } =
-      createRpcManagerWithCallReturning(encoded);
+  it.each(COLLIDING_NAMES)(
+    "returns the ABI function result for `%s` (bare name), not the contract address",
+    async (name) => {
+      const adapter = createAdapter();
+      const encoded = ethers.AbiCoder.defaultAbiCoder().encode(
+        ["address"],
+        [D3M_JOB_ADDRESS]
+      );
+      const { executeWithFailover, callMock } =
+        createRpcManagerWithCallReturning(encoded);
 
-    const result = (await adapter.readContract(
-      { executeWithFailover } as unknown as RpcProviderManagerArg,
-      {
-        contractAddress: SEQUENCER_ADDRESS,
-        abi: buildAbiFor(name) as unknown as ethers.InterfaceAbi,
-        functionKey: name,
-        args: [CRON_D3M_JOB_KEY],
-        isView: true,
-      } as ReadContractRequest
-    )) as string;
+      const result = (await adapter.readContract(
+        { executeWithFailover } as unknown as RpcProviderManagerArg,
+        {
+          contractAddress: SEQUENCER_ADDRESS,
+          abi: buildAbiFor(name) as unknown as ethers.InterfaceAbi,
+          functionKey: name,
+          args: [CRON_D3M_JOB_KEY],
+          isView: true,
+        } as ReadContractRequest
+      )) as string;
 
-    expect(callMock).toHaveBeenCalledTimes(1);
-    expect(ethers.getAddress(result)).toBe(ethers.getAddress(D3M_JOB_ADDRESS));
-    expect(ethers.getAddress(result)).not.toBe(
-      ethers.getAddress(SEQUENCER_ADDRESS)
-    );
-  });
+      expect(callMock).toHaveBeenCalledTimes(1);
+      expect(ethers.getAddress(result)).toBe(
+        ethers.getAddress(D3M_JOB_ADDRESS)
+      );
+      expect(ethers.getAddress(result)).not.toBe(
+        ethers.getAddress(SEQUENCER_ADDRESS)
+      );
+    }
+  );
 
   it("uses staticCall when isView is false (nonpayable read with colliding name)", async () => {
     const adapter = createAdapter();
@@ -158,5 +161,68 @@ describe("EvmChainAdapter.readContract — BaseContract name collision", () => {
 
     expect(callMock).toHaveBeenCalledTimes(1);
     expect(result).toBe(expectedBalance);
+  });
+});
+
+// The core suite mocks ethers.Contract away, so it can only prove the value is
+// appended as a trailing argument. This suite drives a real ethers.Contract
+// against a stub provider, so it is the one place that can prove ethers reads
+// that argument as call overrides and puts it on the eth_call (#2399).
+describe("EvmChainAdapter.readContract - caller address (#2399)", () => {
+  const ESTIMATION_ADDRESS = "0x0000000000000000000000000000000000000001";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("sends callerAddress as the eth_call from field", async () => {
+    const adapter = createAdapter();
+    const encoded = ethers.AbiCoder.defaultAbiCoder().encode(
+      ["uint256"],
+      [BigInt(1000)]
+    );
+    const { executeWithFailover, callMock } =
+      createRpcManagerWithCallReturning(encoded);
+
+    await adapter.readContract(
+      { executeWithFailover } as unknown as RpcProviderManagerArg,
+      {
+        contractAddress: TOKEN_ADDRESS,
+        abi: BALANCE_OF_ABI as unknown as ethers.InterfaceAbi,
+        functionKey: "balanceOf",
+        args: [HOLDER_ADDRESS],
+        isView: true,
+        callerAddress: ESTIMATION_ADDRESS,
+      } as ReadContractRequest
+    );
+
+    expect(callMock).toHaveBeenCalledTimes(1);
+    expect(callMock.mock.calls[0][0]).toMatchObject({
+      from: ESTIMATION_ADDRESS,
+    });
+  });
+
+  it("sends no from field when callerAddress is absent", async () => {
+    const adapter = createAdapter();
+    const encoded = ethers.AbiCoder.defaultAbiCoder().encode(
+      ["uint256"],
+      [BigInt(1000)]
+    );
+    const { executeWithFailover, callMock } =
+      createRpcManagerWithCallReturning(encoded);
+
+    await adapter.readContract(
+      { executeWithFailover } as unknown as RpcProviderManagerArg,
+      {
+        contractAddress: TOKEN_ADDRESS,
+        abi: BALANCE_OF_ABI as unknown as ethers.InterfaceAbi,
+        functionKey: "balanceOf",
+        args: [HOLDER_ADDRESS],
+        isView: true,
+      } as ReadContractRequest
+    );
+
+    expect(callMock).toHaveBeenCalledTimes(1);
+    expect(callMock.mock.calls[0][0].from).toBeUndefined();
   });
 });

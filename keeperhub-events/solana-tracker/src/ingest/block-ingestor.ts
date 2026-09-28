@@ -17,7 +17,10 @@ import { formatError } from "../format-error";
 import { type BlockFire, matchBlocks } from "../match/block-matcher";
 import { type EventFire, matchEvents } from "../match/event-matcher";
 import type { NormalizedBlock } from "../match/types";
-import type { ChainRegistration } from "../registrations";
+import {
+  type ChainRegistration,
+  registrationEndpoints,
+} from "../registrations";
 import type { BlockSource, ConnectionHealth, Endpoint } from "./block-source";
 import { createBlockSource } from "./source-factory";
 
@@ -97,11 +100,15 @@ export class BlockIngestor {
   }
 
   async stop(): Promise<void> {
-    this.started = false;
     if (this.source) {
       await this.source.stop();
       this.source = null;
     }
+    // Cleared only once the source is down. If the await above throws, the
+    // source is still running, and the reconciler's orphan guard relies on
+    // isStarted() saying so. Clearing it first made that guard blind to the
+    // exact failure it was written for.
+    this.started = false;
     logger.log(`[ingestor] chain ${this.registration.chainId} stopped`);
   }
 
@@ -157,16 +164,16 @@ export class BlockIngestor {
   }
 
   private endpoints(): Endpoint[] {
-    const endpoints: Endpoint[] = [
-      { rpcUrl: this.registration.rpcUrl, wssUrl: this.registration.wssUrl },
-    ];
-    if (this.registration.fallbackWssUrl) {
-      endpoints.push({
-        rpcUrl: this.registration.fallbackRpcUrl ?? this.registration.rpcUrl,
-        wssUrl: this.registration.fallbackWssUrl,
-      });
-    }
-    return endpoints;
+    return registrationEndpoints(this.registration);
+  }
+
+  /**
+   * Whether start() completed. The reconciler needs this before dropping an
+   * ingestor from the registry: deleting one that is still running orphans its
+   * connection, its watchdog and its socket with no way to reach them again.
+   */
+  isStarted(): boolean {
+    return this.started;
   }
 
   private rebuildDecoders(): void {
@@ -210,12 +217,17 @@ export class BlockIngestor {
     if (alreadyProcessed) {
       return;
     }
-    const { executionId, refused } = await createPhantomExecution(
-      fire.workflowId,
-      fire.userId,
-      "event",
-      "events",
-    );
+    // The matcher fires a workflow at most once per transaction, so the
+    // signature identifies the fire; there is no per-event index to add.
+    const dispatchKey = `event:${fire.workflowId}:${this.registration.chainId}:${fire.signature}`;
+    const { executionId, alreadyExisted, refused } =
+      await createPhantomExecution(
+        fire.workflowId,
+        fire.userId,
+        "event",
+        "events",
+        dispatchKey,
+      );
     // Refused on plan grounds: the executor would refuse the same run, so skip
     // the enqueue instead of paying for the round-trip on every match. The
     // event is still marked: it is settled, and leaving it unmarked only buys
@@ -223,6 +235,16 @@ export class BlockIngestor {
     if (refused) {
       logger.log(
         `[ingestor] skipping refused event dispatch for ${fire.workflowId} (${refused})`,
+      );
+      await this.markProcessed(fire.workflowId, fire.signature);
+      return;
+    }
+    // An earlier pass over this block already created and enqueued the row
+    // (the Redis dedup missed it). Enqueueing again would run it twice; the
+    // fire is settled, so mark it like a refusal.
+    if (alreadyExisted) {
+      logger.log(
+        `[ingestor] skipping duplicate event dispatch for ${dispatchKey} (already enqueued)`,
       );
       await this.markProcessed(fire.workflowId, fire.signature);
       return;
@@ -271,15 +293,25 @@ export class BlockIngestor {
     if (alreadyProcessed) {
       return;
     }
-    const { executionId, refused } = await createPhantomExecution(
-      fire.workflowId,
-      fire.userId,
-      "block",
-      "scheduler",
-    );
+    const dispatchKey = `block:${fire.workflowId}:${this.registration.chainId}:${fire.payload.slot}`;
+    const { executionId, alreadyExisted, refused } =
+      await createPhantomExecution(
+        fire.workflowId,
+        fire.userId,
+        "block",
+        "scheduler",
+        dispatchKey,
+      );
     if (refused) {
       logger.log(
         `[ingestor] skipping refused block dispatch for ${fire.workflowId} (${refused})`,
+      );
+      await this.markProcessed(fire.workflowId, dedupKey);
+      return;
+    }
+    if (alreadyExisted) {
+      logger.log(
+        `[ingestor] skipping duplicate block dispatch for ${dispatchKey} (already enqueued)`,
       );
       await this.markProcessed(fire.workflowId, dedupKey);
       return;

@@ -127,6 +127,15 @@ export type TimeSeriesBucket = {
   running: number;
 };
 
+/**
+ * Buckets plus the width each one covers, so the chart can label them at the
+ * granularity they were actually aggregated at.
+ */
+export type TimeSeriesResponse = {
+  buckets: TimeSeriesBucket[];
+  intervalMs: number;
+};
+
 export type NetworkBreakdown = {
   network: string;
   totalGasWei: string;
@@ -135,10 +144,68 @@ export type NetworkBreakdown = {
   errorCount: number;
 };
 
-export type RunsFilters = {
+/**
+ * Server-side filters the runs listing accepts. Every dimension is a set, so a
+ * reader can hold several values of one dimension open at once (all three error
+ * statuses, two networks). Values inside a dimension OR together; the
+ * dimensions AND together.
+ */
+/**
+ * How a run's on-chain cost was met. "sponsored" is a run with a leg KeeperHub
+ * covered from gas credit; "wallet" is a run that spent more than the credit
+ * covered, so the org's own funds paid for part of it; "free" is a run that
+ * only read, or never reached a broadcast.
+ *
+ * Sponsored and wallet deliberately overlap. A run that starts sponsored and
+ * falls back to direct signing genuinely is both, and filing it under only one
+ * would hide it from the other filter.
+ */
+export type GasSpend = "sponsored" | "wallet" | "free";
+
+export type RunQueryFilters = {
+  statuses?: NormalizedStatus[];
+  gas?: GasSpend[];
+  sources?: RunSource[];
+  networks?: string[];
+  /** Inclusive lower bound on run duration, in milliseconds. */
+  durationMinMs?: number;
+  /** Exclusive upper bound on run duration, in milliseconds. */
+  durationMaxMs?: number;
+  /** Matches a workflow name or a run id, case-insensitively. */
+  search?: string;
+};
+
+/**
+ * Run count per normalized status over the current window, used for the counts
+ * beside each option in the status filter. Counted with every other filter
+ * applied but with the status filter itself lifted, so a count answers "how
+ * many rows would ticking this add", not "how many are showing now".
+ */
+export type StatusFacets = Partial<Record<NormalizedStatus, number>>;
+
+/**
+ * Counts for every filter dimension that offers them, each computed with its
+ * own dimension lifted. Networks are keyed by the chain id a run's steps
+ * recorded, and include chains a run merely touched: a filter offering only the
+ * chains that spent gas hides every chain the org reads on.
+ */
+export type RunFacets = {
+  statusCounts: StatusFacets;
+  networkCounts: Record<string, number>;
+  gasCounts: Partial<Record<GasSpend, number>>;
+};
+
+/**
+ * Which counts a facets request wants. They are not equally cheap: status
+ * counts group `workflow_executions` alone, while network and gas both reach
+ * into the step logs - network to decode a chain out of JSONB, gas to run one
+ * count per bucket. Only status is cheap enough to ride the dashboard's poll;
+ * the other two are asked for when their dropdown is opened.
+ */
+export type FacetDimension = "status" | "network" | "gas";
+
+export type RunsFilters = RunQueryFilters & {
   range: TimeRange;
-  status?: NormalizedStatus;
-  source?: RunSource;
   cursor?: string;
   limit?: number;
   customStart?: string;
@@ -151,6 +218,14 @@ export type RunsResponse = {
   total: number;
   page: number;
   pageSize: number;
+  /**
+   * KEEP-1042: ISO instant before which this organization's step logs have been
+   * removed, per the retention its plan sells. A run older than this is listed
+   * with its status and duration but has no steps behind it, so the Gas and
+   * Network cells and the expanded view have to say that rather than render the
+   * same blank a run that never recorded anything produces.
+   */
+  stepLogRetentionCutoff?: string | null;
 };
 
 export type StepLog = {

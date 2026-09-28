@@ -186,29 +186,6 @@ pnpm test             # Run all tests
 pnpm test:e2e         # E2E tests
 ```
 
-## Codebase Understanding
-
-This repo ships an [Understand-Anything](https://github.com/Lum1104/Understand-Anything) knowledge graph at `.understand-anything/knowledge-graph.json` plus a Claude Code plugin for exploring it. The graph is a structural map of files, functions, imports, and architectural layers; the dashboard is a force-directed visualization.
-
-**Install (one-time, per developer):** in Claude Code at the repo root:
-
-```
-/plugin marketplace add Lum1104/Understand-Anything
-/plugin install understand-anything
-```
-
-Restart Claude Code, then:
-
-```
-/understand-dashboard           # interactive graph at http://127.0.0.1:5173
-/understand-chat <question>     # Q&A over the graph
-/understand-diff                # impact analysis of uncommitted changes
-/understand-onboard             # guided tour for new contributors
-/understand --full              # full re-index after a large refactor
-```
-
-Auto-refresh on commit is intentionally **off** in this repo (it would couple the graph to every PR diff). Refresh on cadence: weekly `/understand` for incremental, `/understand --full` after wide-blast-radius refactors. See `CLAUDE.md` for when each command is most useful and the known caveats.
-
 ## Architecture
 
 ### Services
@@ -217,7 +194,7 @@ Auto-refresh on commit is intentionally **off** in this repo (it would couple th
 
 | Service | Description | Source |
 |---------|-------------|--------|
-| **App** | Next.js application with workflow builder UI and API | `app/`, `keeperhub/` |
+| **App** | Next.js application with workflow builder UI and API | `app/` |
 | **Schedule Dispatcher** | Evaluates cron schedules every minute, dispatches matching workflows to SQS | `keeperhub-scheduler/schedule-dispatcher/` |
 | **Block Dispatcher** | Monitors blockchain blocks via WebSocket, dispatches matching workflows to SQS | `keeperhub-scheduler/block-dispatcher/` |
 | **Event Tracker** | Monitors blockchain events via Redis streams and routes to SQS | `keeperhub-events/event-tracker/` |
@@ -248,9 +225,10 @@ All trigger services (schedule dispatcher, block dispatcher, event tracker) send
 
 ### Plugin System
 
-Plugins extend workflow capabilities. Located in `keeperhub/plugins/`:
+Plugins extend workflow capabilities. Located in `plugins/`:
 
 - `web3` - Blockchain operations (balance, transfers, contract calls)
+- `evm-chain` - Read-only EVM chain diagnostics via any public JSON-RPC endpoint (no credentials)
 - `discord` - Discord notifications
 - `sendgrid` - Email via SendGrid
 - `webhook` - HTTP integrations
@@ -270,27 +248,27 @@ Base URL: `https://app.keeperhub.com/api`
 | `/api/integrations`              | Manage connections |
 | `/api/chains`                    | Supported networks |
 
-See [API Documentation](docs/api/index.md) for full reference.
+See [API Overview](docs/api/index.md) for full reference.
 
 ## Observability
 
-Prometheus metrics exposed at `/api/metrics`:
+Prometheus metrics exposed at `/api/metrics`, readable from inside the cluster only:
 
 - Workflow execution performance
 - API latency
 - Plugin action metrics
 - User and organization stats
 
-See [Metrics Reference](keeperhub/lib/metrics/METRICS_REFERENCE.md) for details.
+See [Metrics Reference](lib/metrics/METRICS_REFERENCE.md) for details.
 
 ## Documentation
 
 Full documentation available at [docs.keeperhub.com](https://docs.keeperhub.com) or in the `docs/` directory:
 
-- [Quick Start Guide](docs/getting-started/quickstart.md)
-- [Core Concepts](docs/intro/concepts.md)
-- [Workflow Examples](docs/workflows/examples.md)
-- [API Reference](docs/api/index.md)
+- [Getting Started](docs/getting-started/index.md)
+- [Core Concepts](docs/concepts.md)
+- [Workflows](docs/workflows/index.md)
+- [API Overview](docs/api/index.md)
 - [Security Best Practices](docs/practices/security.md)
 
 ## License

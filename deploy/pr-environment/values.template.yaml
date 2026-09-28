@@ -21,6 +21,36 @@ shared_env: &shared_env
   SOLANA_WALLET_PROVISIONING_ENABLED:
     type: kv
     value: "true"
+  # KEEP-1042: a PR environment runs the retention job for real, so the passes
+  # and their SQL are exercised on a real database before staging is. Staging
+  # and prod ship dry-run; here it deletes, because the environment is
+  # disposable and the seed data is hours old, well inside every window.
+  EXECUTION_RETENTION_ENABLED:
+    type: kv
+    value: "true"
+  # Run rows stay off here too. Deleting one rewrites what a customer was
+  # billed, and the pass is blocked on a durable per-period usage record.
+  EXECUTION_RETENTION_EXECUTIONS_ENABLED:
+    type: kv
+    value: "false"
+  EXECUTION_RETENTION_DRY_RUN:
+    type: kv
+    value: "false"
+  EXECUTION_LOG_FLOOR_RETENTION_DAYS:
+    type: kv
+    value: "400"
+  EXECUTION_RETENTION_DAYS:
+    type: kv
+    value: "400"
+  EXECUTION_LOG_OUTPUT_RAW_RETENTION_DAYS:
+    type: kv
+    value: "7"
+  EXECUTION_RETENTION_BATCH_SIZE:
+    type: kv
+    value: "5000"
+  EXECUTION_RETENTION_MAX_RUNTIME_SECONDS:
+    type: kv
+    value: "240"
 
 replicaCount: 1
 
@@ -66,7 +96,10 @@ deployment:
         - |
           set -e
           echo "Setting up workflow postgres tables..."
-          pnpm exec workflow-postgres-setup
+          # Called by path, not through the `bootstrap` bin: .npmrc public-hoists
+          # @workflow/* and hoisted packages land bins in the root .bin, so a sibling
+          # gaining that generic name would silently shadow this (KEEP-1299).
+          node node_modules/@workflow/world-postgres/bin/setup.js
           echo "Running database migrations..."
           pnpm db:migrate
           echo "Seeding chains and tokens..."
@@ -485,6 +518,33 @@ cronjob:
       failedJobsHistoryLimit: 3
       restartPolicy: OnFailure
       backoffLimit: 2
+    - name: execution-reconciler
+      image:
+        repository: ${ECR_REGISTRY}/keeperhub-staging
+        tag: app-${IMAGE_TAG}
+        imagePullPolicy: Always
+      schedule: "* * * * *" # every minute (faster than prod for PR validation)
+      command: ["/bin/sh"]
+      args:
+        - "/app/deploy/scripts/reaper.sh"
+        - "http://keeperhub-pr-${PR_NUMBER}-common:3000/api/cron/execution-reconciler"
+      env:
+        INTERNAL_SERVICE_HMAC_SECRET:
+          type: parameterStore
+          name: internal-service-hmac-secret
+          parameter_name: /eks/techops-staging/keeperhub/internal-service-hmac-secret
+      resources:
+        requests:
+          memory: "32Mi"
+          cpu: "10m"
+        limits:
+          memory: "32Mi"
+          cpu: "10m"
+      concurrencyPolicy: Forbid
+      successfulJobsHistoryLimit: 3
+      failedJobsHistoryLimit: 3
+      restartPolicy: OnFailure
+      backoffLimit: 2
     - name: tempo-broadcast-due
       image:
         repository: ${ECR_REGISTRY}/keeperhub-staging
@@ -522,6 +582,33 @@ cronjob:
       args:
         - "/app/deploy/scripts/reaper.sh"
         - "http://keeperhub-pr-${PR_NUMBER}-common:3000/api/cron/security-behavioral-scan"
+      env:
+        INTERNAL_SERVICE_HMAC_SECRET:
+          type: parameterStore
+          name: internal-service-hmac-secret
+          parameter_name: /eks/techops-staging/keeperhub/internal-service-hmac-secret
+      resources:
+        requests:
+          memory: "32Mi"
+          cpu: "10m"
+        limits:
+          memory: "32Mi"
+          cpu: "10m"
+      concurrencyPolicy: Forbid
+      successfulJobsHistoryLimit: 3
+      failedJobsHistoryLimit: 3
+      restartPolicy: OnFailure
+      backoffLimit: 2
+    - name: retention
+      image:
+        repository: ${ECR_REGISTRY}/keeperhub-staging
+        tag: app-${IMAGE_TAG}
+        imagePullPolicy: Always
+      schedule: "*/10 * * * *" # every 10 minutes (hourly on staging and prod)
+      command: ["/bin/sh"]
+      args:
+        - "/app/deploy/scripts/reaper.sh"
+        - "http://keeperhub-pr-${PR_NUMBER}-common:3000/api/internal/retention"
       env:
         INTERNAL_SERVICE_HMAC_SECRET:
           type: parameterStore

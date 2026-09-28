@@ -1,3 +1,4 @@
+import { ethers } from "ethers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
@@ -129,6 +130,84 @@ describe("queryTransactionsCore", () => {
   });
 
   describe("validation", () => {
+    const tupleEntry = {
+      type: "function",
+      name: "send",
+      inputs: [
+        {
+          name: "p",
+          type: "tuple",
+          components: [{ name: "n", type: "uint256" }],
+        },
+      ],
+    };
+    it("N1 decodes a saved legacy tuple key", async () => {
+      mockFindFirst.mockResolvedValue({
+        explorerApiUrl: "https://api.etherscan.io/api",
+        explorerUrl: "https://etherscan.io",
+        explorerApiType: "etherscan",
+        chainId: 1,
+        chainType: "evm",
+        explorerAddressPath: "/address/{address}",
+        explorerTxPath: "/tx/{hash}",
+      });
+      const iface = new ethers.Interface([tupleEntry]);
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () =>
+          makeEtherscanTxResponse([
+            { hash: "0xtest", input: iface.encodeFunctionData("send", [[7]]) },
+          ]),
+      });
+      const result = await queryTransactionsCore({
+        ...BASE_INPUT,
+        abi: JSON.stringify([tupleEntry]),
+        abiFunction: "send(tuple)",
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.matchCount).toBe(1);
+        expect(result.transactions?.[0].functionSignature).toBe(
+          "send((uint256))"
+        );
+      }
+    });
+
+    it("N1 returns USER errors for malformed and ambiguous keys without RPC", async () => {
+      for (const [abi, key] of [
+        [
+          [{ ...tupleEntry, inputs: [{ name: "p", type: "tuple" }] }],
+          "send(tuple)",
+        ],
+        [
+          [
+            tupleEntry,
+            {
+              ...tupleEntry,
+              inputs: [
+                {
+                  name: "p",
+                  type: "tuple",
+                  components: [{ name: "a", type: "address" }],
+                },
+              ],
+            },
+          ],
+          "send(tuple)",
+        ],
+        [[tupleEntry], "send(("],
+      ] as const) {
+        const result = await queryTransactionsCore({
+          ...BASE_INPUT,
+          abi: JSON.stringify(abi),
+          abiFunction: key,
+        });
+        expect(result).toMatchObject({ success: false, errorClass: "user" });
+      }
+      expect(mockExecuteWithFailover).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
     it("returns error for invalid contract address", async () => {
       const result = await queryTransactionsCore({
         ...BASE_INPUT,
@@ -208,7 +287,7 @@ describe("queryTransactionsCore", () => {
       const result = await queryTransactionsCore(BASE_INPUT);
 
       expect(result.success).toBe(true);
-      if (result.success) {
+      if (result.success && result.transactions) {
         expect(result.matchCount).toBe(1);
         expect(result.transactions[0].hash).toBe("0xabc");
         expect(result.transactions[0].functionName).toBe("transfer");
@@ -324,7 +403,7 @@ describe("queryTransactionsCore", () => {
       const result = await queryTransactionsCore(BASE_INPUT);
 
       expect(result.success).toBe(true);
-      if (result.success) {
+      if (result.success && result.transactions) {
         expect(result.matchCount).toBe(1);
         expect(result.transactions[0].hash).toBe("0xfallback");
       }
@@ -440,7 +519,7 @@ describe("queryTransactionsCore", () => {
       const result = await resultPromise;
 
       expect(result.success).toBe(true);
-      if (result.success) {
+      if (result.success && result.transactions) {
         expect(result.transactions[0].hash).toBe("0xrecovered");
       }
       expect(mockFetch).toHaveBeenCalledTimes(3);
@@ -476,7 +555,7 @@ describe("queryTransactionsCore", () => {
       const result = await queryTransactionsCore(BASE_INPUT);
 
       expect(result.success).toBe(true);
-      if (result.success) {
+      if (result.success && result.transactions) {
         expect(result.transactions[0].hash).toBe("0xprimary");
       }
       expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -606,7 +685,7 @@ describe("queryTransactionsCore", () => {
       const result = await queryTransactionsCore(BASE_INPUT);
 
       expect(result.success).toBe(true);
-      if (result.success) {
+      if (result.success && result.transactions) {
         expect(result.transactions[0].hash).toBe("0xrecovered");
       }
       expect(mockFetch).toHaveBeenCalledTimes(2);
@@ -649,5 +728,57 @@ describe("queryTransactionsCore", () => {
       }
       expect(mockFetch).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("queryTransactionsCore - failOnError", () => {
+  type SoftResult = {
+    success: boolean;
+    transactions: unknown[] | null;
+    matchCount: number | null;
+    error?: string;
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetChainIdFromNetwork.mockReturnValue(1);
+    mockDbSelect.mockReturnValue({
+      from: () => ({
+        where: () => ({ limit: () => Promise.resolve([]) }),
+      }),
+    });
+    mockExecuteWithFailover.mockResolvedValue({
+      success: false,
+      error: "Failed to resolve block range: RPC timeout",
+    });
+  });
+
+  it("softens a failed block-range read when the toggle is off", async () => {
+    const result = (await queryTransactionsCore({
+      ...BASE_INPUT,
+      failOnError: false,
+    })) as SoftResult;
+
+    expect(result.success).toBe(true);
+    // Null, not []: a query that never ran must not look like "no matches".
+    expect(result.transactions).toBeNull();
+    expect(result.matchCount).toBeNull();
+    expect(result.error).toContain("RPC timeout");
+  });
+
+  it("hard-fails the same read by default", async () => {
+    const result = (await queryTransactionsCore(BASE_INPUT)) as SoftResult;
+
+    expect(result.success).toBe(false);
+  });
+
+  it("still hard-fails an invalid contract address when the toggle is off", async () => {
+    const result = (await queryTransactionsCore({
+      ...BASE_INPUT,
+      contractAddress: "not-an-address",
+      failOnError: false,
+    })) as SoftResult;
+
+    expect(result.success).toBe(false);
   });
 });

@@ -126,6 +126,16 @@ const PURE_ABI = [
   },
 ];
 
+const NO_ARG_ABI = [
+  {
+    name: "totalSupply",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "supply", type: "uint256" }],
+  },
+];
+
 const NONPAYABLE_ABI = [
   {
     name: "quoteExactInputSingle",
@@ -458,5 +468,451 @@ describe("read-contract-core - missing abiFunction (KEEP-371)", () => {
     if (!result.success) {
       expect(result.error).not.toContain("indexOf");
     }
+  });
+});
+
+describe("read-contract-core - failOnError", () => {
+  const RPC_FAILURE = new Error(
+    "could not detect network (https://eth-mainnet.g.alchemy.com/v2/secret-key)"
+  );
+
+  it("hard-fails a read failure by default", async () => {
+    setupRpcMocks();
+    mockContractFunction.mockRejectedValueOnce(RPC_FAILURE);
+
+    const result = await readContractCore(makeInput());
+
+    expect(result.success).toBe(false);
+    if (result.success) {
+      return;
+    }
+    expect(result.errorClass).toBe("user");
+  });
+
+  it("softens a read failure into a success when failOnError is false", async () => {
+    setupRpcMocks();
+    mockContractFunction.mockRejectedValueOnce(RPC_FAILURE);
+
+    const result = await readContractCore(makeInput({ failOnError: false }));
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+    expect(result.result).toBeNull();
+    expect(result.error).toContain("Contract call failed");
+  });
+
+  it("accepts the string 'false' the visual editor persists", async () => {
+    setupRpcMocks();
+    mockContractFunction.mockRejectedValueOnce(RPC_FAILURE);
+
+    const result = await readContractCore(
+      makeInput({ failOnError: "false" as unknown as boolean })
+    );
+
+    expect(result.success).toBe(true);
+  });
+
+  it("redacts provider URLs in the softened error", async () => {
+    setupRpcMocks();
+    mockContractFunction.mockRejectedValueOnce(RPC_FAILURE);
+
+    const result = await readContractCore(makeInput({ failOnError: false }));
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+    expect(result.error).not.toContain("alchemy.com");
+    expect(result.error).not.toContain("secret-key");
+  });
+
+  it("softens a revert the same way", async () => {
+    setupRpcMocks();
+    mockContractFunction.mockRejectedValueOnce(
+      new Error("execution reverted: Vat/not-authorized")
+    );
+
+    const result = await readContractCore(makeInput({ failOnError: false }));
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+    expect(result.error).toContain("Vat/not-authorized");
+  });
+
+  it("softens a function missing from the ABI, like HTTP Request softens a 400", async () => {
+    setupRpcMocks();
+
+    const result = await readContractCore(
+      makeInput({ abiFunction: "notInAbi", failOnError: false })
+    );
+
+    // The ABI, the function name and the args are the payload, not the
+    // destination. HTTP Request hard-fails only an unusable URL; a request the
+    // far side rejects softens. This is the read-side equivalent, and it is
+    // what makes a For Each survive one item the contract will not accept.
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+    expect(result.result).toBeNull();
+    expect(result.error).toContain("not found in ABI");
+  });
+
+  it("still hard-fails an invalid contract address when failOnError is false", async () => {
+    setupRpcMocks();
+
+    const result = await readContractCore(
+      makeInput({ contractAddress: "not-an-address", failOnError: false })
+    );
+
+    // The address is the destination: with nowhere to call, a null-data
+    // success would let a permanently broken node run unnoticed.
+    expect(result.success).toBe(false);
+  });
+
+  it("still hard-fails an unresolvable network when failOnError is false", async () => {
+    mockGetChainIdFromNetwork.mockImplementation(() => {
+      throw new Error("Unsupported network");
+    });
+
+    const result = await readContractCore(
+      makeInput({ network: "not-a-chain", failOnError: false })
+    );
+
+    expect(result.success).toBe(false);
+  });
+
+  it("still hard-fails an unresolved RPC config when failOnError is false", async () => {
+    mockGetChainIdFromNetwork.mockReturnValue(1);
+    mockGetRpcProvider.mockRejectedValueOnce(new Error("No RPC configured"));
+
+    const result = await readContractCore(makeInput({ failOnError: false }));
+
+    expect(result.success).toBe(false);
+    if (result.success) {
+      return;
+    }
+    expect(result.errorClass).toBe("system");
+  });
+});
+
+describe("ABI fragment validation before RPC failover", () => {
+  it("N3 classifies a components-less legacy tuple as USER before provider creation", async () => {
+    vi.clearAllMocks();
+    const result = await readContractCore({
+      contractAddress: VALID_ADDRESS,
+      network: "ethereum",
+      abi: JSON.stringify([
+        {
+          type: "function",
+          name: "broken",
+          inputs: [{ name: "p", type: "tuple" }],
+        },
+        { type: "function", name: "broken", inputs: [] },
+      ]),
+      abiFunction: "broken(tuple)",
+      _context: { organizationId: "org-test" },
+    });
+    expect(result).toMatchObject({ success: false, errorClass: "user" });
+    if (!result.success) {
+      expect(result.error).toContain("Invalid ABI function");
+    }
+    expect(mockGetRpcProvider).not.toHaveBeenCalled();
+    expect(mockContractFunction).not.toHaveBeenCalled();
+  });
+});
+
+// A read with no caller is a read as address(0), which is itself a specific
+// address: OptimismPortal2 reveals a failing withdrawal target only to
+// address(1), and a toll-gated Chronicle feed reads only for an authed caller.
+// These cover the value reaching the chain on both branches of the isView
+// ternary, and every blank shape leaving the call exactly as it was (#2399).
+describe("read-contract-core - caller address (#2399)", () => {
+  const CALLER = "0x2c9F694183A4240B6431771F6c714a8106179dF5";
+  const NO_ARG_ABI = [
+    {
+      name: "totalSupply",
+      type: "function",
+      stateMutability: "view",
+      inputs: [],
+      outputs: [{ name: "supply", type: "uint256" }],
+    },
+  ];
+
+  it("passes the caller to a view call as trailing overrides", async () => {
+    setupRpcMocks();
+    mockContractFunction.mockResolvedValueOnce(BigInt("1000"));
+
+    const result = await readContractCore(makeInput({ callerAddress: CALLER }));
+
+    expect(result.success).toBe(true);
+    const call = mockContractFunction.mock.calls[0];
+    expect(call).toHaveLength(2);
+    expect(call[1]).toEqual({ from: CALLER });
+  });
+
+  it("passes the caller on the staticCall branch too", async () => {
+    setupRpcMocks();
+    mockStaticCall.mockResolvedValueOnce(BigInt("500000"));
+
+    const result = await readContractCore(
+      makeInput({
+        abi: JSON.stringify(NONPAYABLE_ABI),
+        abiFunction: "quoteExactInputSingle",
+        functionArgs: JSON.stringify([
+          VALID_ADDRESS,
+          VALID_ADDRESS,
+          "3000",
+          "1000000",
+          "0",
+        ]),
+        callerAddress: CALLER,
+      })
+    );
+
+    expect(result.success).toBe(true);
+    const call = mockStaticCall.mock.calls[0];
+    expect(call).toHaveLength(6);
+    expect(call[5]).toEqual({ from: CALLER });
+  });
+
+  it("passes the caller as the only argument to a no-argument function", async () => {
+    setupRpcMocks();
+    mockContractFunction.mockResolvedValueOnce(BigInt(7));
+
+    const result = await readContractCore(
+      makeInput({
+        abi: JSON.stringify(NO_ARG_ABI),
+        abiFunction: "totalSupply",
+        functionArgs: "",
+        callerAddress: CALLER,
+      })
+    );
+
+    expect(result.success).toBe(true);
+    expect(mockContractFunction).toHaveBeenCalledWith({ from: CALLER });
+  });
+
+  it("does not fold the caller into the decoded ABI arguments", async () => {
+    setupRpcMocks();
+    mockContractFunction.mockResolvedValueOnce(BigInt("1000"));
+
+    await readContractCore(makeInput({ callerAddress: CALLER }));
+
+    expect(mockContractFunction.mock.calls[0][0]).toBe(VALID_ADDRESS);
+  });
+
+  it("accepts an all-lowercase caller and forwards it unchanged", async () => {
+    setupRpcMocks();
+    mockContractFunction.mockResolvedValueOnce(BigInt("1000"));
+
+    const result = await readContractCore(
+      makeInput({ callerAddress: CALLER.toLowerCase() })
+    );
+
+    expect(result.success).toBe(true);
+    expect(mockContractFunction.mock.calls[0][1]).toEqual({
+      from: CALLER.toLowerCase(),
+    });
+  });
+
+  it("calls the contract exactly as before when no caller is given", async () => {
+    setupRpcMocks();
+    mockContractFunction.mockResolvedValueOnce(BigInt("1000"));
+
+    const result = await readContractCore(makeInput());
+
+    expect(result.success).toBe(true);
+    expect(mockContractFunction.mock.calls[0]).toEqual([VALID_ADDRESS]);
+  });
+
+  it("treats an empty string caller as no caller, as before", async () => {
+    setupRpcMocks();
+    mockContractFunction.mockResolvedValueOnce(BigInt("1000"));
+
+    const result = await readContractCore(makeInput({ callerAddress: "" }));
+
+    expect(result.success).toBe(true);
+    expect(mockContractFunction.mock.calls[0]).toEqual([VALID_ADDRESS]);
+  });
+
+  // A caller fed by {{PreviousNode.address}} that renders to nothing must be a
+  // field left empty, not a hard error. null reaches here the same way: it is
+  // what an MCP-authored config carries, and isMissingRequiredValue treats it
+  // as missing, so such a workflow persists and then has to run.
+  it("treats a null caller as no caller", async () => {
+    setupRpcMocks();
+    mockContractFunction.mockResolvedValueOnce(BigInt("1000"));
+
+    const result = await readContractCore(
+      makeInput({ callerAddress: null as unknown as string })
+    );
+
+    expect(result.success).toBe(true);
+    expect(mockContractFunction.mock.calls[0]).toEqual([VALID_ADDRESS]);
+  });
+
+  // validateFieldValue early-returns valid for undefined, null and "", and
+  // rejects a whitespace-only value through its isAddressField branch. Reading
+  // whitespace as absent here would have left run time saying a field is empty
+  // that save time calls invalid, and that half was unreachable anyway.
+  it("refuses a whitespace-only caller, as save time does", async () => {
+    setupRpcMocks();
+
+    const result = await readContractCore(makeInput({ callerAddress: "   " }));
+
+    expect(result).toMatchObject({ success: false, errorClass: "user" });
+    if (!result.success) {
+      expect(result.error).toContain("Invalid caller address");
+    }
+    expect(mockContractFunction).not.toHaveBeenCalled();
+    expect(mockStaticCall).not.toHaveBeenCalled();
+  });
+
+  // What a template actually produces is an address with whitespace around it,
+  // which is read rather than refused.
+  it("trims whitespace around a real caller", async () => {
+    setupRpcMocks();
+    mockContractFunction.mockResolvedValueOnce(BigInt("1000"));
+
+    const result = await readContractCore(
+      makeInput({ callerAddress: `  ${CALLER}  ` })
+    );
+
+    expect(result.success).toBe(true);
+    expect(mockContractFunction.mock.calls[0]).toEqual([
+      VALID_ADDRESS,
+      { from: CALLER },
+    ]);
+  });
+
+  it("refuses a malformed caller without calling the chain", async () => {
+    setupRpcMocks();
+
+    const result = await readContractCore(
+      makeInput({ callerAddress: "not-an-address" })
+    );
+
+    expect(result).toMatchObject({ success: false, errorClass: "user" });
+    if (!result.success) {
+      expect(result.error).toContain("Invalid caller address");
+    }
+    expect(mockContractFunction).not.toHaveBeenCalled();
+    expect(mockStaticCall).not.toHaveBeenCalled();
+  });
+
+  it("refuses a mixed-case caller whose checksum does not hold", async () => {
+    setupRpcMocks();
+
+    const result = await readContractCore(
+      makeInput({ callerAddress: "0x2C9f694183A4240B6431771F6c714a8106179dF5" })
+    );
+
+    expect(result).toMatchObject({ success: false, errorClass: "user" });
+    expect(mockContractFunction).not.toHaveBeenCalled();
+  });
+
+  // The caller is payload, like the arguments, not a destination: failOnError
+  // softens it the way it softens an unparseable argument list rather than
+  // hard-failing it the way it hard-fails an invalid contract address.
+  it("softens a malformed caller when failOnError is false", async () => {
+    setupRpcMocks();
+
+    const result = await readContractCore(
+      makeInput({ callerAddress: "not-an-address", failOnError: false })
+    );
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.result).toBeNull();
+      expect(result.error).toContain("Invalid caller address");
+    }
+    expect(mockContractFunction).not.toHaveBeenCalled();
+  });
+});
+
+describe("read-contract-core - functionArgs as a native array (#2359)", () => {
+  // The executor renders templates inside arrays now, so functionArgs can
+  // reach this step as an array rather than the JSON string the UI sends.
+  // Before, the declared type was string only and the step called .trim() on
+  // it, so an array threw a TypeError instead of running or being refused.
+  it("produces the same call from an array as from its JSON string", async () => {
+    setupRpcMocks();
+    mockContractFunction.mockResolvedValue(BigInt(42));
+    const fromString = await readContractCore(
+      makeInput({
+        abi: JSON.stringify(PURE_ABI),
+        abiFunction: "add",
+        functionArgs: JSON.stringify(["10", "32"]),
+      })
+    );
+    const stringCall = mockContractFunction.mock.calls[0];
+
+    vi.clearAllMocks();
+    setupRpcMocks();
+    mockContractFunction.mockResolvedValue(BigInt(42));
+    const fromArray = await readContractCore(
+      makeInput({
+        abi: JSON.stringify(PURE_ABI),
+        abiFunction: "add",
+        functionArgs: ["10", "32"],
+      })
+    );
+    const arrayCall = mockContractFunction.mock.calls[0];
+
+    expect(fromString.success).toBe(true);
+    expect(fromArray.success).toBe(true);
+    expect(arrayCall).toEqual(stringCall);
+  });
+
+  it("refuses a JSON string that is not an array, as before", async () => {
+    setupRpcMocks();
+    const result = await readContractCore(
+      makeInput({ functionArgs: JSON.stringify({ account: VALID_ADDRESS }) })
+    );
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toBe("Function arguments must be a JSON array");
+    }
+    expect(mockContractFunction).not.toHaveBeenCalled();
+  });
+
+  it("treats null, 0 and false as no arguments, as the base did", async () => {
+    // Only a string that trims empty was absent, so these reached JSON.parse:
+    // JSON.parse(null) coerces to JSON.parse("null"), yields null, fails
+    // Array.isArray and became "Function arguments must be a JSON array". The
+    // same call succeeds on staging, whose truthiness test read them as absent.
+    for (const absent of [null, 0, false]) {
+      vi.clearAllMocks();
+      setupRpcMocks();
+      mockContractFunction.mockResolvedValue(BigInt(7));
+      const result = await readContractCore(
+        makeInput({
+          abi: JSON.stringify(NO_ARG_ABI),
+          abiFunction: "totalSupply",
+          functionArgs: absent as unknown as string,
+        })
+      );
+      expect([String(absent), result.success]).toEqual([String(absent), true]);
+      expect(mockContractFunction).toHaveBeenCalledWith();
+    }
+  });
+
+  it("treats an empty string as no arguments, as before", async () => {
+    setupRpcMocks();
+    mockContractFunction.mockResolvedValue(BigInt(7));
+    const result = await readContractCore(
+      makeInput({
+        abi: JSON.stringify(NO_ARG_ABI),
+        abiFunction: "totalSupply",
+        functionArgs: "",
+      })
+    );
+    expect(result.success).toBe(true);
+    expect(mockContractFunction).toHaveBeenCalledWith();
   });
 });

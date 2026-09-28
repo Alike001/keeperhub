@@ -26,7 +26,43 @@
  */
 
 import type { TransactionHashEntry } from "@/lib/db/schema";
+import { isSolanaChain } from "@/lib/rpc/solana-chains";
+import { validateChainTxHash } from "@/lib/web3/validate-chain-tx-hash";
 import type { StepContext } from "./step-handler";
+
+/**
+ * Whether a step's self-reported hash is one this execution can record and
+ * later re-verify against the chain.
+ *
+ * Solana signatures are base58, not 0x-hex, so a bare 0x prefix test drops
+ * every one of them and the finalize gate never sees a Solana write at all.
+ * When the step reported which chain it was on, the hash is instead checked
+ * against the shape that chain actually uses (validateChainTxHash), which
+ * still rejects junk.
+ *
+ * A hash with no chainId keeps the 0x test on purpose. reconcileTransactionHashes
+ * fails the whole batch conclusively for a hash it cannot attribute to a chain,
+ * so admitting a base58 hash from a step that reports no chainId
+ * (transfer-spl-token-core, call-solana-program-core,
+ * send-raw-solana-instruction-core) would settle runs that actually succeeded
+ * as failed. Those steps not reporting chainId is a separate defect; dropping
+ * their hash is what happens today and is the lesser of the two errors until
+ * it is fixed.
+ *
+ * Both helpers are imported from leaf modules rather than provider-factory /
+ * validate-chain-address: this file is reachable from executor.workflow.ts,
+ * so whatever it imports is compiled into the workflow-function bundle, where
+ * @solana/web3.js, ethers, safeFetch and the db client are all rejected.
+ */
+export function isRecordableTransactionHash(
+  hash: string,
+  chainId: unknown
+): boolean {
+  if (typeof chainId === "number" && isSolanaChain(chainId)) {
+    return validateChainTxHash(hash, chainId);
+  }
+  return hash.startsWith("0x");
+}
 
 export type IterationKey = {
   forEachNodeId: string;
@@ -90,10 +126,10 @@ export function getSuccessfulSteps(
 }
 
 /**
- * If the step output carries an on-chain transaction hash (0x-prefixed
- * string), append it to the per-execution ordered list along with the node
- * and chain context that produced it. Called from withStepLoggingInner after
- * each successful step.
+ * If the step output carries a recordable on-chain transaction hash (see
+ * isRecordableTransactionHash), append it to the per-execution ordered list
+ * along with the node and chain context that produced it. Called from
+ * withStepLoggingInner after each successful step.
  *
  * Optional fields (chainId, network, iterationIndex) are omitted from the
  * entry rather than set to null when not present in the output / context,
@@ -116,7 +152,7 @@ export function recordTransactionHashIfPresent(
     o === null ||
     typeof o !== "object" ||
     typeof o.transactionHash !== "string" ||
-    !o.transactionHash.startsWith("0x")
+    !isRecordableTransactionHash(o.transactionHash, o.chainId)
   ) {
     return;
   }
@@ -131,6 +167,20 @@ export function recordTransactionHashIfPresent(
     }),
   };
   const list = txHashEntries.get(context.executionId) ?? [];
+  // One on-chain write, one entry. A step can be recorded more than once for
+  // the same node -- a replay that reuses a completed step records it so the
+  // tracker stays complete -- and resolveTransactionHashesForSuccess feeds
+  // this list straight into the run's transactionHashes, so a duplicate would
+  // be re-verified against the chain and counted twice in the digest.
+  const alreadyTracked = list.some(
+    (existing) =>
+      existing.hash === entry.hash &&
+      existing.nodeId === entry.nodeId &&
+      existing.iterationIndex === entry.iterationIndex
+  );
+  if (alreadyTracked) {
+    return;
+  }
   list.push(entry);
   txHashEntries.set(context.executionId, list);
 }

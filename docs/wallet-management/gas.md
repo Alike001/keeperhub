@@ -25,18 +25,20 @@ The multiplier exists because gas estimates are point-in-time snapshots. Between
 
 Defaults vary by chain type. L2 networks use lower multipliers because their gas estimates tend to be more accurate.
 
-| Chain | Standard Multiplier | Conservative Multiplier |
-|-------|-------------------|----------------------|
-| Ethereum | 2.0x | 2.5x |
-| Polygon | 2.0x | 2.5x |
-| Arbitrum | 1.5x | 2.0x |
-| Base | 1.5x | 2.0x |
+| Network | Multiplier |
+|---------|-----------|
+| Ethereum, Ethereum Sepolia | 2.0x |
+| Polygon, Polygon Amoy | 2.0x |
+| 0G, 0G Galileo | 2.0x |
+| Arbitrum One, Arbitrum Sepolia | 1.5x |
+| Base, Base Sepolia | 1.5x |
+| Robinhood Chain and its testnet | 1.5x |
+| Tempo, Tempo Moderato | 1.5x |
+| Any other EVM network | 2.0x (global default) |
 
-**Standard** multiplier is used for manual triggers and scheduled workflows.
+The same multiplier applies however the workflow was triggered. A manual run, a scheduled run, a webhook, and an event trigger hitting the same contract on the same network all receive the same gas limit.
 
-**Conservative** multiplier is used for time-sensitive triggers (event-based, webhook) where retry opportunity is limited and failing the transaction is more costly.
-
-These defaults are resolved in order: database chain config > hardcoded chain overrides > global default (2.0x / 2.5x).
+These defaults are resolved in order: database chain config > hardcoded chain overrides > global default (2.0x).
 
 ## Gas Limit Override
 
@@ -48,14 +50,14 @@ You can set an absolute gas limit per action node:
 
 ### Field Behavior
 
-- **When empty**: The default 2.0x multiplier is applied to the gas estimate at execution time
+- **When empty**: The chain's default multiplier (see [Default Multipliers](#default-multipliers)) is applied to the gas estimate at execution time
 - **When set**: Your absolute value is used directly as the transaction gas limit, bypassing the multiplier
 
 The field also shows a live gas estimate when enough configuration is filled in (network, contract address, function, etc.). This helps you choose an appropriate gas limit. If your value is below the current estimate, a warning is shown.
 
 ### Example
 
-If the network estimates 100,000 gas for your transaction:
+If the network estimates 100,000 gas for your transaction and the network's default multiplier is 2.0x:
 
 | Gas Limit Setting | Result |
 |-------------------|--------|
@@ -85,6 +87,24 @@ A transaction is sponsored only when all of the following are true. Otherwise it
 - **Direct wallet sender (no Safe)**: the active Sender is the wallet itself.
 - **Public mempool**: transactions routed through a private mempool are not sponsored.
 - **Gas credits available**: your organization still has gas credits for the current period.
+- **Sponsor gas is on for the node**: the action's own toggle, described below.
+
+### Sponsor gas toggle
+
+Each write action decides for itself whether to use sponsorship:
+
+1. Open the action node configuration (Transfer Native Token, Transfer ERC20 Token, Approve ERC20 Token, Write Contract, or any protocol write action)
+2. Pick a network that gas sponsorship covers, listed above
+3. Expand the **Advanced** section
+4. Set **Sponsor gas**
+
+The toggle appears only once the node points at a network sponsorship covers. On any other network there is nothing for it to turn off, so it stays hidden and the wallet pays gas as usual.
+
+The toggle is on by default, which is the behavior every existing workflow already had: the action tries sponsorship first and falls back to your own wallet when any eligibility condition above is not met.
+
+Turn it off to keep the action on your own wallet. Sponsorship is then not attempted at all, so the action spends no gas credits and the sending wallet must hold enough native token for both the gas fee and any value the transaction sends. Use it when you want a predictable sender and fee source for one action, for example a transaction whose gas you want billed to the wallet rather than your gas credit allowance.
+
+The toggle only removes sponsorship. Turning it on does not override the conditions above: an unsupported network, a Safe sender, a private mempool route, or an exhausted credit allowance still pays gas from the wallet.
 
 ### Safe wallets
 
@@ -94,15 +114,55 @@ Workflows that route through a Safe (Sender ON) are not gas sponsored. The spons
 
 Sponsored gas is metered in USD against your plan's monthly gas credit cap (shown on the billing page). Mainnet usage counts against the cap; testnet usage is not charged. When the cap is reached, sponsorship pauses for the rest of the period and transactions pay gas from the wallet.
 
+### When sponsorship falls back
+
+Sponsorship is attempted first and falls back to direct signing (your wallet pays
+the gas) whenever any eligibility condition above is not met. Sponsorship can
+also be unavailable for a specific organization or wallet even when all of them
+hold: Turnkey can reject an activity at submission time, and the step then falls
+back the same way.
+
+The Runs panel shows a **Gas sponsored** badge on each sponsored step; a step
+that fell back has no badge. The badge is per step, so a run with one sponsored
+step and one fallback step still shows it on the sponsored step. The run-level
+**Sponsored** filter (under **Used gas**) lists runs that drew on gas credits.
+The run output does not say why sponsorship was skipped.
+
+What the fallback does next depends on the wallet balance:
+
+- **Wallet holds native gas**: the run completes, paid from your wallet.
+- **Wallet has no native gas**: the gas preflight runs before the transaction is
+  broadcast and fails the step with:
+
+  ```
+  Insufficient ETH balance. Have: 0.0, Need: 0.000000231. Fund
+  0x...orgWallet with at least 0.000000231 ETH on this chain and retry.
+  ```
+
+  Nothing was broadcast at this point, so there is no transaction hash to look
+  up. Fund the address named in the message and retry. The preflight caches the
+  balance and the gas price for about ten seconds, so a retry started right
+  after the funds land can repeat the same error; give it a few seconds.
+
+The preflight runs in the Web3 plugin's EVM write actions and in the protocol
+actions built on them. Actions on chains with their own transaction path, such
+as Tempo, do not run it. Reaching the preflight means the wallet is paying gas
+itself -- either the step was never eligible for sponsorship, or a sponsored
+attempt fell back -- and funding the address fixes the run either way. For a
+write that sends no native value, restoring the eligibility conditions above can
+also fix it without funding. A write that sends native value always needs that
+value in the wallet, because sponsorship covers the fee only (see
+[What sponsorship covers](#what-sponsorship-covers)).
+
 ## FAQ
 
 ### What happens if I leave the gas limit empty?
 
-The default 2.0x multiplier is applied to the gas estimate at execution time. For time-sensitive triggers (event-based, webhook), a 2.5x conservative multiplier is used instead.
+The chain's default multiplier is applied to the gas estimate at execution time: 2.0x on most networks, 1.5x on the L2s listed under [Default Multipliers](#default-multipliers). The trigger type has no effect on it.
 
 ### What happens if my gas limit is too low?
 
-The transaction will revert with an "out of gas" error. You will still pay for the gas consumed up to the limit. KeeperHub's retry logic may re-attempt with the default multiplier.
+The transaction is mined but reverts with an "out of gas" error, and you still pay for the gas consumed up to the limit. KeeperHub does not retry it: the run fails and reports the revert, including the transaction hash. Raise or clear the gas limit and run the workflow again.
 
 ### What happens if my gas limit is too high?
 

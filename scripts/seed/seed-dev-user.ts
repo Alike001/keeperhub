@@ -22,6 +22,7 @@ import { generateRandomString, symmetricEncrypt } from "better-auth/crypto";
 import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
+import { CREDENTIAL_ACCOUNT_ISSUER } from "../../lib/auth/account-issuer";
 import { getDatabaseUrl } from "../../lib/db/connection-utils";
 import {
   accounts,
@@ -31,8 +32,8 @@ import {
   users,
 } from "../../lib/db/schema";
 import { generateId } from "../../lib/utils/id";
+import { SCRYPT_CONFIG, SEED_EMAIL } from "@/scripts/lib/dev-seed";
 
-const EMAIL = process.env.SEED_EMAIL ?? "dev@techops.services";
 const PASSWORD = process.env.SEED_PASSWORD ?? "Test1234!";
 const NAME = process.env.SEED_NAME ?? "Dev User";
 const ORG_SLUG = process.env.SEED_DEV_ORG_SLUG ?? "dev-org";
@@ -40,7 +41,6 @@ const ORG_NAME = process.env.SEED_DEV_ORG_NAME ?? "Dev Org";
 
 // Matches Better Auth's scrypt password format (salt:hash) so the seeded
 // credential works with the sign-in endpoint.
-const SCRYPT_CONFIG = { N: 16_384, r: 16, p: 1, dkLen: 64 } as const;
 
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes)
@@ -97,7 +97,7 @@ async function main(): Promise<void> {
     const [existingUser] = await db
       .select({ id: users.id })
       .from(users)
-      .where(eq(users.email, EMAIL))
+      .where(eq(users.email, SEED_EMAIL))
       .limit(1);
 
     let userId: string;
@@ -117,7 +117,7 @@ async function main(): Promise<void> {
       await db.insert(users).values({
         id: userId,
         name: NAME,
-        email: EMAIL,
+        email: SEED_EMAIL,
         emailVerified: true,
         twoFactorEnabled: true,
         isAnonymous: false,
@@ -142,6 +142,7 @@ async function main(): Promise<void> {
         id: generateId(),
         accountId: userId,
         providerId: "credential",
+        issuer: CREDENTIAL_ACCOUNT_ISSUER,
         userId,
         password: passwordHash,
         createdAt: now,
@@ -213,7 +214,7 @@ async function main(): Promise<void> {
     }
 
     console.log("Dev user ready:");
-    console.log(`  Email:    ${EMAIL}`);
+    console.log(`  Email:    ${SEED_EMAIL}`);
     console.log(`  Password: ${PASSWORD}`);
     console.log(`  Org:      ${ORG_NAME} (${ORG_SLUG}) - owner`);
     console.log(

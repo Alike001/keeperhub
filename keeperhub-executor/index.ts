@@ -47,8 +47,10 @@ import { withBackstopCapture } from "../lib/security/backstop-capture";
 import { buildAttribution } from "../lib/security/request-attribution";
 import { verifySqsMessageSignature } from "../lib/sqs-message-auth";
 import { generateId } from "../lib/utils/id";
+import { ErrorCategory, logSystemError } from "../lib/logging";
 import { checkConcurrencyLimit } from "../lib/workflow/concurrency";
 import { hashWorkflowDefinition } from "../lib/workflow/content-hash";
+import { SHUTDOWN_TIMEOUT_MS } from "../lib/workflow/executor/runner-constants";
 import { loadWorkflowForExecution } from "../lib/workflow/load-for-execution";
 import type { WorkflowNode } from "../lib/workflow/store";
 import { chargePaygExecution } from "../lib/billing/payg/charge";
@@ -60,6 +62,8 @@ import { resolveDispatchTarget } from "./execution-mode";
 import { checkWorkflowFeaturesForExecutor } from "./feature-guard";
 import { executeInProcess } from "./in-process";
 import { createWorkflowJob } from "./k8s-job";
+import { takeLatency, trackLatency } from "./lib/correlation-map";
+import { enableBroadcastMarkers, sweepBroadcastMarkers } from "./lib/broadcast-marker";
 import {
   claimPendingForExecution,
   claimPhantomForExecution,
@@ -67,14 +71,29 @@ import {
   failExecutionAsSystemError,
   resolveToSkipped,
 } from "./lib/db-helpers";
-import { applyCounterDeltas, isIngestPayload } from "./lib/metrics-shipping";
+import { InFlightTracker } from "./lib/in-flight";
+import {
+  applyCounterDeltas,
+  applyLatencyObservations,
+  isIngestPayload,
+} from "./lib/metrics-shipping";
+import { registerLatencyObservationApplier } from "./lib/observation-applier";
 import { recordSkippedSample } from "./lib/terminal-counters";
 import { toJsonSafe } from "./lib/serialize";
+// Bootstrap the workflow error context (async-local storage) for this
+// non-Next process: the engine enters the execution context through it and
+// markBroadcast() reads the execution id back from it to stamp the broadcast
+// sidecar. The executor Docker stage does not copy instrumentation.ts, so
+// there is no Next register() to register the storage - without this import
+// storage stays null and every in-process broadcast is dropped by the
+// executionId guard when the marker is read back.
+import "./lib/workflow-error-context-bootstrap";
 import { executorMessageSchema } from "./message-schema";
 import {
   assertHmacSecretSet,
   assertTurnkeyEnvForActiveWallets,
 } from "./startup-checks";
+import { ExecutionLatency } from "./latency";
 import type { ExecutorMessage, ScheduleMessage } from "./types";
 
 const INGEST_MAX_BODY_BYTES = 256 * 1024;
@@ -256,8 +275,9 @@ async function dispatchExecution(params: {
   input: Record<string, unknown>;
   triggerType: ApiExecuteTriggerType;
   scheduleId?: string;
+  latency?: ExecutionLatency;
 }): Promise<void> {
-  const { target, workflowId, executionId, input, triggerType, scheduleId } =
+  const { target, workflowId, executionId, input, triggerType, scheduleId, latency } =
     params;
 
   switch (target) {
@@ -269,6 +289,11 @@ async function dispatchExecution(params: {
           input,
           triggerType,
           scheduleId,
+          correlationId: latency?.correlationId,
+          latencyEpochs: {
+            receivedAt: latency?.at("received"),
+            observedAt: latency?.at("observed"),
+          },
         });
 
         console.log(
@@ -297,7 +322,23 @@ async function dispatchExecution(params: {
       break;
     }
     case "api": {
-      await executeViaApi({ workflowId, executionId, input, triggerType });
+      // Correlation map (issue #2289): an api-target run executes inside the
+      // Next app pod via executeViaApi - no runner pod, no metrics ingest -
+      // so nothing will ever post a received-completed observation to free
+      // this entry. Take it as soon as the hand-off settles, success or
+      // failure; holding it made the 1024-slot ring turn over on message
+      // volume and cost slow k8s-job runs their own entries.
+      try {
+        await executeViaApi({ workflowId, executionId, input, triggerType });
+      } finally {
+        if (latency !== undefined) {
+          try {
+            takeLatency(latency.correlationId);
+          } catch {
+            // Cleanup must not mask the dispatch outcome.
+          }
+        }
+      }
       break;
     }
     case "in-process": {
@@ -308,11 +349,69 @@ async function dispatchExecution(params: {
         triggerType,
         scheduleId,
         db,
+        correlationId: latency?.correlationId,
+        // Same anchors the k8s-job branch passes: the in-process engine is the
+        // process that sees started/completed, so it records the timeline - but
+        // `observed` and `received` were stamped on this instance before the
+        // hand-off. Passing the id alone left the queue leg unmeasured and the
+        // observed -> broadcast interval with no in-process series at all.
+        latencyEpochs: {
+          receivedAt: latency?.at("received"),
+          observedAt: latency?.at("observed"),
+        },
       });
       break;
     }
     default:
       throw new Error(`Unknown dispatch target: ${target}`);
+  }
+
+  // Latency instrumentation (issue #2289): the dispatch handoff completed.
+  // Emit the correlation id + stage summary (so the run is traceable across
+  // executor and runner/API logs) and the receive->dispatch histogram split by
+  // trigger and target. Failure paths never reach here, so a summary implies a
+  // dispatched execution. The in-process target records its own full-timeline
+  // summary and histograms (it sees started/completed, which a handed-off Job
+  // never does), so it is excluded here to avoid a second, out-of-order line.
+  if (latency && target !== "in-process") {
+    // Wrapped so instrumentation cannot fail a dispatched execution. This block
+    // runs after createWorkflowJob returned, so a throw here reaches the
+    // processMessage catch and failExecutionAsSystemError flips the still-pending
+    // row to system_error -- while the transaction may already be on chain, and
+    // the runner's terminal write is then refused against that status. The Job
+    // exists by the time this block is entered, so a guarantee by audit of each
+    // call is not enough: nothing here may be allowed to throw.
+    try {
+      latency.mark("dispatched");
+      const queueToDispatchMs = latency.stageMs("received", "dispatched");
+      if (queueToDispatchMs !== undefined) {
+        getMetricsCollector().recordLatency(
+          MetricNames.EXECUTOR_DISPATCH_LATENCY,
+          queueToDispatchMs,
+          {
+            [LabelKeys.TRIGGER_TYPE]: triggerType,
+            [LabelKeys.DISPATCH_TARGET]: target,
+            [LabelKeys.STAGE]: "dispatched",
+          }
+        );
+      }
+      latency.emitLog({
+        workflowId,
+        executionId,
+        triggerType,
+        dispatchTarget: target,
+      });
+    } catch (latencyError) {
+      // logSystemError, not console.error: a swallowed instrumentation failure
+      // must still produce an error metric and a Sentry event, or the three
+      // throw paths this catch turned into swallow paths would degrade the
+      // headline histograms to zero samples with nothing anywhere saying so.
+      logSystemError(
+        ErrorCategory.WORKFLOW_ENGINE,
+        "[Executor] Latency instrumentation failed (dispatch unaffected):",
+        latencyError
+      );
+    }
   }
 }
 
@@ -349,11 +448,15 @@ function dropDuplicateDelivery(
   );
 }
 
-async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
+async function processExecutorMessage(
+  message: ExecutorMessage,
+  latency?: ExecutionLatency
+): Promise<void> {
   const { workflowId, triggerType } = message;
 
   console.log(
-    `[Executor] Processing ${triggerType} trigger for workflow ${workflowId}`
+    `[Executor] Processing ${triggerType} trigger for workflow ${workflowId}` +
+      (latency ? ` correlationId=${latency.correlationId}` : "")
   );
 
   // Load the workflow and evaluate its lifecycle state in one round-trip.
@@ -373,14 +476,20 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
   });
   if (loaded.status === "not_found") {
     console.error(`[Executor] Workflow not found: ${workflowId}`);
-    await discardPhantomRow(db, message.executionId);
+    await discardPhantomRow(db, message.executionId, {
+      reason: "not_found",
+      error: "Execution skipped: workflow not found.",
+    });
     return;
   }
   if (loaded.status === "not_executable") {
     console.log(
       `[Executor] Workflow not executable (${loaded.reason}), skipping: ${workflowId}`
     );
-    await discardPhantomRow(db, message.executionId);
+    await discardPhantomRow(db, message.executionId, {
+      reason: loaded.reason,
+      error: `Execution skipped: workflow is not executable (${loaded.reason}).`,
+    });
     return;
   }
   const { workflow } = loaded;
@@ -390,7 +499,10 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
       (message as ScheduleMessage).scheduleId
     );
     if (!valid) {
-      await discardPhantomRow(db, message.executionId);
+      await discardPhantomRow(db, message.executionId, {
+        reason: "schedule_invalid",
+        error: "Execution skipped: schedule is disabled or no longer exists.",
+      });
       return;
     }
   }
@@ -576,6 +688,7 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
         input: message.input,
         triggerType: "manual",
         scheduleId: undefined,
+        latency,
       });
     } catch (error) {
       // We claimed pending -> running above, so the phantom/pending backstop in
@@ -704,6 +817,7 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
       input,
       triggerType,
       scheduleId: getScheduleId(message),
+      latency,
     });
   } catch (error) {
     // Don't leak the inserted row as 'pending' if dispatch fails. The
@@ -797,7 +911,8 @@ export async function processMessage(
   message: Message,
   // The message processor is injectable so tests can drive the success and
   // failure branches without standing up the full executor pipeline.
-  runMessage: (body: ExecutorMessage) => Promise<void> = processExecutorMessage
+  runMessage: (body: ExecutorMessage, latency?: ExecutionLatency) => Promise<void> =
+    processExecutorMessage
 ): Promise<void> {
   if (!(message.Body && message.ReceiptHandle)) {
     console.error("[Executor] Invalid message:", message);
@@ -812,6 +927,25 @@ export async function processMessage(
     await dropMessage(message, "malformed_json");
     return;
   }
+
+  // Latency instrumentation (issue #2289): reuse the correlation id minted by
+  // the event-tracker at observation time when the message carries one (event
+  // triggers), so tracker -> queue -> executor legs share one key; otherwise
+  // mint it at the earliest point the message is seen here. It travels with
+  // the execution through dispatch, the runner (KH_CORRELATION_ID) and the
+  // in-process engine, so a single run is traceable across every stage.
+  const latency = new ExecutionLatency(
+    body.triggerType === "event" ? body.correlationId : undefined
+  );
+  if (body.triggerType === "event" && body.observedAt !== undefined) {
+    latency.mark("observed", body.observedAt);
+  }
+  latency.mark("received");
+
+  // Latency observations from this run's runner pod arrive asynchronously
+  // over the metrics ingest; keep the timeline reachable by correlation id
+  // until they land (see lib/correlation-map.ts).
+  trackLatency(latency);
 
   // Authenticate + validate the message before it can drive a
   // fund-moving execution. In "warn" mode we record metrics but still process
@@ -856,7 +990,7 @@ export async function processMessage(
   }
 
   try {
-    await runMessage(body);
+    await runMessage(body, latency);
 
     await sqs.send(
       new DeleteMessageCommand({
@@ -938,6 +1072,25 @@ async function listen(): Promise<void> {
   assertHmacSecretSet();
   await assertTurnkeyEnvForActiveWallets(db);
 
+  // Latency instrumentation (issue #2289): clear broadcast markers left by a
+  // previous process before any run can start. Every file present at this
+  // point is a leftover from a process that died between broadcast and take -
+  // the in-process catch cannot have run for those, so a startup sweep is the
+  // only path that bounds the registry in a weeks-long pod. Runner pods mount
+  // their own emptyDir and are untouched.
+
+  // Gate the marker registry before any run can start: this process is a
+  // consumer (success take, failure catch, startup sweep), so it may populate.
+  // The Next app pod, which also serves in-process runs through
+  // executeViaApi, never calls this and therefore never writes a marker file.
+  enableBroadcastMarkers();
+  const sweptMarkers = sweepBroadcastMarkers();
+  if (sweptMarkers > 0) {
+    console.log(
+      `[Executor] Swept ${sweptMarkers} stale broadcast marker(s) at startup`
+    );
+  }
+
   // Health check + metrics server
   const healthServer = createServer((req, res) => {
     if (req.url === "/health" && req.method === "GET") {
@@ -1003,8 +1156,36 @@ async function listen(): Promise<void> {
             return;
           }
           const { applied, skipped } = await applyCounterDeltas(body.deltas);
+          // Pod latency observations (issue #2289): fold them into the
+          // originating run's timeline and the central histograms. Never
+          // fails the ingest - a bad observation is skipped, not rejected.
+          let obsApplied = 0;
+          let obsSkipped = 0;
+          if (body.observations && body.observations.length > 0) {
+            // Wrapped so observations cannot fail an ingest whose counter
+            // deltas have already been applied: a throw here would answer 500
+            // after the deltas landed, and the sender would retry an ingest
+            // that was already half-committed. Losing a sample is the stated
+            // contract; double-counting a counter is not.
+            try {
+              const obs = applyLatencyObservations(body.observations);
+              obsApplied = obs.applied;
+              obsSkipped = obs.skipped;
+            } catch (observationError) {
+              // Same reasoning as the dispatch-side catch: this is now a
+              // swallow path, so it must be visible to metrics and Sentry.
+              logSystemError(
+                ErrorCategory.INFRASTRUCTURE,
+                "[Executor] Latency observation ingest failed (counters unaffected):",
+                observationError
+              );
+              obsSkipped = body.observations.length;
+            }
+          }
           res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ applied, skipped }));
+          res.end(
+            JSON.stringify({ applied, skipped, obsApplied, obsSkipped })
+          );
         } catch (error) {
           console.error("[Executor] Metrics ingest failed:", error);
           res.writeHead(500);
@@ -1018,23 +1199,52 @@ async function listen(): Promise<void> {
     res.end();
   });
 
+  // Latency observations from runner pods arrive on the metrics ingest;
+  // register the applier before the server can receive any.
+  registerLatencyObservationApplier();
   healthServer.listen(CONFIG.healthPort, () => {
     console.log(
       `[Executor] Health check server listening on port ${CONFIG.healthPort}`
     );
   });
 
-  const shutdown = async (): Promise<void> => {
-    console.log("\n[Executor] Shutting down...");
+  // Graceful shutdown: stop receiving, let in-flight handlers finish within the
+  // pod's grace period, then close the DB. Exiting with work mid-processMessage
+  // leaves the claimed row for the reaper and redelivers the message after the
+  // visibility timeout - dropped by the claim CAS when it carries an id, run a
+  // second time when it does not (the id-less fallback path).
+  const inFlight = new InFlightTracker();
+  const receiveAbort = new AbortController();
+  let shuttingDown = false;
+
+  const shutdown = async (signal: string): Promise<void> => {
+    if (shuttingDown) {
+      console.log(`[Executor] Already shutting down, ignoring ${signal}`);
+      return;
+    }
+    shuttingDown = true;
+    console.log(
+      `\n[Executor] Received ${signal}, draining ${inFlight.size} in-flight message(s) (up to ${SHUTDOWN_TIMEOUT_MS}ms)...`
+    );
     healthServer.close();
+    // Cut the long poll short so the loop exits instead of handing back a
+    // batch the drain could not cover.
+    receiveAbort.abort();
+
+    const drained = await inFlight.drain(SHUTDOWN_TIMEOUT_MS);
+    if (!drained) {
+      console.error(
+        `[Executor] Drain timed out with ${inFlight.size} message(s) still in flight; their rows are left for the reaper and the messages redeliver after the visibility timeout`
+      );
+    }
     await queryClient.end();
     console.log("[Executor] Shutdown complete");
-    process.exit(0);
+    process.exit(drained ? 0 : 1);
   };
 
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
-  process.on("SIGHUP", shutdown);
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGHUP", () => shutdown("SIGHUP"));
   process.on("SIGUSR1", () => {
     console.warn(
       "[Security] SIGUSR1 received; inspector activation suppressed"
@@ -1042,7 +1252,7 @@ async function listen(): Promise<void> {
   });
 
   // SQS polling loop
-  while (true) {
+  while (!shuttingDown) {
     try {
       const response = await sqs.send(
         new ReceiveMessageCommand({
@@ -1051,16 +1261,29 @@ async function listen(): Promise<void> {
           WaitTimeSeconds: CONFIG.waitTimeSeconds,
           VisibilityTimeout: CONFIG.visibilityTimeout,
           MessageAttributeNames: ["All"],
-        })
+        }),
+        { abortSignal: receiveAbort.signal }
       );
 
       const messages = response.Messages || [];
+
+      if (shuttingDown) {
+        // A batch that landed as the abort fired. It is already invisible on
+        // the queue, so leave it to redeliver after the visibility timeout
+        // rather than start work the drain cannot see through.
+        if (messages.length > 0) {
+          console.warn(
+            `[Executor] Ignoring ${messages.length} message(s) received during shutdown; they redeliver after the visibility timeout`
+          );
+        }
+        break;
+      }
 
       if (messages.length > 0) {
         console.log(`[Executor] Received ${messages.length} messages`);
 
         const results = await Promise.allSettled(
-          messages.map((msg) => processMessage(msg))
+          messages.map((msg) => inFlight.track(processMessage(msg)))
         );
 
         for (const [idx, result] of results.entries()) {
@@ -1070,6 +1293,10 @@ async function listen(): Promise<void> {
         }
       }
     } catch (error) {
+      if (shuttingDown) {
+        // The aborted long poll rejects; that is the loop's exit, not a fault.
+        break;
+      }
       console.error("[Executor] Error receiving messages:", error);
       await new Promise((r) => setTimeout(r, 5000));
     }

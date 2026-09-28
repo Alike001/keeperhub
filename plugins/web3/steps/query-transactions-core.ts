@@ -3,6 +3,8 @@ import { getRpcPreferenceUserId } from "@/lib/workflow/executor/helpers";
 
 import { eq } from "drizzle-orm";
 import { ethers } from "ethers";
+import { describeAmbiguousKey, resolveAbiFunction } from "@/lib/abi/utils";
+import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 import { db } from "@/lib/db";
 import { explorerConfigs } from "@/lib/db/schema";
 import {
@@ -19,6 +21,11 @@ import { serializeArg } from "@/lib/web3/serialize-arg";
 import { evmOnlyGuard } from "@/lib/web3/validate-chain-address";
 import { getErrorMessage } from "@/lib/utils";
 import { resolveBlockRange } from "./block-range-helpers";
+import {
+  applyReadFailOnError,
+  type ReadDestinationFailure,
+  type ReadFailOnErrorInput,
+} from "./read-fail-on-error-core";
 
 const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY;
 
@@ -40,16 +47,25 @@ export type DecodedTransaction = {
 export type QueryTransactionsResult =
   | {
       success: true;
-      transactions: DecodedTransaction[];
-      fromBlock: number;
-      toBlock: number;
-      totalFetched: number;
-      matchCount: number;
+      // Null when failOnError=false softened a failed query into a success
+      // value so the workflow continues; `error` carries the reason. Null
+      // rather than an empty list so a downstream node cannot read a failed
+      // query as "no matching transactions".
+      transactions: DecodedTransaction[] | null;
+      fromBlock: number | null;
+      toBlock: number | null;
+      totalFetched: number | null;
+      matchCount: number | null;
       contractAddressLink: string;
+      error?: string;
     }
-  | { success: false; error: string };
+  | (ReadDestinationFailure & {
+      success: false;
+      error: string;
+      errorClass?: ExecutionErrorType;
+    });
 
-export type QueryTransactionsCoreInput = {
+export type QueryTransactionsCoreInput = ReadFailOnErrorInput & {
   network: string;
   contractAddress: string;
   abi: string;
@@ -242,7 +258,9 @@ type ValidatedInput = {
 
 function validateInputs(
   input: QueryTransactionsCoreInput
-): { success: true; data: ValidatedInput } | { success: false; error: string } {
+):
+  | { success: true; data: ValidatedInput }
+  | (ReadDestinationFailure & { success: false; error: string }) {
   const { contractAddress, abi, abiFunction } = input;
 
   // Resolve the chain first so the address check and the Solana guard below
@@ -251,7 +269,11 @@ function validateInputs(
   try {
     chainId = getChainIdFromNetwork(input.network);
   } catch (error) {
-    return { success: false, error: getErrorMessage(error) };
+    return {
+      success: false,
+      destinationError: true,
+      error: getErrorMessage(error),
+    };
   }
 
   // Transaction querying decodes calls via an EVM ABI function selector,
@@ -264,6 +286,7 @@ function validateInputs(
   if (!ethers.isAddress(contractAddress)) {
     return {
       success: false,
+      destinationError: true,
       error: `Invalid contract address: ${contractAddress}`,
     };
   }
@@ -273,27 +296,63 @@ function validateInputs(
     return { success: false, error: abiResult.error };
   }
 
-  const iface = new ethers.Interface(abiResult.parsed);
-  const functionFragment = iface.getFunction(abiFunction);
-  if (!functionFragment) {
+  const resolution = resolveAbiFunction(abiResult.parsed, abiFunction);
+  if (resolution.status === "ambiguous") {
+    return {
+      success: false,
+      error: describeAmbiguousKey(abiFunction, resolution.candidates),
+    };
+  }
+  if (resolution.status !== "found") {
     return {
       success: false,
       error: `Function '${abiFunction}' not found in ABI`,
     };
   }
 
-  return {
-    success: true,
-    data: { iface, functionFragment, chainId },
-  };
+  try {
+    const iface = new ethers.Interface(abiResult.parsed);
+    const functionFragment = iface.getFunction(resolution.canonicalKey);
+    if (!functionFragment) {
+      return {
+        success: false,
+        error: `Function '${abiFunction}' has no valid ABI fragment`,
+      };
+    }
+    return { success: true, data: { iface, functionFragment, chainId } };
+  } catch (error) {
+    return {
+      success: false,
+      error: `Invalid ABI function '${abiFunction}': ${getErrorMessage(error)}`,
+    };
+  }
 }
+
+/** Data fields a softened query reports, so a soft failure never looks like an empty result set. */
+const SOFT_QUERY_FIELDS = {
+  transactions: null,
+  fromBlock: null,
+  toBlock: null,
+  totalFetched: null,
+  matchCount: null,
+} as const;
 
 export async function queryTransactionsCore(
   input: QueryTransactionsCoreInput
 ): Promise<QueryTransactionsResult> {
+  return applyReadFailOnError(
+    await queryTransactionsInner(input),
+    input.failOnError,
+    { ...SOFT_QUERY_FIELDS, contractAddressLink: "" }
+  );
+}
+
+async function queryTransactionsInner(
+  input: QueryTransactionsCoreInput
+): Promise<QueryTransactionsResult> {
   const validation = validateInputs(input);
   if (!validation.success) {
-    return { success: false, error: validation.error };
+    return { ...validation, errorClass: ExecutionErrorType.USER };
   }
 
   const { iface, functionFragment, chainId } = validation.data;
@@ -306,6 +365,7 @@ export async function queryTransactionsCore(
   } catch (error) {
     return {
       success: false,
+      destinationError: true,
       error: getErrorMessage(error),
     };
   }
@@ -331,6 +391,7 @@ export async function queryTransactionsCore(
   if (!explorerConfig) {
     return {
       success: false,
+      destinationError: true,
       error: `No explorer configuration found for chain ${chainId}`,
     };
   }

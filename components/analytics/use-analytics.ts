@@ -2,6 +2,7 @@
 
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { useCallback, useEffect, useRef } from "react";
+import { buildRunsQuery } from "@/lib/analytics/runs-query";
 import {
   normalizeRunsResponse,
   type WireRunsResponse,
@@ -9,20 +10,29 @@ import {
 import type {
   AnalyticsSummary,
   NetworkBreakdown,
-  TimeSeriesBucket,
+  RunFacets,
+  TimeSeriesResponse,
 } from "@/lib/analytics/types";
 import {
+  analyticsCustomEndAtom,
+  analyticsCustomStartAtom,
+  analyticsDurationFilterAtom,
   analyticsErrorAtom,
+  analyticsFacetsAtom,
+  analyticsGasFiltersAtom,
   analyticsLastUpdatedAtom,
   analyticsLoadingAtom,
+  analyticsNetworkFiltersAtom,
   analyticsNetworksAtom,
   analyticsProjectIdAtom,
   analyticsRangeAtom,
   analyticsRunsAtom,
-  analyticsSourceFilterAtom,
-  analyticsStatusFilterAtom,
+  analyticsSearchAtom,
+  analyticsSourceFiltersAtom,
+  analyticsStatusFiltersAtom,
   analyticsSummaryAtom,
   analyticsTimeSeriesAtom,
+  analyticsTimeSeriesIntervalAtom,
 } from "@/lib/atoms/analytics";
 import { authClient } from "@/lib/auth-client";
 
@@ -42,6 +52,13 @@ function buildQuery(params: Record<string, string | undefined>): string {
     }
   }
   return new URLSearchParams(entries).toString();
+}
+
+/**
+ * The viewer's IANA zone, or UTC where the runtime will not name one.
+ */
+function viewerTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }
 
 function toErrorMessage(err: unknown): string {
@@ -67,10 +84,29 @@ async function processSection<T>(
   if (ctx.aborted) {
     return;
   }
-  if (res.status === 401 || res.status === 403) {
-    const message = res.status === 401 ? "AUTH_REQUIRED" : "ORG_REQUIRED";
-    ctx.onAbort(message);
+  if (res.status === 401) {
+    ctx.onAbort("AUTH_REQUIRED");
     return;
+  }
+  // resolveOrganizationId answers 400 "No active organization" when an
+  // authenticated session has no membership yet, and 404 "Organization not
+  // found" when the active org is deactivated or gone. Both mean the
+  // dashboard should show the join-an-org state, not a raw fetch error. A 403
+  // is not mapped here on purpose: for this session-bound hook it cannot mean
+  // a missing org (session callers carry no scope, so requireScope never
+  // denies them) - it would only reach a key caller, and labelling an
+  // insufficient-scope denial as "no organization" would be wrong.
+  if (res.status === 400 || res.status === 404) {
+    const body = (await res.json().catch(() => null)) as {
+      error?: string;
+    } | null;
+    if (
+      body?.error === "No active organization" ||
+      body?.error === "Organization not found"
+    ) {
+      ctx.onAbort("ORG_REQUIRED");
+      return;
+    }
   }
   if (!res.ok) {
     throw new Error(`${label} fetch failed: ${res.status}`);
@@ -86,16 +122,24 @@ export function useAnalytics(): UseAnalyticsReturn {
   const activeOrgId = activeOrg?.id ?? null;
 
   const range = useAtomValue(analyticsRangeAtom);
-  const statusFilter = useAtomValue(analyticsStatusFilterAtom);
-  const sourceFilter = useAtomValue(analyticsSourceFilterAtom);
+  const statusFilters = useAtomValue(analyticsStatusFiltersAtom);
+  const sourceFilters = useAtomValue(analyticsSourceFiltersAtom);
+  const networkFilters = useAtomValue(analyticsNetworkFiltersAtom);
+  const gasFilters = useAtomValue(analyticsGasFiltersAtom);
+  const durationFilter = useAtomValue(analyticsDurationFilterAtom);
+  const search = useAtomValue(analyticsSearchAtom);
   const projectId = useAtomValue(analyticsProjectIdAtom);
+  const customStart = useAtomValue(analyticsCustomStartAtom);
+  const customEnd = useAtomValue(analyticsCustomEndAtom);
   const [loading, setLoading] = useAtom(analyticsLoadingAtom);
   const [error, setError] = useAtom(analyticsErrorAtom);
 
   const setSummary = useSetAtom(analyticsSummaryAtom);
   const setTimeSeries = useSetAtom(analyticsTimeSeriesAtom);
+  const setTimeSeriesInterval = useSetAtom(analyticsTimeSeriesIntervalAtom);
   const setNetworks = useSetAtom(analyticsNetworksAtom);
   const setRuns = useSetAtom(analyticsRunsAtom);
+  const setFacets = useSetAtom(analyticsFacetsAtom);
   const setLastUpdated = useSetAtom(analyticsLastUpdatedAtom);
 
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -114,12 +158,37 @@ export function useAnalytics(): UseAnalyticsReturn {
     setLoading(true);
     setError(null);
 
-    const baseQuery = buildQuery({ range, projectId: projectId ?? undefined });
-    const runsQuery = buildQuery({
+    const baseQuery = buildQuery({
       range,
-      status: statusFilter,
-      source: sourceFilter,
       projectId: projectId ?? undefined,
+      customStart: customStart ?? undefined,
+      customEnd: customEnd ?? undefined,
+      // The server truncates the chart buckets in this zone, so a day on the
+      // axis is the viewer's day rather than the server's.
+      tz: viewerTimeZone(),
+    });
+    const filters = {
+      range,
+      statuses: statusFilters,
+      sources: sourceFilters,
+      networks: networkFilters,
+      gas: gasFilters,
+      duration: durationFilter,
+      search,
+      projectId,
+      customStart,
+      customEnd,
+    };
+    const runsQuery = buildRunsQuery(filters);
+    // The status counts sit under every filter except status itself, so the
+    // facets request carries the same query with that one dimension lifted.
+    // Status only. The network and gas counts read the step logs, and this
+    // request repeats every poll for every open dashboard, so they are fetched
+    // when their dropdown opens instead.
+    const facetsQuery = buildRunsQuery({
+      ...filters,
+      omitStatus: true,
+      dimensions: ["status"],
     });
 
     const { signal } = controller;
@@ -135,8 +204,11 @@ export function useAnalytics(): UseAnalyticsReturn {
       signal,
     });
     const runsPromise = fetch(`/api/analytics/runs?${runsQuery}`, { signal });
+    const facetsPromise = fetch(`/api/analytics/facets?${facetsQuery}`, {
+      signal,
+    });
 
-    let pendingCount = 4;
+    let pendingCount = 5;
     const ctx: FetchContext = {
       aborted: false,
       onAbort: (message: string): void => {
@@ -191,12 +263,13 @@ export function useAnalytics(): UseAnalyticsReturn {
         )
       ),
       wrapSection(
-        processSection<{ buckets: TimeSeriesBucket[] }>(
+        processSection<TimeSeriesResponse>(
           timeSeriesPromise,
           "Time series",
           ctx,
           (data) => {
             setTimeSeries(data.buckets);
+            setTimeSeriesInterval(data.intervalMs);
           }
         )
       ),
@@ -215,19 +288,39 @@ export function useAnalytics(): UseAnalyticsReturn {
           setRuns(normalizeRunsResponse(data));
         })
       ),
+      wrapSection(
+        processSection<RunFacets>(facetsPromise, "Facets", ctx, (data) => {
+          // Take the status counts alone. The response still carries the other
+          // two keys, empty, because they were not computed - spreading the
+          // whole object would blank whichever step-log counts a dropdown had
+          // already loaded, on every poll tick.
+          setFacets((current) => ({
+            ...current,
+            statusCounts: data.statusCounts,
+          }));
+        })
+      ),
     ]);
   }, [
     activeOrgId,
     range,
-    statusFilter,
-    sourceFilter,
+    statusFilters,
+    sourceFilters,
+    networkFilters,
+    gasFilters,
+    durationFilter,
+    search,
     projectId,
+    customStart,
+    customEnd,
     setLoading,
     setError,
     setSummary,
     setTimeSeries,
+    setTimeSeriesInterval,
     setNetworks,
     setRuns,
+    setFacets,
     setLastUpdated,
   ]);
 
@@ -257,7 +350,12 @@ export function useAnalytics(): UseAnalyticsReturn {
   const startSSE = useCallback((): void => {
     cleanupSSE();
 
-    const query = buildQuery({ range, projectId: projectId ?? undefined });
+    const query = buildQuery({
+      range,
+      projectId: projectId ?? undefined,
+      customStart: customStart ?? undefined,
+      customEnd: customEnd ?? undefined,
+    });
     const source = new EventSource(`/api/analytics/stream?${query}`);
 
     source.onmessage = (event: MessageEvent): void => {
@@ -289,6 +387,8 @@ export function useAnalytics(): UseAnalyticsReturn {
   }, [
     range,
     projectId,
+    customStart,
+    customEnd,
     cleanupSSE,
     setSummary,
     setLastUpdated,

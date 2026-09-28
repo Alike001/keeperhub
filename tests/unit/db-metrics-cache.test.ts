@@ -27,6 +27,13 @@ const DEFAULT_DB_RETURNS: Record<string, unknown> = {
     durationCount: 0,
   },
   getLastFinishedExecutionAgeSecondsFromDb: null,
+  getUnconfirmedExecutionCountsFromDb: { workflow: 0, direct: 0 },
+  getExecutionRetentionStatsFromDb: {
+    oldestLogAgeSeconds: null,
+    logTableBytes: 0,
+    executionTableBytes: 0,
+  },
+  getStuckPendingTransactionCountsFromDb: [],
   getWorkflowErrorsByWorkflowFromDb: [],
   getSystemErrorsByCategoryFromDb: [],
   getStepStatsFromDb: {
@@ -157,6 +164,18 @@ const FINISHED_AGE_17_RE =
   /keeperhub_workflow_executions_finished_age_seconds\s+17(\s|$)/m;
 const FINISHED_AGE_ZERO_RE =
   /keeperhub_workflow_executions_finished_age_seconds\s+0(\s|$)/m;
+const UNCONFIRMED_WORKFLOW_3_RE =
+  /keeperhub_executions_unconfirmed\{kind="workflow"\}\s+3(\s|$)/m;
+const UNCONFIRMED_DIRECT_5_RE =
+  /keeperhub_executions_unconfirmed\{kind="direct"\}\s+5(\s|$)/m;
+const UNCONFIRMED_WORKFLOW_ZERO_RE =
+  /keeperhub_executions_unconfirmed\{kind="workflow"\}\s+0(\s|$)/m;
+const STUCK_PENDING_CHAIN_1_RE =
+  /keeperhub_web3_pending_transactions_stuck\{chain_id="1"\}\s+4(\s|$)/m;
+const STUCK_PENDING_CHAIN_8453_RE =
+  /keeperhub_web3_pending_transactions_stuck\{chain_id="8453"\}\s+2(\s|$)/m;
+const STUCK_PENDING_CHAIN_1_ANY_RE =
+  /keeperhub_web3_pending_transactions_stuck\{chain_id="1"\}/m;
 
 // MRR series. Label order follows the object passed to .set()
 // (plan, tier, billing_status), but stay tolerant of extra labels.
@@ -561,6 +580,124 @@ describe("keeperhub_workflow_executions_finished_age_seconds gauge", () => {
     const out = await getDbMetrics();
     expect(out).toMatch(FINISHED_AGE_17_RE);
     expect(out).not.toMatch(FINISHED_AGE_ZERO_RE);
+  });
+});
+
+// The unconfirmed backlog gauge is the only visibility into rows the
+// execution-reconciler has yet to settle, so it carries one series per table
+// and, like the finished-age gauge, keeps its last value across a query error.
+describe("keeperhub_executions_unconfirmed gauge", () => {
+  const originalTtl = process.env.DB_METRICS_CACHE_TTL_MS;
+
+  beforeEach(() => {
+    __resetDbMetricsCacheForTest();
+    for (const fn of Object.values(dbMocks)) {
+      fn.mockReset();
+    }
+    rebindDefaultDbMockImplementations();
+    process.env.DB_METRICS_CACHE_TTL_MS = "0";
+  });
+
+  afterEach(() => {
+    if (originalTtl === undefined) {
+      delete process.env.DB_METRICS_CACHE_TTL_MS;
+    } else {
+      process.env.DB_METRICS_CACHE_TTL_MS = originalTtl;
+    }
+  });
+
+  it("emits one series per kind from the DB counts", async () => {
+    dbMocks.getUnconfirmedExecutionCountsFromDb.mockResolvedValue({
+      workflow: 3,
+      direct: 5,
+    });
+
+    await updateDbMetrics();
+    const out = await getDbMetrics();
+
+    expect(out).toMatch(UNCONFIRMED_WORKFLOW_3_RE);
+    expect(out).toMatch(UNCONFIRMED_DIRECT_5_RE);
+  });
+
+  it("holds the last value (not 0) when the query returns null", async () => {
+    dbMocks.getUnconfirmedExecutionCountsFromDb.mockResolvedValue({
+      workflow: 3,
+      direct: 5,
+    });
+    await updateDbMetrics();
+    expect(await getDbMetrics()).toMatch(UNCONFIRMED_WORKFLOW_3_RE);
+
+    dbMocks.getUnconfirmedExecutionCountsFromDb.mockResolvedValue(null);
+    await updateDbMetrics();
+    const out = await getDbMetrics();
+    expect(out).toMatch(UNCONFIRMED_WORKFLOW_3_RE);
+    expect(out).not.toMatch(UNCONFIRMED_WORKFLOW_ZERO_RE);
+  });
+});
+
+// The unreferenced same-nonce fee-escalation code was deleted, so this gauge
+// is the only thing that notices a stuck transaction. These cases cover the
+// registry contract only - the DB query is mocked, so they assert that a chain
+// absent from the returned counts loses its series and that a null result
+// holds the last reading. What actually puts a chain into or out of those
+// counts is the two-sided submitted_at window in
+// getStuckPendingTransactionCountsFromDb, which is SQL and is not exercised
+// here.
+describe("keeperhub_web3_pending_transactions_stuck gauge", () => {
+  const originalTtl = process.env.DB_METRICS_CACHE_TTL_MS;
+
+  beforeEach(() => {
+    __resetDbMetricsCacheForTest();
+    for (const fn of Object.values(dbMocks)) {
+      fn.mockReset();
+    }
+    rebindDefaultDbMockImplementations();
+    process.env.DB_METRICS_CACHE_TTL_MS = "0";
+  });
+
+  afterEach(() => {
+    if (originalTtl === undefined) {
+      delete process.env.DB_METRICS_CACHE_TTL_MS;
+    } else {
+      process.env.DB_METRICS_CACHE_TTL_MS = originalTtl;
+    }
+  });
+
+  it("emits one series per chain from the DB counts", async () => {
+    dbMocks.getStuckPendingTransactionCountsFromDb.mockResolvedValue([
+      { chainId: 1, count: 4 },
+      { chainId: 8453, count: 2 },
+    ]);
+
+    await updateDbMetrics();
+    const out = await getDbMetrics();
+
+    expect(out).toMatch(STUCK_PENDING_CHAIN_1_RE);
+    expect(out).toMatch(STUCK_PENDING_CHAIN_8453_RE);
+  });
+
+  it("drops a chain's series once its backlog clears", async () => {
+    dbMocks.getStuckPendingTransactionCountsFromDb.mockResolvedValue([
+      { chainId: 1, count: 4 },
+    ]);
+    await updateDbMetrics();
+    expect(await getDbMetrics()).toMatch(STUCK_PENDING_CHAIN_1_RE);
+
+    dbMocks.getStuckPendingTransactionCountsFromDb.mockResolvedValue([]);
+    await updateDbMetrics();
+    expect(await getDbMetrics()).not.toMatch(STUCK_PENDING_CHAIN_1_ANY_RE);
+  });
+
+  it("holds the last value when the query returns null", async () => {
+    dbMocks.getStuckPendingTransactionCountsFromDb.mockResolvedValue([
+      { chainId: 1, count: 4 },
+    ]);
+    await updateDbMetrics();
+    expect(await getDbMetrics()).toMatch(STUCK_PENDING_CHAIN_1_RE);
+
+    dbMocks.getStuckPendingTransactionCountsFromDb.mockResolvedValue(null);
+    await updateDbMetrics();
+    expect(await getDbMetrics()).toMatch(STUCK_PENDING_CHAIN_1_RE);
   });
 });
 

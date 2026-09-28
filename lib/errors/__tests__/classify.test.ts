@@ -240,23 +240,26 @@ describe("classifyExecutionError", () => {
       expect(r.errorType).toBe("user");
     });
 
-    it.each([
-      "URL is required",
-      "HTTP request failed: URL is required",
-    ])("keeps %s as validation + user (config fault, not transport)", (input) => {
-      const r = classifyExecutionError(input);
-      expect(r.errorCategory).toBe(ErrorCategory.VALIDATION);
-      expect(r.errorType).toBe("user");
-    });
+    it.each(["URL is required", "HTTP request failed: URL is required"])(
+      "keeps %s as validation + user (config fault, not transport)",
+      (input) => {
+        const r = classifyExecutionError(input);
+        expect(r.errorCategory).toBe(ErrorCategory.VALIDATION);
+        expect(r.errorType).toBe("user");
+      }
+    );
 
     it.each([
       "Failed to send webhook: fetch failed: getaddrinfo EAI_AGAIN events.pagerduty.com",
       "HTTP request failed: fetch failed: getaddrinfo ENOTFOUND api.example.com",
-    ])("keeps DNS-resolution failure %s as user (configured host does not resolve)", (input) => {
-      const r = classifyExecutionError(input);
-      expect(r.errorCategory).toBe(ErrorCategory.EXTERNAL_SERVICE);
-      expect(r.errorType).toBe("user");
-    });
+    ])(
+      "keeps DNS-resolution failure %s as user (configured host does not resolve)",
+      (input) => {
+        const r = classifyExecutionError(input);
+        expect(r.errorCategory).toBe(ErrorCategory.EXTERNAL_SERVICE);
+        expect(r.errorType).toBe("user");
+      }
+    );
   });
 
   describe("external: third-party dependency failures", () => {
@@ -290,32 +293,41 @@ describe("classifyExecutionError", () => {
       "RPC failed on both endpoints. Primary: insufficient funds for intrinsic transaction cost. Fallback: insufficient funds for intrinsic transaction cost",
       "Token transfer failed: insufficient funds for gas * price + value",
       "insufficient funds for intrinsic transaction cost (transaction={}, code=INSUFFICIENT_FUNDS, version=6.13.4)",
-    ])("attributes an unfunded sender to the wallet, not the RPC: %s", (input) => {
-      const r = classifyExecutionError(input);
-      expect(r.errorCategory).toBe(ErrorCategory.TRANSACTION);
-      expect(r.errorType).toBe("user");
-      expect(r.code).toBeNull();
-    });
+    ])(
+      "attributes an unfunded sender to the wallet, not the RPC: %s",
+      (input) => {
+        const r = classifyExecutionError(input);
+        expect(r.errorCategory).toBe(ErrorCategory.TRANSACTION);
+        expect(r.errorType).toBe("user");
+        expect(r.code).toBeNull();
+      }
+    );
 
     it.each([
       '[SolanaChainAdapter] Simulation failed: {"InsufficientFundsForRent":{"account_index":1}}',
       "Solana RPC failed on both endpoints. Primary: Attempt to debit an account but found no record of a prior credit",
-    ])("attributes a Solana fee payer that cannot pay to the wallet: %s", (input) => {
-      const r = classifyExecutionError(input);
-      expect(r.errorCategory).toBe(ErrorCategory.TRANSACTION);
-      expect(r.errorType).toBe("user");
-      expect(r.code).toBeNull();
-    });
+    ])(
+      "attributes a Solana fee payer that cannot pay to the wallet: %s",
+      (input) => {
+        const r = classifyExecutionError(input);
+        expect(r.errorCategory).toBe(ErrorCategory.TRANSACTION);
+        expect(r.errorType).toBe("user");
+        expect(r.code).toBeNull();
+      }
+    );
 
     it.each([
       "Safe deploy failed: the deployer wallet has no native balance to pay gas. Top up and retry.",
       "Safe deploy failed: Not enough gas to execute Safe transaction (Safe error GS010). Top up the wallet's native balance and retry.",
-    ])("attributes a Safe that cannot pay for its own deploy to the wallet: %s", (input) => {
-      const r = classifyExecutionError(input);
-      expect(r.errorCategory).toBe(ErrorCategory.TRANSACTION);
-      expect(r.errorType).toBe("user");
-      expect(r.code).toBeNull();
-    });
+    ])(
+      "attributes a Safe that cannot pay for its own deploy to the wallet: %s",
+      (input) => {
+        const r = classifyExecutionError(input);
+        expect(r.errorCategory).toBe(ErrorCategory.TRANSACTION);
+        expect(r.errorType).toBe("user");
+        expect(r.code).toBeNull();
+      }
+    );
 
     it("still pages when an endpoint could not be reached at all", () => {
       const r = classifyExecutionError(
@@ -324,6 +336,29 @@ describe("classifyExecutionError", () => {
       expect(r.errorCategory).toBe(ErrorCategory.NETWORK_RPC);
       expect(r.errorType).toBe("system");
       expect(r.code).toBe("N-0001");
+    });
+  });
+
+  describe("a chain rejection quoted inside a failover exhaustion", () => {
+    // The wrapper rules match the wrapper, not the body, so without a rule
+    // above them a deterministic chain verdict would be read as an endpoint
+    // outage and take N-0001's message and system_error status.
+    it.each([
+      "RPC failed on primary endpoint: nonce too low",
+      "RPC failed on primary endpoint: replacement transaction underpriced",
+      "RPC failed on primary endpoint: already known",
+      "RPC failed on primary endpoint: intrinsic gas too low",
+      "RPC failed on both endpoints. Primary: nonce too low. Fallback: nonce too low",
+    ])("keeps %s off the network_rpc code", (input) => {
+      const r = classifyExecutionError(input);
+      expect(r.errorCategory).not.toBe(ErrorCategory.NETWORK_RPC);
+      expect(r.code).not.toBe("N-0001");
+      expect(isDefaultClassification(r)).toBe(true);
+    });
+
+    it("leaves an unwrapped chain rejection where it already landed", () => {
+      const r = classifyExecutionError("nonce too low");
+      expect(r).toEqual(classifyExecutionError("some unmatched failure"));
     });
   });
 
@@ -343,6 +378,45 @@ describe("classifyExecutionError", () => {
       );
       expect(r.errorCategory).toBe(ErrorCategory.NETWORK_RPC);
       expect(r.errorType).toBe("system");
+    });
+
+    // A chain with no fallback configured exhausts on `primary endpoint`, and
+    // the manager's own per-attempt timeout can surface bare. Both are the
+    // same KeeperHub-managed endpoint failure as the both-endpoints shape.
+    it.each([
+      "RPC failed on primary endpoint: Timeout after 30000ms",
+      "Solana RPC failed on primary endpoint: request timeout",
+      "Timeout after 30000ms",
+    ])("classifies %s as network_rpc + system + N-0001", (input) => {
+      const r = classifyExecutionError(input);
+      expect(r.errorCategory).toBe(ErrorCategory.NETWORK_RPC);
+      expect(r.errorType).toBe("system");
+      expect(r.code).toBe("N-0001");
+      expect(isDefaultClassification(r)).toBe(false);
+    });
+
+    it("keeps the reaper's execution timeout on the workflow-engine code", () => {
+      const r = classifyExecutionError(
+        "Execution timed out: no progress for 30 minutes"
+      );
+      expect(r.errorCategory).toBe(ErrorCategory.WORKFLOW_ENGINE);
+      expect(r.code).toBe("E-0001");
+    });
+
+    it("leaves a timeout quoted inside a third-party response with that endpoint", () => {
+      const r = classifyExecutionError("HTTP 504: Timeout after 30000ms");
+      expect(r.errorCategory).toBe(ErrorCategory.EXTERNAL_SERVICE);
+      expect(r.errorType).toBe("external");
+      expect(r.code).toBeNull();
+    });
+
+    it("attributes a single-endpoint exhaustion that quotes a funding shortfall to the wallet", () => {
+      const r = classifyExecutionError(
+        "RPC failed on primary endpoint: insufficient funds for intrinsic transaction cost"
+      );
+      expect(r.errorCategory).toBe(ErrorCategory.TRANSACTION);
+      expect(r.errorType).toBe("user");
+      expect(r.code).toBeNull();
     });
   });
 
@@ -469,12 +543,45 @@ describe("applyErrorClassHint", () => {
     });
   });
 
-  it("overrides to user with no code, keeping the classifier category", () => {
+  /**
+   * A message no rule recognises lands in workflow_engine, which is a
+   * system-caused category: a step hinting "user" was therefore filing a
+   * revoked credential alongside real executor faults, where the dashboards
+   * that sum by category could not tell them apart.
+   */
+  it("overrides to user and re-buckets a category that means 'no rule matched'", () => {
     const base = classifyExecutionError("some novel provider message");
+    expect(base.errorCategory).toBe(ErrorCategory.WORKFLOW_ENGINE);
+
     const hinted = applyErrorClassHint(base, "user");
     expect(hinted.errorType).toBe("user");
     expect(hinted.code).toBeNull();
-    expect(hinted.errorCategory).toBe(base.errorCategory);
+    expect(hinted.errorCategory).toBe(ErrorCategory.CONFIGURATION);
+  });
+
+  /**
+   * Where a rule did match, it stands. A plugin that hints "user" on every
+   * non-5xx must not be able to relabel a recognised fault as somebody's
+   * configuration.
+   *
+   * "Matched" is the code rather than the category, and these cases are why:
+   * the first three carry WORKFLOW_ENGINE, which is also what an unmatched
+   * message falls through to, so a rule keyed on the category re-bucketed
+   * recognised executor faults as well.
+   */
+  it.each([
+    ["Execution timed out", ErrorCategory.WORKFLOW_ENGINE, "E-0001"],
+    ['Step "x" exceeded max retries', ErrorCategory.WORKFLOW_ENGINE, "E-0002"],
+    ["Unknown action type: nope", ErrorCategory.WORKFLOW_ENGINE, "E-0003"],
+    ["Workflow terminated by SIGTERM", ErrorCategory.INFRASTRUCTURE, "P-0003"],
+  ])("keeps the category a rule matched for %s", (message, category, code) => {
+    const base = classifyExecutionError(message);
+    expect(base.errorCategory).toBe(category);
+    expect(base.code).toBe(code);
+
+    const hinted = applyErrorClassHint(base, "user");
+    expect(hinted.errorType).toBe("user");
+    expect(hinted.errorCategory).toBe(category);
   });
 
   it("keeps a system hint coded (classifier code, or the default)", () => {

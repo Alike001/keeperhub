@@ -205,6 +205,14 @@ export async function POST(
       if (loaded.reason === "disabled") {
         return failResponse(workflowId, timer, HttpStatus.GONE, "Workflow is disabled");
       }
+      if (loaded.reason === "halted") {
+        return failResponse(
+          workflowId,
+          timer,
+          HttpStatus.SERVICE_UNAVAILABLE,
+          "Workflow temporarily halted"
+        );
+      }
       return failResponse(workflowId, timer, HttpStatus.NOT_FOUND, "Workflow not found");
     }
     const { workflow } = loaded;
@@ -429,6 +437,7 @@ export async function POST(
     const paygCharge = await chargePaygIfBillable({
       organizationId: workflow.organizationId,
       executionId: execution.id,
+      paygOverflow: executionGuard.limitResult?.paygOverflow === true,
     });
     if (paygCharge.applicable && !paygCharge.ok) {
       await db

@@ -2,9 +2,15 @@ import type { SQSClient } from "@aws-sdk/client-sqs";
 import { logger } from "../../lib/utils/logger";
 import type { ChainProviderManager } from "../chains/provider-manager";
 import type { AbiEvent } from "../chains/validation";
+import type { ArmStateStore } from "./arm-state";
 import type { DedupStore } from "./dedup";
 import { EventListener } from "./event-listener";
 import { formatError } from "./format-error";
+import { InFlightTracker } from "./in-flight";
+import { TokenBucketPacer } from "./pacer";
+import { SHUTDOWN_DRAIN_TIMEOUT_MS } from "./shutdown";
+import type { StateThresholdSubscription } from "./state-threshold";
+import { StateThresholdListener } from "./state-threshold-listener";
 
 /**
  * In-process registry of EventListener instances, keyed by workflow ID.
@@ -55,24 +61,91 @@ export interface WorkflowRegistration {
   configHash: string;
 }
 
+/**
+ * A state-threshold registration (issue #2240). Kept as a separate type
+ * rather than as optional fields on `WorkflowRegistration`: the two triggers
+ * share only the workflow and connection fields, and every event-specific
+ * field (`eventName`, the ABI event list, the post-decode filters) is
+ * meaningless here.
+ */
+export interface StateThresholdRegistration {
+  kind: "state";
+  workflowId: string;
+  userId: string;
+  workflowName: string;
+  chainId: number;
+  wssUrl: string;
+  fallbackWssUrl?: string;
+  subscription: StateThresholdSubscription;
+  configHash: string;
+}
+
+export type AnyRegistration = WorkflowRegistration | StateThresholdRegistration;
+
+/**
+ * Discriminates the two registration shapes. A type predicate rather than an
+ * inline `in` check because the inline form narrows the matching branch but
+ * leaves the other as the full union.
+ */
+export function isStateRegistration(
+  reg: AnyRegistration,
+): reg is StateThresholdRegistration {
+  return "kind" in reg && reg.kind === "state";
+}
+
 export interface RegistryDeps {
   providerManager: ChainProviderManager;
   dedup: DedupStore;
   sqs: SQSClient;
   sqsQueueUrl: string;
+  /**
+   * Durable arming state for state-threshold triggers. Optional so that
+   * constructions which only ever register event triggers - unit tests, and
+   * any caller predating #2240 - need not supply one. A state registration
+   * arriving without it is refused rather than run without its guard: the
+   * arm generation is what stops a holding condition dispatching on every
+   * drain, and a listener with nowhere to keep it has no such guard.
+   */
+  armStore?: ArmStateStore;
 }
 
 interface RegistryEntry {
-  listener: EventListener;
+  listener: EventListener | StateThresholdListener;
   configHash: string;
 }
 
 export class ListenerRegistry {
   private readonly entries = new Map<string, RegistryEntry>();
   private readonly deps: RegistryDeps;
+  /** One pacer per chain, shared by every listener on that chain. */
+  private readonly pacers = new Map<number, TokenBucketPacer>();
+  /** In-flight `onLog` dispatches across every listener, drained by stopAll. */
+  private readonly inFlight = new InFlightTracker();
+  /**
+   * Aborted by `stopAll` to stop every parked dispatch. Terminal: a registry
+   * that has been stopped is not restarted, the process exits behind it.
+   */
+  private readonly shutdown = new AbortController();
+
+  /** Events released per second per chain when a batch contends the bucket. */
+  private static readonly DRAIN_RATE_PER_SEC = 50;
 
   constructor(deps: RegistryDeps) {
     this.deps = deps;
+  }
+
+  /** Returns the shared pacer for a chain, creating it on first use. */
+  private pacerFor(chainId: number): TokenBucketPacer {
+    let pacer = this.pacers.get(chainId);
+    if (!pacer) {
+      pacer = new TokenBucketPacer(
+        ListenerRegistry.DRAIN_RATE_PER_SEC,
+        undefined,
+        this.shutdown.signal,
+      );
+      this.pacers.set(chainId, pacer);
+    }
+    return pacer;
   }
 
   /**
@@ -87,10 +160,14 @@ export class ListenerRegistry {
    * production code path. If a caller needs concurrent calls, wrap
    * Registry access in a serialising queue at the call site.
    */
-  async add(reg: WorkflowRegistration): Promise<void> {
+  async add(reg: AnyRegistration): Promise<void> {
     if (this.entries.has(reg.workflowId)) {
       // Idempotent: Phase 4 reconciler handles config changes via
       // remove+add rather than in-place mutation.
+      return;
+    }
+    if (isStateRegistration(reg)) {
+      await this.addStateThreshold(reg);
       return;
     }
     const listener = new EventListener({
@@ -99,12 +176,54 @@ export class ListenerRegistry {
       dedup: this.deps.dedup,
       sqs: this.deps.sqs,
       sqsQueueUrl: this.deps.sqsQueueUrl,
+      pacer: this.pacerFor(reg.chainId),
+      inFlight: this.inFlight,
+      shutdownSignal: this.shutdown.signal,
     });
     try {
       await listener.start();
     } catch (err) {
       logger.warn(
         `[ListenerRegistry] failed to start listener ${reg.workflowId}: ${formatError(err)}`,
+      );
+      return;
+    }
+    this.entries.set(reg.workflowId, {
+      listener,
+      configHash: reg.configHash,
+    });
+  }
+
+  private async addStateThreshold(
+    reg: StateThresholdRegistration,
+  ): Promise<void> {
+    const armStore = this.deps.armStore;
+    if (!armStore) {
+      logger.warn(
+        `[ListenerRegistry] refusing state-threshold listener ${reg.workflowId}: no arm-state store configured`,
+      );
+      return;
+    }
+    const listener = new StateThresholdListener({
+      workflowId: reg.workflowId,
+      userId: reg.userId,
+      workflowName: reg.workflowName,
+      chainId: reg.chainId,
+      wssUrl: reg.wssUrl,
+      fallbackWssUrl: reg.fallbackWssUrl,
+      subscription: reg.subscription,
+      sqs: this.deps.sqs,
+      sqsQueueUrl: this.deps.sqsQueueUrl,
+      armStore,
+      providerManager: this.deps.providerManager,
+      pacer: this.pacerFor(reg.chainId),
+      inFlight: this.inFlight,
+    });
+    try {
+      await listener.start();
+    } catch (err) {
+      logger.warn(
+        `[ListenerRegistry] failed to start state listener ${reg.workflowId}: ${formatError(err)}`,
       );
       return;
     }
@@ -145,10 +264,42 @@ export class ListenerRegistry {
     return this.entries.size;
   }
 
+  /**
+   * Terminal teardown, called from the SIGTERM path.
+   *
+   * Order is load-bearing. Unsubscribing first removes each listener from the
+   * provider manager's subscriber set, so no further log can start a handler
+   * while an already-dispatched one keeps its captured reference. Aborting
+   * next releases every parked dispatch, which is what keeps the drain inside
+   * its budget: waiting out the pace instead would cover only
+   * `SHUTDOWN_DRAIN_TIMEOUT_MS * drainRate` events and kill the rest. The
+   * drain then waits for the sends themselves.
+   *
+   * Bounded rather than unbounded on purpose: a drain that outlives the K8s
+   * grace period is SIGKILLed with nothing logged. On timeout the remaining
+   * handlers are lost exactly as they are without a drain, but the count is
+   * on the record.
+   */
   async stopAll(): Promise<void> {
     for (const entry of this.entries.values()) {
       entry.listener.stop();
     }
+    this.shutdown.abort();
+
+    const outstanding = this.inFlight.size;
+    if (outstanding > 0) {
+      logger.log(
+        `[ListenerRegistry] draining ${outstanding} in-flight dispatch(es) (up to ${SHUTDOWN_DRAIN_TIMEOUT_MS}ms)`,
+      );
+    }
+    const drained = await this.inFlight.drain(SHUTDOWN_DRAIN_TIMEOUT_MS);
+    if (!drained) {
+      logger.error(
+        `[ListenerRegistry] drain timed out with ${this.inFlight.size} dispatch(es) unfinished; those events are lost`,
+      );
+    }
+
     this.entries.clear();
+    this.pacers.clear();
   }
 }

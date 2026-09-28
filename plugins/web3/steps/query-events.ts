@@ -13,11 +13,18 @@ import {
   type BlockRange,
   resolveBlockRange,
 } from "./block-range-helpers";
+import { buildEventArgTopics } from "./event-arg-filter-core";
 import {
   type AbiEntry,
+  type EventTopicFilter,
   isNearHeadBatch,
   queryBatchWithRetry,
 } from "./query-events-core";
+import {
+  applyReadFailOnError,
+  type ReadDestinationFailure,
+  type ReadFailOnErrorInput,
+} from "./read-fail-on-error-core";
 
 const DEFAULT_BATCH_SIZE = 2000;
 
@@ -31,18 +38,32 @@ type DecodedEvent = {
 type QueryEventsResult =
   | {
       success: true;
-      events: DecodedEvent[];
-      fromBlock: number;
-      toBlock: number;
-      eventCount: number;
+      // Null when failOnError=false softened a failed query into a success
+      // value so the workflow continues; `error` carries the reason. Null
+      // rather than an empty list so a downstream node cannot read a failed
+      // query as "no events in range".
+      events: DecodedEvent[] | null;
+      fromBlock: number | null;
+      toBlock: number | null;
+      eventCount: number | null;
+      error?: string;
     }
-  | { success: false; error: string };
+  | (ReadDestinationFailure & { success: false; error: string });
 
-export type QueryEventsCoreInput = {
+/** Data fields a softened query reports, so a soft failure never looks like an empty result set. */
+const SOFT_QUERY_FIELDS = {
+  events: null,
+  fromBlock: null,
+  toBlock: null,
+  eventCount: null,
+} as const;
+
+export type QueryEventsCoreInput = ReadFailOnErrorInput & {
   network: string;
   contractAddress: string;
   abi: string;
   eventName: string;
+  eventArgs?: string | Record<string, unknown>;
   fromBlock?: string;
   toBlock?: string;
   blockCount?: number | string;
@@ -97,7 +118,8 @@ async function queryEventBatches(
   parsedAbi: AbiEntry[],
   eventName: string,
   eventFragment: ethers.EventFragment,
-  range: BlockRange
+  range: BlockRange,
+  topics: EventTopicFilter
 ): Promise<EventBatchesResult> {
   const batchSize = DEFAULT_BATCH_SIZE;
   const allEvents: DecodedEvent[] = [];
@@ -119,7 +141,8 @@ async function queryEventBatches(
       eventName,
       start,
       end,
-      isTipBatch
+      isTipBatch,
+      topics
     );
 
     for (const event of batchEvents) {
@@ -172,7 +195,11 @@ async function stepHandler(
   try {
     chainId = getChainIdFromNetwork(network);
   } catch (error) {
-    return { success: false, error: getErrorMessage(error) };
+    return {
+      success: false,
+      destinationError: true,
+      error: getErrorMessage(error),
+    };
   }
 
   // Event querying decodes EVM ABI logs, which have no Solana equivalent
@@ -185,6 +212,7 @@ async function stepHandler(
   if (!ethers.isAddress(contractAddress)) {
     return {
       success: false,
+      destinationError: true,
       error: `Invalid contract address: ${contractAddress}`,
     };
   }
@@ -213,12 +241,26 @@ async function stepHandler(
     };
   }
 
+  // Compile the argument filter before any RPC work. A filter naming a
+  // parameter that is not indexed, or one the topics cannot express, would
+  // otherwise spend a full scan to return nothing and read as "no activity".
+  const topicResult = buildEventArgTopics(input.eventArgs, eventFragment);
+  if (!topicResult.success) {
+    return { success: false, error: topicResult.error };
+  }
+  if (topicResult.applied.length > 0) {
+    console.log(
+      `[Query Events] Filtering on indexed ${topicResult.applied.join(", ")}`
+    );
+  }
+
   let rpcManager: RpcProviderManager;
   try {
     rpcManager = await getRpcProvider({ chainId, userId });
   } catch (error) {
     return {
       success: false,
+      destinationError: true,
       error: getErrorMessage(error),
     };
   }
@@ -260,7 +302,8 @@ async function stepHandler(
       abiResult.parsed,
       eventName,
       eventFragment,
-      range
+      range,
+      topicResult.topics
     );
 
     console.log("[Query Events] Query complete. Events found:", events.length);
@@ -273,10 +316,8 @@ async function stepHandler(
       eventCount: events.length,
     };
   } catch (error) {
-    return {
-      success: false,
-      error: `Event query failed: ${getErrorMessage(error)}`,
-    };
+    const message = `Event query failed: ${getErrorMessage(error)}`;
+    return { success: false, error: message };
   }
 }
 
@@ -295,7 +336,12 @@ export async function queryEventsStep(
   return runPluginStep(
     { pluginName: "web3", actionName: "query-events" },
     enrichedInput,
-    () => stepHandler(input)
+    async () =>
+      applyReadFailOnError(
+        await stepHandler(input),
+        input.failOnError,
+        SOFT_QUERY_FIELDS
+      )
   );
 }
 

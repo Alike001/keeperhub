@@ -1,8 +1,6 @@
 import "server-only";
 
-import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { organizationSubscriptions } from "@/lib/db/schema";
 import { maybeNotifyQuotaThreshold } from "@/lib/notifications/quota-threshold";
 import { getActiveDebtExecutions } from "./execution-debt";
 import {
@@ -24,6 +22,11 @@ import {
   parseTierKey,
   type TierKey,
 } from "./plans";
+import { getOrgSubscription, resolveOrgPlan } from "./subscription-read";
+
+// Kept on this module so every existing importer, and the tests that mock
+// this module, keep working after the reader moved.
+export { getOrgSubscription } from "./subscription-read";
 
 // -- Price ID mapping (server-only, env vars not available in client bundles) --
 
@@ -138,17 +141,6 @@ export function resolveSubscriptionPlan(
   );
 }
 
-export async function getOrgSubscription(
-  organizationId: string
-): Promise<typeof organizationSubscriptions.$inferSelect | undefined> {
-  const rows = await db
-    .select()
-    .from(organizationSubscriptions)
-    .where(eq(organizationSubscriptions.organizationId, organizationId))
-    .limit(1);
-  return rows[0];
-}
-
 export async function getOrgPlan(organizationId: string): Promise<PlanName> {
   const sub = await getOrgSubscription(organizationId);
   if (!sub) {
@@ -186,6 +178,7 @@ export async function checkFeatureAccess(
 export type ExecutionWithinLimits = {
   allowed: true;
   isOverage: false;
+  paygOverflow: false;
   debtExecutions: number;
   effectiveLimit: number;
 };
@@ -194,9 +187,27 @@ export type ExecutionWithinLimits = {
 export type ExecutionOverageAllowed = {
   allowed: true;
   isOverage: true;
+  paygOverflow: false;
   limit: number;
   used: number;
   overageRate: number;
+  debtExecutions: number;
+  effectiveLimit: number;
+};
+
+/**
+ * Free plan past its included limit -- execution proceeds only because PAYG
+ * charges it per execution downstream. The counterpart of the executor's
+ * PAYG_OVERFLOW_REASON: it is what tells the charge point this run is billable,
+ * so the verdict is computed once here rather than re-derived after the
+ * execution row is written.
+ */
+export type ExecutionPaygOverflow = {
+  allowed: true;
+  isOverage: false;
+  paygOverflow: true;
+  limit: number;
+  used: number;
   debtExecutions: number;
   effectiveLimit: number;
 };
@@ -211,9 +222,14 @@ export type ExecutionLimitExceeded = {
   effectiveLimit: number;
 };
 
-export type ExecutionLimitResult =
+/** Every verdict that lets the execution proceed. */
+export type ExecutionLimitAllowed =
   | ExecutionWithinLimits
   | ExecutionOverageAllowed
+  | ExecutionPaygOverflow;
+
+export type ExecutionLimitResult =
+  | ExecutionLimitAllowed
   | ExecutionLimitExceeded;
 
 /**
@@ -222,7 +238,9 @@ export type ExecutionLimitResult =
  * Returns one of:
  * - allowed + not overage (within limits or unlimited plan)
  * - allowed + overage (paid plan with overage enabled, will be billed later)
- * - not allowed (free plan limit exceeded)
+ * - allowed + paygOverflow (free plan past its included limit, charged per
+ *   execution downstream)
+ * - not allowed (free plan limit exceeded with billing off, or unpaid debt)
  *
  * NOTE: This is a point-in-time check (TOCTOU). The caller does not hold a lock,
  * so concurrent requests may each pass the check before any execution is recorded.
@@ -232,16 +250,33 @@ export type ExecutionLimitResult =
 export async function checkExecutionLimit(
   organizationId: string
 ): Promise<ExecutionLimitResult> {
-  const sub = await getOrgSubscription(organizationId);
-  const plan = parsePlanName(sub?.plan);
-  const tier = parseTierKey(sub?.tier);
-  const limits = getPlanLimits(plan, tier, sub?.planOverrides);
+  const resolved = await resolveOrgPlan(organizationId);
+
+  // A plan we could not establish must not become the free plan here. That
+  // default gates an unlimited org at 5,000 executions and hands its runs to
+  // pay-as-you-go, which charges its wallet per execution. Admitting without a
+  // downgrade is the smaller error: the executor re-checks authoritatively
+  // before it claims a row, so a genuinely over-limit org is still caught, and
+  // resolveOrgPlan has already reported why the plan is unknown.
+  if (resolved === null) {
+    return {
+      allowed: true,
+      isOverage: false,
+      paygOverflow: false,
+      debtExecutions: 0,
+      effectiveLimit: -1,
+    };
+  }
+
+  const { plan, tier } = resolved;
+  const limits = getPlanLimits(plan, tier, resolved.planOverrides);
 
   if (limits.maxExecutionsPerMonth === -1) {
     // Unlimited plans are unaffected by debt -- skip the query intentionally
     return {
       allowed: true,
       isOverage: false,
+      paygOverflow: false,
       debtExecutions: 0,
       effectiveLimit: -1,
     };
@@ -268,7 +303,7 @@ export async function checkExecutionLimit(
     organizationId,
     plan,
     tier,
-    planOverrides: sub?.planOverrides,
+    planOverrides: resolved.planOverrides,
     used,
     debtExecutions,
   });
@@ -278,7 +313,7 @@ export async function checkExecutionLimit(
     used,
     debtExecutions,
     overageEnabled: planDef.overage.enabled,
-    statusAllowsOverage: statusAllowsOverage(sub?.status),
+    statusAllowsOverage: statusAllowsOverage(resolved.status),
   });
 
   switch (outcome) {
@@ -287,6 +322,7 @@ export async function checkExecutionLimit(
       return {
         allowed: true,
         isOverage: false,
+        paygOverflow: false,
         debtExecutions,
         effectiveLimit,
       };
@@ -295,6 +331,7 @@ export async function checkExecutionLimit(
       return {
         allowed: true,
         isOverage: true,
+        paygOverflow: false,
         limit: limits.maxExecutionsPerMonth,
         used,
         overageRate: planDef.overage.ratePerThousand,
@@ -310,6 +347,9 @@ export async function checkExecutionLimit(
         return {
           allowed: true,
           isOverage: false,
+          paygOverflow: true,
+          limit: limits.maxExecutionsPerMonth,
+          used,
           debtExecutions,
           effectiveLimit,
         };

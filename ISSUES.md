@@ -17,6 +17,38 @@ contributor real work on this repo:
 None of those are review problems. They are all answerable in a sentence before
 any code is written.
 
+## Search before you open anything
+
+Search open **and** closed issues, and open pull requests, before you file.
+The pull request half is the one people skip (`is:pr is:open` plus your
+keywords), and it is the one that catches work already in flight.
+
+Three things you can find, none of which needs a new issue:
+
+- **An open issue covers it.** Comment there, and add what it is missing - your
+  reproduction, the surface you hit it on, the version you checked. A second
+  issue for the same fault splits the evidence across two threads.
+- **A closed issue covers it.** The reason is in the closing comment and often
+  still applies. If you have evidence it no longer does, say so on that issue;
+  reopening a thread with new evidence is more useful than a fresh report.
+- **An open pull request already changes it.** Comment on it or review it. A
+  competing pull request for the same lines wastes the other contributor's work
+  as surely as it wastes yours.
+
+**A disagreement with an existing issue belongs in a comment on that issue**,
+not in an issue of your own. Whether the scope is right, whether the plan is
+right, whether it should be fixed at all - that is what the thread is for, and
+it is where triage reads it. A second issue arguing with the first is closed as
+a duplicate, and the argument is lost with it.
+
+Open a new issue when yours is genuinely a different problem - a different root
+cause, or a different surface with its own reproduction - even where the symptom
+looks the same. Say what you found in the search and why yours is separate; that
+saves triage from repeating it.
+
+If an issue is `accepted` and unclaimed, say you are taking it before you start,
+so two people do not build the same thing.
+
 ## When an issue is required
 
 **Required** for anything that changes behaviour:
@@ -25,6 +57,8 @@ any code is written.
 - Database schema or migrations
 - Authentication, permissions, validation, or rate limiting
 - Dependencies added, removed, or upgraded
+- Protocol definitions, contract addresses, ABIs, or the chains a protocol is
+  offered on
 - CI, build, deployment, or environment configuration
 - Pricing, limits, plans, or anything a user is charged for
 - New features and new abstractions
@@ -77,12 +111,45 @@ which is exactly the load this policy is meant to move upstream.
 What a plan buys you is a check nothing else provides. A proposal stated out
 loud can be tested against the actual contract before any code exists - and a
 well-evidenced issue can still carry a wrong plan. One report here correctly
-observed that `parseNativeValueWei` parses with `ethers.parseEther`, and
+observed that `parseNativeValueWei`, since renamed to
+`parseNativeValueEther`, parses with `ethers.parseEther`, and
 proposed denominating `value` in wei. The observation was right; the plan would
 have silently changed every existing caller's amount by a factor of 1e18,
 because the API's documented unit is ether and the misleading thing is the
 internal function name. That was caught by reading the plan. Unwritten, it would
 have been caught by reading the pull request.
+
+### Contract addresses carry their evidence
+
+An issue that adds a protocol, or adds a chain to one already here, is answered
+from its addresses. So they have to be in it, each with the authoritative source
+it came from - the protocol team's published addresses, their official
+repository, or a verified contract on the block explorer - and each ABI with the
+URL and the version it belongs to.
+
+This is the same standard the rest of this page asks for - *what told you to
+expect it* - applied to a claim about a chain. "Aave V3 is on Base" is an
+assertion; Aave's own deployed-addresses page naming that Pool contract on Base
+is the evidence. The two are not close to each other in value, because the first
+one is sometimes true and reads identically when it is not.
+
+An address is the one kind of mistake here that no reviewer catches by reading.
+It is forty hex digits, it is correct or it is not, and a wrong one is
+indistinguishable from a right one until it reverts on chain. A chain listed in
+a protocol's `addresses` map is a chain users can select
+(`lib/protocol-registry.ts:395`), so the failure is not latent - it belongs to
+whoever picks that chain from the dropdown, in production, holding real funds.
+
+Two specific things, because both have gone wrong here before:
+
+- **A chain the protocol is not deployed on never goes in the map**, including
+  to make local testing easier. If there is no testnet deployment, the tests
+  fork mainnet instead.
+- **Token decimals come from calling `decimals()` on the chain**, not from the
+  symbol and not from the explorer's metadata field. USDC is 6.
+
+The full requirements, including which ABI sources count and in what order, are
+in [CONTRIBUTING.md](CONTRIBUTING.md#protocols-and-contract-addresses).
 
 ### Already filed an issue
 
@@ -143,17 +210,19 @@ request. Two small independent fixes are two.
 
 Once your issue carries `accepted`:
 
-1. **Reference the issue in the pull request title**, after the conventional
-   commit type:
+1. **Reference the issue from the pull request.** The title is the place for
+   it, after the conventional commit type:
 
    ```
    fix: #1978 return 403 with a body on public /api/chains
    feat(cli): #2014 add --require-verified to execute status
    ```
 
-   This mirrors the internal `fix: KEEP-1234 description` convention. The
-   `pr-title-check` workflow already accepts this shape; a separate check
-   resolves the issue number and confirms the issue carries `accepted`.
+   `Closes #1978` in the description or an `issue-1978` branch name also
+   satisfies the check; a bare number in a branch name does not. The
+   `pr-title-check` workflow already accepts this title shape; a separate
+   check, `check-issue-link`, resolves the issue number and confirms the issue
+   carries `accepted`.
 
 2. Fill in the pull request template. The description explains what and why -
    the diff already shows how.
@@ -162,17 +231,11 @@ Once your issue carries `accepted`:
 
 Pull requests that need no issue (the list above) are exempt from the check
 automatically when their type is `docs`, `chore`, or `style`. Anything else
-without a reference is failed by CI with instructions. A maintainer can apply
-`no-issue-required` to exempt a pull request the rules did not anticipate.
-
-## Continuing an existing issue
-
-Someone may have filed it already. Search open **and** closed issues first - a
-closed one often carries the reason, and reopening that thread with new evidence
-is more useful than a fresh report.
-
-If an issue is `accepted` and unclaimed, say you are taking it before you start,
-so two people do not build the same thing.
+without an accepted reference is failed by CI, which leaves a comment on the
+pull request saying what it found and what to do. The check reruns on every
+push and edit, but not when the issue's labels change: once `accepted` lands,
+edit the title or re-run the job. A maintainer can apply `no-issue-required` to
+exempt a pull request the rules did not anticipate.
 
 ## Security
 

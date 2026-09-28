@@ -16,6 +16,8 @@ import {
   eq,
   gte,
   inArray,
+  lt,
+  ne,
   notInArray,
   or,
   sql,
@@ -35,12 +37,14 @@ import { metricsDb as db } from "@/lib/db";
 import {
   apiKeys,
   chains,
+  directExecutions,
   integrations,
   invitation,
   member,
   organization,
   organizationSubscriptions,
   organizationWallets,
+  pendingTransactions,
   sessions,
   users,
   workflowExecutionLogs,
@@ -55,6 +59,7 @@ import {
   ANONYMOUS_ORG_SLUG,
   NA_ERROR_TYPE,
 } from "@/lib/metrics/metric-constants";
+import { DAY_MS } from "@/lib/utils/duration";
 import type { BillingStatus } from "./types";
 
 // Label value used for workflow executions whose workflow has no organization
@@ -292,6 +297,12 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
  * index scan for max() rather than a full-table scan that would trip the 8s
  * metrics statement_timeout.
  *
+ * `unconfirmed` rows are excluded: the finalizer stamps completed_at on them
+ * (lib/workflow/executor/logging.ts) but they have not finished, so a pipeline
+ * that only produces unconfirmed rows must still read as stalled. The filter
+ * sits on top of the same partial index; the backward scan just steps past any
+ * unconfirmed rows at the top, and those are rare.
+ *
  * Returns null when the table has no finished executions yet (max is NULL) or
  * on query error; the caller leaves the gauge unset in that case so Prometheus
  * staleness / the alert's no_data_state governs rather than a misleading 0.
@@ -307,7 +318,12 @@ export async function getLastFinishedExecutionAgeSecondsFromDb(): Promise<
         >`EXTRACT(EPOCH FROM (now() - max(${workflowExecutions.completedAt})))`,
       })
       .from(workflowExecutions)
-      .where(sql`${workflowExecutions.completedAt} IS NOT NULL`);
+      .where(
+        and(
+          sql`${workflowExecutions.completedAt} IS NOT NULL`,
+          ne(workflowExecutions.status, "unconfirmed")
+        )
+      );
 
     const raw = rows[0]?.ageSeconds;
     return raw == null ? null : Number(raw);
@@ -315,6 +331,190 @@ export async function getLastFinishedExecutionAgeSecondsFromDb(): Promise<
     logSystemWarn(
       ErrorCategory.DATABASE,
       "[Metrics] Failed to query last finished execution age from DB",
+      error
+    );
+    return null;
+  }
+}
+
+export type UnconfirmedExecutionCounts = {
+  workflow: number;
+  direct: number;
+};
+
+/**
+ * Rows currently parked in `unconfirmed`: a transaction was broadcast but its
+ * receipt could not be read when the run finalized. Only the
+ * execution-reconciler CronJob moves these on, so a value that climbs and never
+ * comes down means the reconciler is not running or cannot reach the chain.
+ *
+ * Both counts are equality lookups on a plain btree over status
+ * (idx_workflow_executions_status, idx_direct_executions_status), and
+ * `unconfirmed` is a rare value, so each is a small index scan rather than a
+ * table scan.
+ *
+ * Returns null on query error; the caller leaves the gauge untouched so the
+ * last real value stands rather than a misleading 0.
+ */
+export async function getUnconfirmedExecutionCountsFromDb(): Promise<UnconfirmedExecutionCounts | null> {
+  try {
+    const [workflowRows, directRows] = await Promise.all([
+      db
+        .select({ count: count() })
+        .from(workflowExecutions)
+        .where(eq(workflowExecutions.status, "unconfirmed")),
+      db
+        .select({ count: count() })
+        .from(directExecutions)
+        .where(eq(directExecutions.status, "unconfirmed")),
+    ]);
+    return {
+      workflow: Number(workflowRows[0]?.count) || 0,
+      direct: Number(directRows[0]?.count) || 0,
+    };
+  } catch (error) {
+    logSystemWarn(
+      ErrorCategory.DATABASE,
+      "[Metrics] Failed to query unconfirmed execution counts from DB",
+      error
+    );
+    return null;
+  }
+}
+
+export type ExecutionRetentionStats = {
+  oldestLogAgeSeconds: number | null;
+  logTableBytes: number;
+  executionTableBytes: number;
+};
+
+/**
+ * KEEP-1042: how far back the execution tables reach, and how much disk they
+ * hold. Both incidents this job exists to prevent were size-driven -- the
+ * volume alarm on 2026-09-01 and the CPU saturation on 2026-09-02, where
+ * analytics de-TOASTed jsonb out of a table nothing ever pruned -- and neither
+ * quantity was measured anywhere.
+ *
+ * Both queries are cheap: min() over idx_exec_logs_started_at is an index scan,
+ * and pg_total_relation_size reads the catalog. Returns nulls/zeroes on error
+ * so a metrics scrape never fails a run.
+ */
+export async function getExecutionRetentionStatsFromDb(): Promise<ExecutionRetentionStats | null> {
+  try {
+    const [ageRows, sizeRows] = await Promise.all([
+      db
+        .select({
+          ageSeconds: sql<
+            number | null
+          >`EXTRACT(EPOCH FROM (now() - min(${workflowExecutionLogs.startedAt})))`,
+        })
+        .from(workflowExecutionLogs),
+      db.execute<{ logs: string; executions: string }>(sql`SELECT
+          pg_total_relation_size('public.workflow_execution_logs') AS logs,
+          pg_total_relation_size('public.workflow_executions') AS executions`),
+    ]);
+
+    const rawAge = ageRows[0]?.ageSeconds;
+    const sizes = sizeRows[0];
+    return {
+      oldestLogAgeSeconds: rawAge == null ? null : Number(rawAge),
+      logTableBytes: Number(sizes?.logs) || 0,
+      executionTableBytes: Number(sizes?.executions) || 0,
+    };
+  } catch (error) {
+    logSystemWarn(
+      ErrorCategory.DATABASE,
+      "[Metrics] Failed to query execution retention stats from DB",
+      error
+    );
+    return null;
+  }
+}
+
+// How long a `pending` row has to sit before it counts as stuck. Fifteen
+// minutes is well past normal inclusion on every supported chain, so a row
+// over the line is a real backlog rather than ordinary block latency.
+const STUCK_PENDING_TX_THRESHOLD_MS = 15 * 60 * 1000;
+
+// How old a row can be and still count. Nothing reaps a `pending` row that
+// the wallet-scoped reconciler never revisits - validateAndReconcile runs
+// only at workflow start, for one wallet and chain, and deliberately leaves a
+// row pending whenever a different RPC endpoint answered than the one that
+// gave the chain nonce. Without a ceiling a single orphan from an abandoned
+// wallet holds the gauge above zero for the lifetime of the table, and a
+// `> 0` alert can never clear. Rows past this age drop out of the count.
+const STUCK_PENDING_TX_CEILING_MS = DAY_MS;
+
+export type StuckPendingTransactionCounts = Array<{
+  chainId: number;
+  count: number;
+}>;
+
+/**
+ * Pending transactions that have not moved off `pending` for longer than
+ * STUCK_PENDING_TX_THRESHOLD_MS but less than STUCK_PENDING_TX_CEILING_MS,
+ * grouped by chain.
+ *
+ * An unreferenced same-nonce fee-escalation implementation was removed from
+ * lib/web3/gas-strategy.ts. Nothing replaced it, and nothing else in the
+ * codebase re-prices a transaction at the same nonce, so a stuck transaction
+ * is resolved by a human and the backlog has to be visible. This gauge is that
+ * visibility and the only consumer of the "stuck" notion.
+ *
+ * The window is bounded at both ends, and the ceiling is the load-bearing
+ * half. It is what lets the alert recover: a backlog that forms is counted,
+ * and rows nothing will ever resolve leave the count on their own instead of
+ * pinning it above zero forever. The cost is explicit - a transaction still
+ * genuinely stuck past the ceiling stops being counted, so this gauge answers
+ * "is a backlog forming now", not "is anything stuck".
+ *
+ * Deliberately pure SQL. Confirming a row is genuinely stuck (rather than
+ * merely old) means comparing its nonce against the chain's, which is one RPC
+ * call per wallet - too expensive for a scrape. Within the window this
+ * over-counts rows the reconciler has not yet reaped, which is the safe
+ * direction for an alert. The nonce-accurate version is tracked separately.
+ *
+ * Served by idx_pending_tx_stuck (drizzle/0152), partial on status='pending'
+ * and leading on submitted_at, so both bounds are one range scan. At current
+ * production volume it would also be served by idx_pending_tx_status - a
+ * bitmap index scan needs no leading-column match, so that index's leading
+ * wallet_address does not disqualify it. idx_pending_tx_stuck exists for the
+ * crossover: nothing prunes pending_transactions, and once the pending set is
+ * large enough that scanning idx_pending_tx_status plus its heap fetches loses
+ * to a sequential scan, this query would otherwise start scaling with lifetime
+ * transaction volume on every scrape.
+ *
+ * Returns null on query error; the caller leaves the gauge untouched so the
+ * last real value stands rather than a misleading 0.
+ */
+export async function getStuckPendingTransactionCountsFromDb(): Promise<StuckPendingTransactionCounts | null> {
+  try {
+    const now = Date.now();
+    const cutoff = new Date(now - STUCK_PENDING_TX_THRESHOLD_MS);
+    const floor = new Date(now - STUCK_PENDING_TX_CEILING_MS);
+    const rows = await db
+      .select({
+        chainId: pendingTransactions.chainId,
+        count: count(),
+      })
+      .from(pendingTransactions)
+      .where(
+        and(
+          eq(pendingTransactions.status, "pending"),
+          lt(pendingTransactions.submittedAt, cutoff),
+          gte(pendingTransactions.submittedAt, floor)
+        )
+      )
+      .groupBy(pendingTransactions.chainId);
+
+    return rows.map((row) => ({
+      chainId: row.chainId,
+      count: Number(row.count) || 0,
+    }));
+  } catch (error) {
+    logSystemWarn(
+      ErrorCategory.DATABASE,
+      "[Metrics] Failed to query stuck pending transaction counts from DB",
       error
     );
     return null;

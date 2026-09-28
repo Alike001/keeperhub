@@ -113,6 +113,18 @@ describe("MCP execute tools accept the natural first-guess encoding (#1841)", ()
     expect(body.amount).toBe("0.1");
   });
 
+  it("execute_transfer takes numeric gas_limit_multiplier and forwards a string (#1973)", async () => {
+    const result = await callTool("execute_transfer", {
+      chain_id: "11155111",
+      to_address: "0xabc",
+      amount: "0.1",
+      gas_limit_multiplier: 1.5,
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(lastBody().gasLimitMultiplier).toBe("1.5");
+  });
+
   it("execute_contract_call takes a real array for function_args and forwards its JSON encoding", async () => {
     const result = await callTool("execute_contract_call", {
       contract_address: "0xc",
@@ -258,20 +270,23 @@ describe("MCP execute tools accept the natural first-guess encoding (#1841)", ()
       "execute_check_and_execute",
       ["contract_address", "chain_id", "function_name", "condition", "action"],
     ],
-  ])("keeps every %s field in the published required list", async (toolName, required) => {
-    const { client, close } = await connectedClient();
-    try {
-      const listed = await client.listTools();
-      const tool = listed.tools.find((t) => t.name === toolName);
-      if (!tool) {
-        throw new Error(`${toolName} is not exposed`);
+  ])(
+    "keeps every %s field in the published required list",
+    async (toolName, required) => {
+      const { client, close } = await connectedClient();
+      try {
+        const listed = await client.listTools();
+        const tool = listed.tools.find((t) => t.name === toolName);
+        if (!tool) {
+          throw new Error(`${toolName} is not exposed`);
+        }
+        const schema = tool.inputSchema as { required?: string[] };
+        expect(schema.required).toEqual(required);
+      } finally {
+        await close();
       }
-      const schema = tool.inputSchema as { required?: string[] };
-      expect(schema.required).toEqual(required);
-    } finally {
-      await close();
     }
-  });
+  );
 
   it("keeps the nested condition value required", async () => {
     const { client, close } = await connectedClient();
