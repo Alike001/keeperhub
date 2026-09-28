@@ -306,7 +306,7 @@ const mathPlugin: IntegrationPlugin = {
         },
         {
           field: "status",
-          description: "Treasury status: safe, warning or critical",
+          description: "Runway status: safe, warning or critical. A safe result can still have reserveBreached set to true.",
         },
         {
           field: "ratePeriod",
