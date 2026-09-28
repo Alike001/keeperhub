@@ -68,18 +68,35 @@ function parsePaginationParam(
 }
 
 /**
- * A cursor is the ISO `startedAt` of the last row of the previous page, and
- * lib/analytics/queries.ts hands it to `new Date(...)` for the keyset
- * comparison. An unparseable value became an Invalid Date, which Postgres
- * rejected and the route surfaced as a 500: `?cursor=abc` was a server error
- * rather than a bad parameter.
+ * The exact form `Date#toISOString` produces for a four-digit year, which is
+ * every cursor this listing mints and the only one it accepts. Year 0000 is
+ * excluded: JavaScript has one, Postgres does not.
+ */
+const MINTED_CURSOR = /^(?!0000)\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+/**
+ * A cursor is the ISO `startedAt` of the last row of the previous page, minted
+ * by `toISOString()` in lib/analytics/queries.ts and handed back to
+ * `new Date(...)` there for the keyset comparison.
  *
- * Treated as absent, matching how a page this route will not honour behaves,
- * so the listing restarts from the newest row instead of failing. Every cursor
- * the listing issues is a `Date#toISOString()` string and still round-trips.
+ * `Date.parse` admits far more than that, and the extras all end badly.
+ * `?cursor=abc` became an Invalid Date, which Postgres rejected and the route
+ * surfaced as a 500. `?cursor=-271821-04-20T00:00:00.000Z` parses, but the ISO
+ * extended year is outside the range a Postgres timestamp holds and fails the
+ * same way. `?cursor=1` parses to 2001-01-01, which the range floor then
+ * excludes: zero runs beside the real total, the reading rejected for `page`
+ * above. Only the minted shape is forwarded, and it must round-trip exactly.
+ *
+ * Anything else is treated as absent, so the listing restarts from the newest
+ * row and the rows and the total still describe the same window.
  */
 function parseCursor(raw: string | null): string | undefined {
-  if (raw === null || Number.isNaN(Date.parse(raw))) {
+  if (raw === null || !MINTED_CURSOR.test(raw)) {
+    return undefined;
+  }
+  const parsed = new Date(raw);
+  // "2026-02-31T00:00:00.000Z" has the shape but is not a real instant.
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString() !== raw) {
     return undefined;
   }
   return raw;

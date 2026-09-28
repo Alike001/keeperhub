@@ -285,18 +285,35 @@ describe("GET /api/analytics/runs pagination parsing", () => {
     expect(options?.limit).toBeUndefined();
   });
 
-  it("drops an unparseable cursor rather than sending an Invalid Date", async () => {
-    // queries.ts does lt(startedAt, new Date(cursor)). An Invalid Date reached
-    // Postgres as an invalid timestamp and the route answered 500, so a
-    // malformed query parameter read as a server fault.
-    for (const cursor of [
-      "abc",
-      "",
-      "not-a-date",
-      "2026-13-45T00:00:00.000Z",
-    ]) {
+  // Every value the guard is asked about, beside whether the query sees it.
+  // The listing mints cursors with Date#toISOString(), so only that exact
+  // shape is forwarded and everything else reads as absent.
+  const CURSOR_CASES: [string, boolean][] = [
+    ["0", false],
+    ["1", false],
+    ["100", false],
+    ["-1", false],
+    ["abc", false],
+    ["2026", false],
+    ["Jan 1 2026", false],
+    ["not-a-date", false],
+    ["2026-13-45T00:00:00.000Z", false],
+    ["2026-09-01T00:00:00", false],
+    ["-271821-04-20T00:00:00.000Z", false],
+    ["+275760-09-13T00:00:00.000Z", false],
+    ["", false],
+    ["2026-09-01T12:34:56.789Z", true],
+  ];
+
+  it("forwards only a cursor of the shape the listing mints", async () => {
+    // A value Date.parse accepts is not a cursor. "1" reads as 2001-01-01,
+    // which the range floor excludes: zero runs beside the real total, the
+    // same data-loss reading the page parameter is guarded against.
+    for (const [cursor, forwarded] of CURSOR_CASES) {
       const options = await optionsFor({ cursor });
-      expect(options?.cursor, `cursor=${cursor}`).toBeUndefined();
+      expect(options?.cursor, `cursor=${cursor}`).toBe(
+        forwarded ? cursor : undefined
+      );
     }
   });
 
@@ -308,24 +325,23 @@ describe("GET /api/analytics/runs pagination parsing", () => {
     expect(options?.cursor).toBe(cursor);
   });
 
-  it("only ever forwards a cursor that parses to a real date", async () => {
-    for (const cursor of ["abc", "2026-09-01T12:34:56.789Z", ""]) {
-      const options = await optionsFor({ cursor });
-      const forwarded = options?.cursor as string | undefined;
-      if (forwarded !== undefined) {
-        expect(
-          Number.isNaN(new Date(forwarded).getTime()),
-          `cursor=${cursor}`
-        ).toBe(false);
-      }
+  it("keeps every forwarded cursor inside the range Postgres holds", async () => {
+    // queries.ts does lt(startedAt, new Date(cursor)). An Invalid Date and an
+    // ISO extended year both reach Postgres as a value it rejects, and
+    // lib/api-error.ts reports that as a 500.
+    const accepted = CURSOR_CASES.filter(([, forwarded]) => forwarded).map(
+      ([cursor]) => cursor
+    );
+    expect(accepted.length).toBeGreaterThan(0);
+
+    for (const cursor of accepted) {
+      const forwarded = (await optionsFor({ cursor }))?.cursor as string;
+      const asDate = new Date(forwarded);
+      expect(Number.isNaN(asDate.getTime()), `cursor=${cursor}`).toBe(false);
+      expect(asDate.getUTCFullYear(), `cursor=${cursor}`).toBeGreaterThan(0);
+      expect(asDate.getUTCFullYear(), `cursor=${cursor}`).toBeLessThan(10_000);
+      expect(asDate.toISOString(), `cursor=${cursor}`).toBe(forwarded);
     }
-  });
-
-  it("serves a request with a malformed cursor instead of failing it", async () => {
-    vi.mocked(getUnifiedRuns).mockClear();
-    const res = await GET(paginationRequest({ cursor: "abc" }));
-
-    expect(res.status).toBe(200);
   });
 });
 

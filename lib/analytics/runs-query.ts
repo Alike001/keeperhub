@@ -29,7 +29,9 @@ export const MAX_PAGE = 200;
  * How many pages the pager may offer. The route clamps `page` at MAX_PAGE, so
  * a count taken from the real total alone leaves Next enabled on a page the
  * server will not advance to: it clamps back, echoes the same page, and the
- * click does nothing. Rows past the ceiling stay reachable through `cursor`.
+ * click does nothing. Rows past `MAX_PAGE * pageSize` are then out of reach
+ * from the table, which has no cursor path at all; only a caller driving the
+ * API directly can pass `cursor` and read past the ceiling.
  */
 export function runsPageCount(total: number, pageSize: number): number {
   if (!(Number.isFinite(total) && Number.isFinite(pageSize)) || pageSize <= 0) {

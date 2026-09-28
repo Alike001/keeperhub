@@ -651,7 +651,8 @@ function TableSkeleton(): ReactNode {
   );
 }
 
-function Pagination({
+// Exported for the unit test that pins the pager against the route's ceiling.
+export function Pagination({
   page,
   pageSize,
   total,
