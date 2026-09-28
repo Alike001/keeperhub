@@ -305,7 +305,7 @@ and the authoritative safe first-write sequence.
 | Tool | Description |
 |------|-------------|
 | `list_integrations` | List configured integrations (credentials) for the organization. |
-| `get_wallet_integration` | Get details for a wallet integration, required for web3 write actions. |
+| `get_wallet_integration` | Get details for a wallet integration. Confirms the organization has a wallet configured; write action nodes never carry an integrationId of their own. |
 
 ### Documentation
 
