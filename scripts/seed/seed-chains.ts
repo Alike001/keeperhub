@@ -513,7 +513,31 @@ export const DEFAULT_CHAINS: NewChain[] = [
     usePrivateMempoolRpc: getUsePrivateMempoolRpc({ rpcConfig, jsonKey: "avax-fuji" }),
     defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "avax-fuji" }),
   },
-  // Somnia Shannon Testnet
+  // Somnia chains
+  {
+    chainId: getChainConfigValue("somnia-mainnet", "chainId", 5031),
+    name: "Somnia",
+    symbol: getChainConfigValue("somnia-mainnet", "symbol", "SOMI"),
+    chainType: "evm",
+    defaultPrimaryRpc: getRpcUrlByChainId(5031, "primary"),
+    defaultFallbackRpc: getRpcUrlByChainId(5031, "fallback"),
+    defaultPrimaryWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[5031].jsonKey,
+      type: "primary",
+    }),
+    defaultFallbackWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[5031].jsonKey,
+      type: "fallback",
+    }),
+    isTestnet: getChainConfigValue("somnia-mainnet", "isTestnet", false),
+    isEnabled: getChainConfigValue("somnia-mainnet", "isEnabled", true),
+    status: "experimental",
+    usePrivateMempoolRpc: getUsePrivateMempoolRpc({ rpcConfig, jsonKey: "somnia-mainnet" }),
+    defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "somnia-mainnet" }),
+    aliases: ["somnia"],
+  },
   {
     chainId: getChainConfigValue("somnia-shannon", "chainId", 50_312),
     name: "Somnia Shannon",
@@ -1020,6 +1044,17 @@ const EXPLORER_CONFIG_TEMPLATES: Record<
     explorerAddressPath: "/address/{address}",
     explorerContractPath: "/address/{address}#code",
   },
+  // Somnia Mainnet - Blockscout. The trailing slash matters: bare /api
+  // answers with a 301 to http://.
+  5031: {
+    chainType: "evm",
+    explorerUrl: "https://explorer.somnia.network",
+    explorerApiType: "blockscout",
+    explorerApiUrl: "https://explorer.somnia.network/api/",
+    explorerTxPath: "/tx/{hash}",
+    explorerAddressPath: "/address/{address}",
+    explorerContractPath: "/address/{address}?tab=contract",
+  },
   // Somnia Shannon Testnet - Blockscout
   50312: {
     chainType: "evm",
@@ -1248,6 +1283,7 @@ async function seedChains() {
     "Optimism Sepolia": 11_155_420,
     Avalanche: 43_114,
     "Avalanche Fuji": 43_113,
+    Somnia: 5031,
     "Somnia Shannon": 50_312,
     Plasma: 9745,
     "Plasma Testnet": 9746,
