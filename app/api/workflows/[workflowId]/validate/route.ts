@@ -10,6 +10,7 @@ import {
 } from "@/lib/mcp/validate-workflow";
 import { validateWorkflowDeep } from "@/lib/mcp/validate-workflow-deep";
 import { getWorkflowAccess } from "@/lib/workflow/access";
+import { resolveProtocolEventAddress } from "@/lib/workflow/protocol-event-address";
 
 export async function GET(
   request: Request,
@@ -82,14 +83,14 @@ export async function GET(
     workflowType: (row.workflowType ?? "read") as "read" | "write",
   };
 
-  // chainWebsockets is passed on the fast path only. validateWorkflowDeep
-  // calls validateWorkflow with no options at all, so the deep tier already
-  // drops chainIds and would drop this the same way; widening its options type
-  // would advertise support that does not exist. That is a pre-existing bug in
-  // the deep tier rather than one this check introduces.
+  const options = {
+    chainIds,
+    chainWebsockets,
+    resolveProtocolEventAddress,
+  };
   const result: ValidationResult = deepCheck
-    ? await validateWorkflowDeep(workflow, { chainIds })
-    : validateWorkflow(workflow, { chainIds, chainWebsockets });
+    ? await validateWorkflowDeep(workflow, options)
+    : validateWorkflow(workflow, options);
 
   return NextResponse.json({
     ok: true,

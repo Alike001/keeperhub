@@ -28,6 +28,7 @@ export const VALIDATION_ERROR_CODES = {
   TRIGGER_ABI_HAS_NO_EVENTS: "trigger-abi-has-no-events",
   TRIGGER_ABI_EVENT_MISSING_INPUTS: "trigger-abi-event-missing-inputs",
   TRIGGER_EVENT_NOT_IN_ABI: "trigger-event-not-in-abi",
+  TRIGGER_EVENT_NAME_AMBIGUOUS: "trigger-event-name-ambiguous",
 } as const;
 
 export const VALIDATION_WARNING_CODES = {

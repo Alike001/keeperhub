@@ -19,6 +19,7 @@ import {
 import {
   type ChainWebsockets,
   eventTriggerRegistration,
+  type ProtocolEventAddressResolver,
 } from "@/lib/mcp/validate-workflow-trigger";
 import {
   chainExists,
@@ -66,6 +67,13 @@ export type ValidateWorkflowOptions = {
    * unregisterable.
    */
   chainWebsockets?: ChainWebsockets;
+  /**
+   * Resolves a protocol event's contract address the way the events route
+   * does before the tracker sees the node. Same contract again: omitting it
+   * SKIPS the check on triggers built from a protocol event, rather than
+   * reporting them all as missing an address.
+   */
+  resolveProtocolEventAddress?: ProtocolEventAddressResolver;
 };
 
 export function validateWorkflow(
@@ -110,10 +118,12 @@ export function validateWorkflow(
 
   // Event-trigger registration: the conditions under which the event tracker
   // declines to register the workflow and nothing reaches the user. The
-  // WebSocket check inside needs opts.chainWebsockets; the rest need nothing.
+  // WebSocket check inside needs opts.chainWebsockets and the protocol-event
+  // address check needs opts.resolveProtocolEventAddress; the rest need nothing.
   for (const issue of eventTriggerRegistration(
     workflow.nodes,
-    opts.chainWebsockets
+    opts.chainWebsockets,
+    opts.resolveProtocolEventAddress
   )) {
     errors.push(issue);
   }

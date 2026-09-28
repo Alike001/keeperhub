@@ -21,10 +21,14 @@
  *     given. The tracker's real map applies no `isEnabled` filter while
  *     `/validate` selects only enabled chains, which is a pre-existing
  *     divergence in the existing chain check and not this module's to settle.
- *   - `trigger-event-not-in-abi` is excluded and covered in the unit file
- *     instead. `buildRegistration` accepts an eventName the ABI does not
- *     declare; the failure happens later, when `EventListener.start` throws.
- *     It is the same silent class but not the same function.
+ *   - `buildRegistration` accepts an eventName the ABI does not declare; the
+ *     failure happens later, when `EventListener.start` resolves it through
+ *     `iface.getEvent` and throws. So a registration also counts as a refusal
+ *     when the tracker's own `getInterface` cannot resolve the eventName,
+ *     which is exactly the call `start()` makes before subscribing.
+ *   - Triggers built from a protocol event are covered in the unit file. The
+ *     address resolution happens in the events route, not the tracker, and
+ *     both sides now read it from `lib/workflow/protocol-event-address.ts`.
  */
 
 import { beforeAll, describe, expect, it, vi } from "vitest";
@@ -51,19 +55,29 @@ import type {
  */
 const TRACKER_MAPPER =
   "../../keeperhub-events/event-tracker/src/listener/workflow-mapper";
+const TRACKER_INTERFACE_CACHE =
+  "../../keeperhub-events/event-tracker/src/chains/interface-cache";
 
 type BuildRegistration = (
   workflow: RawWorkflow,
   networks: NetworksMap
 ) => unknown;
 
+type EventLookup = { getEvent: (key: string) => unknown };
+type GetInterface = (abi: string[]) => EventLookup;
+
 let buildRegistration: BuildRegistration;
+let getInterface: GetInterface;
 
 beforeAll(async () => {
-  const mod = (await import(/* @vite-ignore */ TRACKER_MAPPER)) as {
+  const mapper = (await import(/* @vite-ignore */ TRACKER_MAPPER)) as {
     buildRegistration: BuildRegistration;
   };
-  buildRegistration = mod.buildRegistration;
+  buildRegistration = mapper.buildRegistration;
+  const cache = (await import(/* @vite-ignore */ TRACKER_INTERFACE_CACHE)) as {
+    getInterface: GetInterface;
+  };
+  getInterface = cache.getInterface;
 });
 
 const CONTRACT = "0x6B175474E89094C44Da98b954EedeAC495271d0F";
@@ -132,11 +146,26 @@ function trackerRefuses(
     enabled: true,
     nodes: [triggerNode(config)] as RawWorkflow["nodes"],
   };
+  let registration: unknown;
   try {
-    return buildRegistration(raw, networksMap(wss)) === null;
+    registration = buildRegistration(raw, networksMap(wss));
   } catch {
     // buildEventAbi throws on an event fragment with no inputs. main.ts
     // catches it and drops the workflow, so it is a refusal.
+    return true;
+  }
+  if (registration === null) {
+    return true;
+  }
+  // EventListener.start: resolve the eventName against the registration's
+  // own ABI strings, and throw when it is absent or ambiguous.
+  const { eventsAbiStrings, eventName } = registration as {
+    eventsAbiStrings: string[];
+    eventName: string;
+  };
+  try {
+    return getInterface(eventsAbiStrings).getEvent(eventName) === null;
+  } catch {
     return true;
   }
 }
@@ -220,6 +249,60 @@ const FIXTURES: Fixture[] = [
     config: {
       ...VALID_CONFIG,
       contractABI: JSON.stringify([{ type: "function", name: "transfer" }]),
+    },
+  },
+  {
+    label: "event name absent from the ABI",
+    config: { ...VALID_CONFIG, eventName: "Approval" },
+  },
+  {
+    label: "event name in full signature form",
+    config: { ...VALID_CONFIG, eventName: "Transfer(address,address,uint256)" },
+  },
+  {
+    label: "bare event name matching two overloads",
+    config: {
+      ...VALID_CONFIG,
+      contractABI: JSON.stringify([
+        TRANSFER_EVENT,
+        {
+          type: "event",
+          name: "Transfer",
+          inputs: [{ name: "value", type: "uint256", indexed: false }],
+        },
+      ]),
+    },
+  },
+  {
+    label: "selected event carries a tuple input",
+    config: {
+      ...VALID_CONFIG,
+      eventName: "Filled",
+      contractABI: JSON.stringify([
+        TRANSFER_EVENT,
+        {
+          type: "event",
+          name: "Filled",
+          inputs: [
+            {
+              name: "order",
+              type: "tuple",
+              indexed: false,
+              components: [{ name: "maker", type: "address" }],
+            },
+          ],
+        },
+      ]),
+    },
+  },
+  {
+    label: "an event fragment's inputs contain null",
+    config: {
+      ...VALID_CONFIG,
+      contractABI: JSON.stringify([
+        TRANSFER_EVENT,
+        { type: "event", name: "Broken", inputs: [null] },
+      ]),
     },
   },
   {

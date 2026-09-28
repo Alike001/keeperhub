@@ -17,6 +17,8 @@ import {
   type ValidatorWorkflow,
   validateWorkflow,
 } from "@/lib/mcp/validate-workflow";
+import type { ProtocolEventAddressResolver } from "@/lib/mcp/validate-workflow-trigger";
+import { resolveProtocolEventAddress } from "@/lib/workflow/protocol-event-address";
 import { actionNode, edge, makeWorkflow } from "./fixtures/validate-workflow";
 
 const CONTRACT = "0x6B175474E89094C44Da98b954EedeAC495271d0F";
@@ -63,6 +65,7 @@ function validateTrigger(
   opts: {
     chainIds?: Set<number>;
     chainWebsockets?: Map<number, string | null>;
+    resolveProtocolEventAddress?: ProtocolEventAddressResolver;
   } = {}
 ) {
   const wf: ValidatorWorkflow = makeWorkflow({
@@ -73,6 +76,8 @@ function validateTrigger(
     chainIds: opts.chainIds ?? new Set([1]),
     chainWebsockets:
       opts.chainWebsockets ?? new Map([[1, "wss://mainnet.example/ws"]]),
+    resolveProtocolEventAddress:
+      opts.resolveProtocolEventAddress ?? resolveProtocolEventAddress,
   });
 }
 
@@ -133,10 +138,87 @@ describe("Event trigger registration", () => {
     // these two fields before the tracker ever sees the node.
     const result = validateTrigger({
       contractAddress: "",
-      _eventProtocolSlug: "aave-v3",
-      _eventSlug: "supply",
+      _eventProtocolSlug: "safe",
+      _eventSlug: "added-owner",
     });
     expect(codes(result)).not.toContain("trigger-missing-contract-address");
+  });
+
+  it("reports a protocol event whose protocol is not deployed on the trigger's chain", () => {
+    // The slugs are present, but the route resolves nothing for this chain,
+    // so the address stays empty and the tracker refuses the workflow.
+    const result = validateTrigger(
+      {
+        network: "11155111",
+        contractAddress: "",
+        _eventProtocolSlug: "safe",
+        _eventSlug: "added-owner",
+      },
+      {
+        chainIds: new Set([1, 11_155_111]),
+        chainWebsockets: new Map([[11_155_111, "wss://sepolia.example/ws"]]),
+      }
+    );
+    const err = result.errors.find(
+      (e) => e.code === "trigger-missing-contract-address"
+    );
+    expect(err?.parameterPath).toBe("nodes[0].config.contractAddress");
+    expect(err?.message).toContain("safe/added-owner");
+  });
+
+  it("reports empty protocol slugs, which the route reads as absent", () => {
+    const result = validateTrigger({
+      contractAddress: "",
+      _eventProtocolSlug: "",
+      _eventSlug: "",
+    });
+    expect(codes(result)).toContain("trigger-missing-contract-address");
+  });
+
+  it("skips a protocol-event address when the caller supplies no resolver", () => {
+    const wf = makeWorkflow({
+      nodes: [
+        eventTrigger({
+          contractAddress: "",
+          _eventProtocolSlug: "safe",
+          _eventSlug: "added-owner",
+        }),
+      ],
+      edges: [],
+    });
+    const result = validateWorkflow(wf, { chainIds: new Set([1]) });
+    expect(codes(result)).not.toContain("trigger-missing-contract-address");
+  });
+
+  it("does not run on a Solana Event trigger", () => {
+    // Solana triggers store programId and idl and register through the
+    // Solana tracker, never buildRegistration.
+    const wf = makeWorkflow({
+      nodes: [
+        {
+          id: "trigger-1",
+          type: "trigger",
+          data: {
+            label: "Event",
+            type: "trigger",
+            config: {
+              triggerType: "Event",
+              network: "101",
+              programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+              idl: "{}",
+              eventName: "Transfer",
+            },
+          },
+        },
+      ],
+      edges: [],
+    });
+    const result = validateWorkflow(wf, {
+      chainIds: new Set([101]),
+      chainWebsockets: new Map([[101, null]]),
+      resolveProtocolEventAddress,
+    });
+    expect(codes(result).filter((c) => c.startsWith("trigger-"))).toEqual([]);
   });
 
   it("reports a missing event name", () => {
@@ -194,6 +276,65 @@ describe("Event trigger registration", () => {
     );
     expect(err?.message).toContain("Transfer");
     expect(err?.message).toContain("Approval");
+  });
+
+  it("accepts an eventName in full signature form", () => {
+    // The listener resolves through iface.getEvent, which takes a signature.
+    const result = validateTrigger({
+      eventName: "Transfer(address,address,uint256)",
+    });
+    expect(result.errors).toEqual([]);
+  });
+
+  it("reports a bare eventName that matches more than one overload", () => {
+    const result = validateTrigger({
+      contractABI: JSON.stringify([
+        TRANSFER_EVENT,
+        {
+          type: "event",
+          name: "Transfer",
+          inputs: [{ name: "value", type: "uint256", indexed: false }],
+        },
+      ]),
+    });
+    const err = result.errors.find(
+      (e) => e.code === "trigger-event-name-ambiguous"
+    );
+    expect(err?.parameterPath).toBe("nodes[0].config.eventName");
+  });
+
+  it("reports an event whose tuple input the tracker's interface drops", () => {
+    // buildEventAbi serialises `tuple order` with no components, which ethers
+    // cannot parse, so the fragment is absent when the listener looks it up.
+    const result = validateTrigger({
+      eventName: "Filled",
+      contractABI: JSON.stringify([
+        TRANSFER_EVENT,
+        {
+          type: "event",
+          name: "Filled",
+          inputs: [
+            {
+              name: "order",
+              type: "tuple",
+              indexed: false,
+              components: [{ name: "maker", type: "address" }],
+            },
+          ],
+        },
+      ]),
+    });
+    expect(codes(result)).toContain("trigger-event-not-in-abi");
+  });
+
+  it("reports an event fragment whose inputs contain null", () => {
+    const result = validateTrigger({
+      contractABI: JSON.stringify([
+        TRANSFER_EVENT,
+        { type: "event", name: "Broken", inputs: [null] },
+      ]),
+    });
+    expect(codes(result)).toContain("trigger-abi-event-missing-inputs");
   });
 
   it("does not run on a non-Event trigger", () => {

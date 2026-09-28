@@ -14,9 +14,21 @@
  * chains table). This module covers the rest.
  *
  * Pure, in the same sense as the rest of this validator: no database, no
- * network, no MCP SDK. The one condition that needs a database fact, the
- * chain's WebSocket endpoint, is passed in by the route the same way
- * `chainIds` is, and is skipped entirely when the caller does not supply it.
+ * network, no MCP SDK. The two conditions that need facts from outside the
+ * workflow, the chain's WebSocket endpoint and the address a protocol event
+ * resolves to, are passed in by the route the same way `chainIds` is, and are
+ * skipped entirely when the caller does not supply them.
+ *
+ * Scope, stated rather than implied:
+ *
+ *   - Solana Event triggers are skipped. They store `programId` and `idl`
+ *     rather than `contractAddress` and `contractABI`, and register through
+ *     `keeperhub-events/solana-tracker`, not `buildRegistration`.
+ *   - The Transfer trigger (`WorkflowTriggerEnum.TEMPO_PAYMENT`) is not
+ *     checked. The events route admits it and sends it through the same
+ *     `buildRegistration`, injecting its ABI and eventName, so a Transfer
+ *     trigger on a chain with no WebSocket endpoint is the same silent
+ *     failure. It is left out of this change rather than covered implicitly.
  *
  * The tracker cannot be imported from here (`keeperhub-events/` is a separate
  * workspace, excluded from the root tsconfig), so its rule is reproduced. It
@@ -25,10 +37,13 @@
  * codes someone has to remember to update.
  */
 
+import { ethers } from "ethers";
 import {
   VALIDATION_ERROR_CODES,
   type ValidationErrorCode,
 } from "@/lib/mcp/validate-workflow-codes";
+import { isSolanaChain } from "@/lib/rpc/solana-chains";
+import { WorkflowTriggerEnum } from "@/lib/workflow/store";
 
 type TriggerIssue = {
   code: ValidationErrorCode;
@@ -44,9 +59,6 @@ type NodeLike = {
   } | null;
 };
 
-/** The trigger type the event tracker registers as a contract-log subscription. */
-const EVENT_TRIGGER_TYPE = "Event";
-
 /**
  * Chain facts this module needs, keyed by chain id.
  *
@@ -55,6 +67,18 @@ const EVENT_TRIGGER_TYPE = "Event";
  * every trigger as unregisterable.
  */
 export type ChainWebsockets = ReadonlyMap<number, string | null>;
+
+/**
+ * Resolves the contract address a protocol event points at on a chain, the
+ * way `app/api/workflows/events/route.ts` does before the tracker sees the
+ * node. Returns null when it does not resolve. See
+ * `lib/workflow/protocol-event-address.ts`.
+ */
+export type ProtocolEventAddressResolver = (
+  protocolSlug: string | undefined,
+  eventSlug: string | undefined,
+  network: string | undefined
+) => string | null;
 
 function issue(
   code: ValidationErrorCode,
@@ -84,7 +108,7 @@ function findEventTrigger(
     if (node?.data?.type !== "trigger") {
       continue;
     }
-    if (readStringConfig(node, "triggerType") === EVENT_TRIGGER_TYPE) {
+    if (readStringConfig(node, "triggerType") === WorkflowTriggerEnum.EVENT) {
       return { node, index };
     }
     // Only one trigger node exists per workflow, so a trigger of another type
@@ -142,17 +166,43 @@ function checkWebsocket(
  * Hub's "create a workflow from a protocol event" path builds a trigger. The
  * address genuinely is absent from the config there, and reporting it would be
  * a false error on a first-class creation path.
+ *
+ * The route's resolution is what counts, not its inputs: the slugs can be
+ * present while the protocol is not deployed on the trigger's chain, and then
+ * the address stays empty and the tracker refuses. So the check asks the same
+ * resolver the route uses, and only skips when the caller supplies none.
  */
-function checkContractAddress(node: NodeLike, index: number): TriggerIssue[] {
+function checkContractAddress(
+  node: NodeLike,
+  index: number,
+  resolveProtocolEventAddress: ProtocolEventAddressResolver | undefined
+): TriggerIssue[] {
   const address = readStringConfig(node, "contractAddress");
   if (address !== null && address !== "") {
     return [];
   }
 
-  const protocolSlug = readStringConfig(node, "_eventProtocolSlug");
-  const eventSlug = readStringConfig(node, "_eventSlug");
-  if (protocolSlug !== null && eventSlug !== null) {
-    return [];
+  // Truthiness, not null checks: the route gates on `protocolSlug &&
+  // eventSlug && network`, so an empty slug is absent there too.
+  const protocolSlug = readStringConfig(node, "_eventProtocolSlug") || null;
+  const eventSlug = readStringConfig(node, "_eventSlug") || null;
+  const fromProtocolEvent = protocolSlug !== null && eventSlug !== null;
+
+  if (fromProtocolEvent) {
+    if (resolveProtocolEventAddress === undefined) {
+      return [];
+    }
+    const network = readStringConfig(node, "network") || undefined;
+    if (resolveProtocolEventAddress(protocolSlug, eventSlug, network)) {
+      return [];
+    }
+    return [
+      issue(
+        VALIDATION_ERROR_CODES.TRIGGER_MISSING_CONTRACT_ADDRESS,
+        `Event trigger has no contractAddress, and protocol event "${protocolSlug}/${eventSlug}" has no contract address on network ${network ?? "(none)"}, so the event tracker skips this workflow and it never runs.`,
+        `nodes[${index}].config.contractAddress`
+      ),
+    ];
   }
 
   return [
@@ -246,7 +296,15 @@ function checkEventFragments(
 ): TriggerIssue[] {
   const path = `nodes[${index}].config.contractABI`;
 
-  const broken = events.filter((entry) => !Array.isArray(entry.inputs));
+  // A null entry inside inputs throws on destructuring in buildEventAbi, the
+  // same as a missing array.
+  const broken = events.filter(
+    (entry) =>
+      !Array.isArray(entry.inputs) ||
+      entry.inputs.some(
+        (input: unknown) => input === null || input === undefined
+      )
+  );
   if (broken.length > 0) {
     const named = broken
       .map((entry) => (typeof entry.name === "string" ? entry.name : "unnamed"))
@@ -254,7 +312,7 @@ function checkEventFragments(
     return [
       issue(
         VALIDATION_ERROR_CODES.TRIGGER_ABI_EVENT_MISSING_INPUTS,
-        `Event fragment ${named} in contractABI has no inputs array. The event tracker serialises every event in the ABI and throws on this one, dropping the whole workflow.`,
+        `Event fragment ${named} in contractABI has no usable inputs array. The event tracker serialises every event in the ABI and throws on this one, dropping the whole workflow.`,
         path
       ),
     ];
@@ -271,21 +329,79 @@ function checkEventFragments(
     ];
   }
 
-  const available = events
-    .map((entry) => (typeof entry.name === "string" ? entry.name : null))
-    .filter((name): name is string => name !== null);
+  const iface = eventInterface(events);
+  let fragment: ethers.EventFragment | null;
+  try {
+    fragment = iface.getEvent(eventName);
+  } catch (error) {
+    // getEvent throws, rather than returning null, on a bare name that
+    // matches more than one overload and on a malformed signature. Either
+    // way EventListener.start throws and the workflow never runs.
+    if (error instanceof Error && error.message.includes("ambiguous")) {
+      return [
+        issue(
+          VALIDATION_ERROR_CODES.TRIGGER_EVENT_NAME_AMBIGUOUS,
+          `contractABI declares more than one event named "${eventName}". Use the full signature, for example "${eventName}(address,uint256)", so the event tracker can tell them apart.`,
+          `nodes[${index}].config.eventName`
+        ),
+      ];
+    }
+    fragment = null;
+  }
 
-  if (!available.includes(eventName)) {
+  if (fragment === null) {
+    const available: string[] = [];
+    iface.forEachEvent((entry) => {
+      available.push(entry.format("sighash"));
+    });
     return [
       issue(
         VALIDATION_ERROR_CODES.TRIGGER_EVENT_NOT_IN_ABI,
-        `contractABI has no event named "${eventName}". Available events: ${available.join(", ") || "(none)"}.`,
+        `contractABI has no event matching "${eventName}". Available events: ${available.join(", ") || "(none)"}.`,
         `nodes[${index}].config.eventName`
       ),
     ];
   }
 
   return [];
+}
+
+/**
+ * The string `buildEventAbi` (`keeperhub-events/event-tracker/src/chains/
+ * event-serializer.ts`) produces for one fragment, reproduced exactly.
+ */
+function buildEventAbi(entry: AbiEntryLike): string {
+  const inputs = entry.inputs as Array<{
+    name?: unknown;
+    type?: unknown;
+    indexed?: unknown;
+  }>;
+  const parsedInputs = inputs
+    .map(
+      ({ name, type, indexed }) => `${type} ${indexed ? "indexed " : ""}${name}`
+    )
+    .join(", ");
+  return `event ${entry.name}(${parsedInputs})`;
+}
+
+/**
+ * The interface the tracker's listener resolves `eventName` against.
+ *
+ * `new ethers.Interface(strings)` skips a string it cannot parse, such as
+ * `event Filled(tuple order)` (buildEventAbi drops tuple components), after
+ * printing a console warning. Parsing each fragment here and dropping the
+ * failures gives the same interface without the warning.
+ */
+function eventInterface(events: AbiEntryLike[]): ethers.Interface {
+  const fragments: ethers.EventFragment[] = [];
+  for (const entry of events) {
+    try {
+      fragments.push(ethers.EventFragment.from(buildEventAbi(entry)));
+    } catch {
+      // Absent from the tracker's interface too.
+    }
+  }
+  return new ethers.Interface(fragments);
 }
 
 /**
@@ -298,7 +414,8 @@ function checkEventFragments(
  */
 export function eventTriggerRegistration(
   nodes: unknown,
-  chainWebsockets?: ChainWebsockets
+  chainWebsockets?: ChainWebsockets,
+  resolveProtocolEventAddress?: ProtocolEventAddressResolver
 ): TriggerIssue[] {
   const found = findEventTrigger(nodes);
   if (found === null) {
@@ -306,6 +423,10 @@ export function eventTriggerRegistration(
   }
 
   const { node, index } = found;
+  const chainId = resolveChainId(node);
+  if (chainId !== null && isSolanaChain(chainId)) {
+    return [];
+  }
   const issues: TriggerIssue[] = [];
 
   // chainExists skips a node with no `network` at all, which is right for an
@@ -325,7 +446,9 @@ export function eventTriggerRegistration(
   if (chainWebsockets !== undefined) {
     issues.push(...checkWebsocket(node, index, chainWebsockets));
   }
-  issues.push(...checkContractAddress(node, index));
+  issues.push(
+    ...checkContractAddress(node, index, resolveProtocolEventAddress)
+  );
 
   const abi = parseAbi(node, index);
   if ("issues" in abi) {
