@@ -36,6 +36,22 @@ describe("getChainIdFromNetwork", () => {
       expect(getChainIdFromNetwork("tempo-mainnet")).toBe(4217);
     });
 
+    it("should return chain ID for hyperevm", () => {
+      expect(getChainIdFromNetwork("hyperevm")).toBe(999);
+      expect(getChainIdFromNetwork("hyperevm-mainnet")).toBe(999);
+      expect(getChainIdFromNetwork("HyperEVM")).toBe(999);
+    });
+
+    it("should not guess hyperliquid, which also names the non-EVM HyperCore", () => {
+      // Asserted on the whole message rather than a substring: a message
+      // that grew a "did you mean hyperevm?" suffix would still contain
+      // this text while having started guessing, which is the thing the
+      // test exists to prevent.
+      expect(() => getChainIdFromNetwork("hyperliquid")).toThrow(
+        /^Unsupported network: hyperliquid\. Supported:/
+      );
+    });
+
     it("should return chain ID for solana networks", () => {
       expect(getChainIdFromNetwork("solana")).toBe(101);
       expect(getChainIdFromNetwork("solana-mainnet")).toBe(101);
@@ -125,6 +141,7 @@ describe("getNetworkName", () => {
     expect(getNetworkName(84_532)).toBe("Base Sepolia");
     expect(getNetworkName(42_431)).toBe("Tempo Testnet");
     expect(getNetworkName(4217)).toBe("Tempo");
+    expect(getNetworkName(999)).toBe("HyperEVM");
     expect(getNetworkName(101)).toBe("Solana");
     expect(getNetworkName(103)).toBe("Solana Devnet");
   });
@@ -145,6 +162,7 @@ describe("SUPPORTED_CHAIN_IDS", () => {
     expect(SUPPORTED_CHAIN_IDS.BASE_SEPOLIA).toBe(84_532);
     expect(SUPPORTED_CHAIN_IDS.TEMPO_TESTNET).toBe(42_431);
     expect(SUPPORTED_CHAIN_IDS.TEMPO_MAINNET).toBe(4217);
+    expect(SUPPORTED_CHAIN_IDS.HYPEREVM_MAINNET).toBe(999);
   });
 
   it("should have correct values for Solana chains", () => {
@@ -153,7 +171,7 @@ describe("SUPPORTED_CHAIN_IDS", () => {
   });
 
   it("should have all expected chains", () => {
-    // 9 total chains: MAINNET, SEPOLIA, HOODI, BASE, BASE_SEPOLIA, TEMPO_TESTNET, TEMPO_MAINNET, SOLANA_MAINNET, SOLANA_DEVNET
-    expect(Object.keys(SUPPORTED_CHAIN_IDS)).toHaveLength(9);
+    // 10 total chains: MAINNET, SEPOLIA, HOODI, BASE, BASE_SEPOLIA, TEMPO_TESTNET, TEMPO_MAINNET, HYPEREVM_MAINNET, SOLANA_MAINNET, SOLANA_DEVNET
+    expect(Object.keys(SUPPORTED_CHAIN_IDS)).toHaveLength(10);
   });
 });

@@ -6,6 +6,7 @@
  * exporting functions from "use step" files (which breaks the workflow bundler).
  */
 import "server-only";
+import { isPreBroadcastNetworkError } from "@/lib/web3/submit-signed";
 import { ExecutionErrorType } from "@/lib/errors/execution-error-type";
 
 import { eq } from "drizzle-orm";
@@ -51,6 +52,7 @@ import {
   formatContractError,
   type RevertKind,
 } from "@/lib/web3/decode-revert-error";
+import { buildErrorDecodeInterface } from "@/lib/web3/extra-error-abis";
 import {
   parsePriorityFeeGwei,
   resolveGasLimitOverrides,
@@ -64,7 +66,7 @@ import {
   isOnChainPendingError,
 } from "@/lib/web3/onchain-revert";
 import { resolveSponsoredSendError } from "@/lib/web3/sponsored-send-error";
-import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
+import { shouldTrySponsorship } from "@/lib/web3/sponsorship-eligibility";
 import {
   type TransactionContext,
   withNonceSession,
@@ -83,6 +85,10 @@ export type WriteContractCoreInput = {
   // the network's mempool requires a tip above the configured floor (e.g. 0G
   // Galileo demands >= 2 gwei but the strategy floor is lower).
   priorityFeeGwei?: string;
+  // Per-node "Sponsor gas" toggle. Defaults on; false skips the gas-sponsored
+  // route outright so the transaction is signed and paid for by the org's own
+  // wallet. Resolved through resolveSponsorGas so an unset value stays on.
+  sponsorGas?: boolean;
   // KEEP-137: Route the write transaction through the chain's private mempool
   // RPC (e.g. Flashbots Protect). Skips Turnkey-sponsored execution -- mutually exclusive.
   usePrivateMempool?: boolean;
@@ -92,6 +98,9 @@ export type WriteContractCoreInput = {
   // Per-node Web3 Connection field. See ParsedWeb3Connection / parseWeb3Connection
   // in lib/safe/signer-resolver.ts. Missing -> "default" -> org-policy resolver.
   web3Connection?: string;
+  // #2430: extra ABI documents whose error entries join the decode path, after
+  // `abi`. Decoding only - `abi` still encodes the call.
+  errorAbis?: string[];
   _context?: {
     executionId?: string;
     organizationId?: string;
@@ -153,6 +162,7 @@ export type WriteContractResult =
       // True when the terminal failure came from the gas-sponsored path, so
       // the finalizer can report the route accurately on a failed execution.
       sponsored?: boolean;
+      broadcastAttempted?: boolean;
     };
 
 /**
@@ -216,7 +226,7 @@ export function applyFailOnError(
  * Shared between the web3 write-contract step and the future protocol-write step.
  */
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Contract interaction requires extensive validation
-export async function writeContractCore(
+async function writeContractCoreImpl(
   input: WriteContractCoreInput
 ): Promise<WriteContractResult> {
   const {
@@ -228,9 +238,11 @@ export async function writeContractCore(
     ethValue,
     gasLimitMultiplier,
     priorityFeeGwei,
+    sponsorGas,
     usePrivateMempool,
     strict,
     web3Connection,
+    errorAbis,
     _context,
   } = input;
 
@@ -516,14 +528,14 @@ export async function writeContractCore(
   };
 
   // Try gas-sponsored execution first via Turnkey Gas Station (KEEP-464).
-  // KEEP-137: skip sponsorship when routing through a private mempool --
-  // Turnkey broadcasts via its own infrastructure, which bypasses Flashbots Protect.
-  // Also skip in Safe mode: the sponsored path sends from the org's EOA wallet,
-  // which would change msg.sender away from the Safe.
+  // shouldTrySponsorship holds every reason the route can be declined.
   if (
-    !usePrivateMempool &&
-    signerMode.kind === SIGNER_MODE.EOA &&
-    isGasSponsorshipEnabled()
+    shouldTrySponsorship({
+      chainId,
+      signerMode,
+      sponsorGas,
+      usePrivateMempool,
+    })
   ) {
     try {
       const sponsoredResult = await executeSponsoredContractTransaction({
@@ -605,6 +617,7 @@ export async function writeContractCore(
           error: decision.error,
           errorClass: decision.errorClass,
           sponsored: true,
+          broadcastAttempted: decision.broadcastAttempted,
           ...(decision.transactionHash
             ? {
                 transactionHash: decision.transactionHash,
@@ -656,6 +669,7 @@ export async function writeContractCore(
       // Non-critical -- error formatting will fall back to generic messages
     }
 
+    let receivedTransactionHash: string | undefined;
     try {
       let receipt: Awaited<ReturnType<typeof adapter.executeContractCall>>;
       if (signerMode.kind === SIGNER_MODE.SAFE_ROLE) {
@@ -721,6 +735,7 @@ export async function writeContractCore(
         );
       }
 
+      receivedTransactionHash = receipt.hash;
       const gasUsedUnits = receipt.gasUsed.toString();
       const effectiveGasPrice = receipt.effectiveGasPrice.toString();
       const gasCostWei = (receipt.gasUsed * receipt.effectiveGasPrice).toString();
@@ -754,8 +769,14 @@ export async function writeContractCore(
           chain_id: String(chainId),
         }
       );
+      // Deliberately classify only against the contract's declared interface.
+      // `errorAbis` is caller-supplied and is used only for human-readable error
+      // formatting below; feeding it into classifyRevert could turn an arbitrary
+      // post-broadcast error into `rejection`, stamp broadcastAttempted=false, and
+      // make a live transaction look safe to retry.
       const rejection = classifyRevert(error, contractInterface);
-      const broadcastHash = broadcastTransactionHash(error);
+      const broadcastHash =
+        broadcastTransactionHash(error) ?? receivedTransactionHash;
       let broadcastTransactionLink: string | undefined;
       if (broadcastHash) {
         try {
@@ -773,8 +794,17 @@ export async function writeContractCore(
         (isOnChainPendingError(error) ? ExecutionErrorType.SYSTEM : undefined);
       return {
         success: false,
-        error: formatContractError(error, contractInterface),
+        error: formatContractError(
+          error,
+          buildErrorDecodeInterface(contractInterface, errorAbis)
+        ),
         ...(errorClass ? { errorClass } : {}),
+        broadcastAttempted: broadcastHash
+          ? true
+          : rejection.kind !== "unknown" ||
+              isPreBroadcastNetworkError(error)
+            ? false
+            : true,
         ...(rejection.kind !== "unknown" ? { rejection } : {}),
         ...(broadcastHash
           ? {
@@ -788,4 +818,20 @@ export async function writeContractCore(
       };
     }
   });
+}
+
+/**
+ * Explicitly marks every hashless early return as pre-broadcast evidence. This
+ * intentionally overrides the disposition layer's fail-closed missing-evidence
+ * default, so every future return after a send begins must set a hash or
+ * broadcastAttempted itself rather than falling through this wrapper.
+ */
+export async function writeContractCore(
+  input: WriteContractCoreInput
+): Promise<WriteContractResult> {
+  const result = await writeContractCoreImpl(input);
+  if (result.success || result.broadcastAttempted !== undefined) {
+    return result;
+  }
+  return { ...result, broadcastAttempted: false };
 }

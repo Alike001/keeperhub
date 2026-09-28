@@ -27,7 +27,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { TemplateCodeEditor } from "@/components/ui/template-code-editor";
+import { TemplateCodeEditor } from "@/components/workflow/config/template-code-editor";
 import { actionRequiresCredentials } from "@/lib/integration-helpers";
 import { parseSchemaFields } from "@/lib/schema-fields";
 import { ConditionQueryBuilder } from "@/components/workflow/condition-query-builder";
@@ -52,6 +52,7 @@ import {
   integrationsAtom,
   integrationsVersionAtom,
 } from "@/lib/integrations-store";
+import { SYSTEM_ACTION_INTEGRATIONS } from "@/lib/integrations/system";
 import type { IntegrationType } from "@/lib/types/integration";
 import {
   ARRAY_SOURCE_RE,
@@ -747,11 +748,6 @@ const SYSTEM_ACTIONS: Array<{ id: string; label: string }> = [
 
 const SYSTEM_ACTION_IDS = SYSTEM_ACTIONS.map((a) => a.id);
 
-// System actions that need integrations (not in plugin registry)
-const SYSTEM_ACTION_INTEGRATIONS: Record<string, IntegrationType> = {
-  "Database Query": "database",
-};
-
 // Build category mapping dynamically from plugins + System
 function useCategoryData() {
   const nodes = useAtomValue(nodesAtom);
@@ -991,9 +987,21 @@ export function ActionConfig({
     <>
       <div className="grid grid-cols-2 gap-2">
         <div className="space-y-2">
-          <Label className="ml-1" htmlFor="actionCategory">
-            Service
-          </Label>
+          <div className="flex items-center justify-between gap-2">
+            <Label className="ml-1" htmlFor="actionCategory">
+              Service
+            </Label>
+            {pluginAction?.docUrl && (
+              <a
+                className="mr-1 inline-flex items-center text-muted-foreground text-xs hover:text-primary"
+                href={pluginAction.docUrl}
+                rel="noopener noreferrer"
+                target="_blank"
+              >
+                Docs &#x2197;
+              </a>
+            )}
+          </div>
           <Select
             disabled={disabled}
             onValueChange={handleCategoryChange}
@@ -1062,16 +1070,6 @@ export function ActionConfig({
                 })}
             </SelectContent>
           </Select>
-          {pluginAction?.docUrl && (
-            <a
-              className="ml-1 inline-flex items-center text-muted-foreground text-xs hover:text-primary"
-              href={pluginAction.docUrl}
-              rel="noopener noreferrer"
-              target="_blank"
-            >
-              Docs &#x2197;
-            </a>
-          )}
         </div>
       </div>
 
