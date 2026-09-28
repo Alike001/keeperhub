@@ -59,7 +59,7 @@ const getChainConfigValue = <T>(
   defaultValue: T
 ): T => getConfigValue(rpcConfig, jsonKey, field, defaultValue);
 
-const DEFAULT_CHAINS: NewChain[] = [
+export const DEFAULT_CHAINS: NewChain[] = [
   {
     chainId: getChainConfigValue("eth-mainnet", "chainId", 1),
     name: "Ethereum Mainnet",
@@ -512,6 +512,55 @@ const DEFAULT_CHAINS: NewChain[] = [
     isEnabled: getChainConfigValue("avax-fuji", "isEnabled", true),
     usePrivateMempoolRpc: getUsePrivateMempoolRpc({ rpcConfig, jsonKey: "avax-fuji" }),
     defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "avax-fuji" }),
+  },
+  // Somnia chains
+  {
+    chainId: getChainConfigValue("somnia-mainnet", "chainId", 5031),
+    name: "Somnia",
+    symbol: getChainConfigValue("somnia-mainnet", "symbol", "SOMI"),
+    chainType: "evm",
+    defaultPrimaryRpc: getRpcUrlByChainId(5031, "primary"),
+    defaultFallbackRpc: getRpcUrlByChainId(5031, "fallback"),
+    defaultPrimaryWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[5031].jsonKey,
+      type: "primary",
+    }),
+    defaultFallbackWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[5031].jsonKey,
+      type: "fallback",
+    }),
+    isTestnet: getChainConfigValue("somnia-mainnet", "isTestnet", false),
+    isEnabled: getChainConfigValue("somnia-mainnet", "isEnabled", true),
+    status: "experimental",
+    usePrivateMempoolRpc: getUsePrivateMempoolRpc({ rpcConfig, jsonKey: "somnia-mainnet" }),
+    defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "somnia-mainnet" }),
+    aliases: ["somnia"],
+  },
+  {
+    chainId: getChainConfigValue("somnia-shannon", "chainId", 50_312),
+    name: "Somnia Shannon",
+    symbol: getChainConfigValue("somnia-shannon", "symbol", "STT"),
+    chainType: "evm",
+    defaultPrimaryRpc: getRpcUrlByChainId(50_312, "primary"),
+    defaultFallbackRpc: getRpcUrlByChainId(50_312, "fallback"),
+    defaultPrimaryWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[50_312].jsonKey,
+      type: "primary",
+    }),
+    defaultFallbackWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[50_312].jsonKey,
+      type: "fallback",
+    }),
+    isTestnet: getChainConfigValue("somnia-shannon", "isTestnet", true),
+    isEnabled: getChainConfigValue("somnia-shannon", "isEnabled", true),
+    status: "experimental",
+    usePrivateMempoolRpc: getUsePrivateMempoolRpc({ rpcConfig, jsonKey: "somnia-shannon" }),
+    defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "somnia-shannon" }),
+    aliases: [],
   },
   // Plasma chains
   {
@@ -995,6 +1044,27 @@ const EXPLORER_CONFIG_TEMPLATES: Record<
     explorerAddressPath: "/address/{address}",
     explorerContractPath: "/address/{address}#code",
   },
+  // Somnia Mainnet - Blockscout. The trailing slash matters: bare /api
+  // answers with a 301 to http://.
+  5031: {
+    chainType: "evm",
+    explorerUrl: "https://explorer.somnia.network",
+    explorerApiType: "blockscout",
+    explorerApiUrl: "https://explorer.somnia.network/api/",
+    explorerTxPath: "/tx/{hash}",
+    explorerAddressPath: "/address/{address}",
+    explorerContractPath: "/address/{address}?tab=contract",
+  },
+  // Somnia Shannon Testnet - Blockscout
+  50312: {
+    chainType: "evm",
+    explorerUrl: "https://shannon-explorer.somnia.network",
+    explorerApiType: "blockscout",
+    explorerApiUrl: "https://shannon-explorer.somnia.network/api",
+    explorerTxPath: "/tx/{hash}",
+    explorerAddressPath: "/address/{address}",
+    explorerContractPath: "/address/{address}?tab=contract",
+  },
   // Plasma Mainnet - Etherscan V2 (Plasmascan)
   9745: {
     chainType: "evm",
@@ -1213,6 +1283,8 @@ async function seedChains() {
     "Optimism Sepolia": 11_155_420,
     Avalanche: 43_114,
     "Avalanche Fuji": 43_113,
+    Somnia: 5031,
+    "Somnia Shannon": 50_312,
     Plasma: 9745,
     "Plasma Testnet": 9746,
     "0G": 16_661,
