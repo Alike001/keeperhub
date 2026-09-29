@@ -73,13 +73,15 @@ describe("resolveExpectedVersion", () => {
     expect(resolveExpectedVersion("")).toEqual({});
   });
 
-  it("accepts positive integers as numbers or strings", () => {
+  it("accepts non-negative integers as numbers or strings", () => {
     expect(resolveExpectedVersion(7)).toEqual({ version: 7 });
     expect(resolveExpectedVersion("7")).toEqual({ version: 7 });
+    // 0 is State Get's version for a missing key: "must not exist".
+    expect(resolveExpectedVersion(0)).toEqual({ version: 0 });
+    expect(resolveExpectedVersion("0")).toEqual({ version: 0 });
   });
 
-  it("rejects zero, negatives, and non-integers", () => {
-    expect(resolveExpectedVersion(0)).toHaveProperty("error");
+  it("rejects negatives and non-integers", () => {
     expect(resolveExpectedVersion(-1)).toHaveProperty("error");
     expect(resolveExpectedVersion(1.5)).toHaveProperty("error");
     expect(resolveExpectedVersion("abc")).toHaveProperty("error");

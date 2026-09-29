@@ -23,7 +23,7 @@ export type StateGetInput = StepInput & {
 
 type StateGetResult =
   | { success: true; exists: true; value: unknown; version: number }
-  | { success: true; exists: false; value: null; version: null }
+  | { success: true; exists: false; value: null; version: 0 }
   | { success: false; error: string };
 
 /**
@@ -55,9 +55,10 @@ async function runGet(input: StateGetInput): Promise<StateGetResult> {
     return { success: false, error: result.error };
   }
   if (!result.exists) {
-    // version is present (as null) on a miss so a downstream
-    // {{@...:State Get.version}} reference resolves instead of aborting the run.
-    return { success: true, exists: false, value: null, version: null };
+    // version 0 on a miss: a downstream {{@...:State Get.version}} reference
+    // resolves, and fed to State Set's expectedVersion it means "only write if
+    // the key still does not exist", so the first write is protected too.
+    return { success: true, exists: false, value: null, version: 0 };
   }
   return {
     success: true,

@@ -79,12 +79,12 @@ describe("stateGetStep", () => {
     });
   });
 
-  it("passes through a missing key as exists=false with a null version", async () => {
+  it("passes through a missing key as exists=false with version 0", async () => {
     mockGet.mockResolvedValue({
       success: true,
       exists: false,
       value: null,
-      version: null,
+      version: 0,
     });
 
     const result = await stateGetStep({
@@ -93,12 +93,12 @@ describe("stateGetStep", () => {
     });
 
     // version must be present so a downstream State Get.version reference
-    // resolves on the first run, before the key exists.
+    // resolves on the first run, and 0 keeps the first write a CAS.
     expect(result).toEqual({
       success: true,
       exists: false,
       value: null,
-      version: null,
+      version: 0,
     });
   });
 
@@ -279,14 +279,14 @@ describe("stateSetStep", () => {
     const result = await stateSetStep({
       key: "k",
       value: 1,
-      expectedVersion: 0,
+      expectedVersion: -1,
       _context: context(),
     });
 
     expect(mockSet).not.toHaveBeenCalled();
     expect(result).toEqual({
       success: false,
-      error: "expectedVersion must be a positive integer",
+      error: "expectedVersion must be a non-negative integer",
     });
   });
 });

@@ -65,6 +65,28 @@ describe.skipIf(SKIP)("workflow state store", () => {
       );
   }
 
+  /**
+   * Run `fn` with every insert into workflow_state held for 200ms before it
+   * lands, so concurrent writers overlap deterministically instead of
+   * finishing one after another.
+   */
+  async function withSlowInserts<T>(fn: () => Promise<T>): Promise<T> {
+    await queryClient.unsafe(`
+      CREATE OR REPLACE FUNCTION ${PREFIX}slow_insert() RETURNS trigger AS $$
+      BEGIN PERFORM pg_sleep(0.2); RETURN NEW; END $$ LANGUAGE plpgsql;
+      CREATE TRIGGER ${PREFIX}slow_insert BEFORE INSERT ON workflow_state
+        FOR EACH ROW EXECUTE FUNCTION ${PREFIX}slow_insert();
+    `);
+    try {
+      return await fn();
+    } finally {
+      await queryClient.unsafe(`
+        DROP TRIGGER IF EXISTS ${PREFIX}slow_insert ON workflow_state;
+        DROP FUNCTION IF EXISTS ${PREFIX}slow_insert();
+      `);
+    }
+  }
+
   beforeAll(async () => {
     queryClient = postgres(DATABASE_URL, { max: 20 });
     db = drizzle(queryClient);
@@ -108,14 +130,14 @@ describe.skipIf(SKIP)("workflow state store", () => {
     await queryClient.end();
   });
 
-  it("reports a missing key with a null version", async () => {
+  it("reports a missing key with version 0", async () => {
     const result = await getWorkflowStateValue(scope, "missing", db);
 
     expect(result).toEqual({
       success: true,
       exists: false,
       value: null,
-      version: null,
+      version: 0,
     });
   });
 
@@ -165,6 +187,56 @@ describe.skipIf(SKIP)("workflow state store", () => {
       value: 2,
       version: 2,
     });
+  });
+
+  it("writes with expectedVersion 0 only while the key does not exist", async () => {
+    const first = await setWorkflowStateValue(
+      scope,
+      "cursor",
+      { value: 1, expectedVersion: 0 },
+      db
+    );
+    const second = await setWorkflowStateValue(
+      scope,
+      "cursor",
+      { value: 2, expectedVersion: 0 },
+      db
+    );
+
+    expect(first).toEqual({ success: true, created: true, version: 1 });
+    expect(second).toMatchObject({ success: false, reason: "conflict" });
+
+    // An expired key counts as missing and keeps counting its version.
+    await expireKey("cursor");
+    const revived = await setWorkflowStateValue(
+      scope,
+      "cursor",
+      { value: 3, expectedVersion: 0 },
+      db
+    );
+    expect(revived).toEqual({ success: true, created: true, version: 2 });
+  });
+
+  it("lets exactly one of two concurrent first writers win", async () => {
+    // Without the lock both writers see no row before either insert lands,
+    // and the conflict arm turns the second insert into a silent overwrite.
+    const results = await withSlowInserts(() =>
+      Promise.all(
+        [1, 2].map((value) =>
+          setWorkflowStateValue(
+            scope,
+            "cursor",
+            { value, expectedVersion: 0 },
+            db
+          )
+        )
+      )
+    );
+
+    expect(results.filter((r) => r.success)).toHaveLength(1);
+    expect(
+      results.filter((r) => !r.success && r.reason === "conflict")
+    ).toHaveLength(1);
   });
 
   it("reports replacing an expired key as a create", async () => {
@@ -267,30 +339,17 @@ describe.skipIf(SKIP)("workflow state store", () => {
       }))
     );
 
-    // Each insert sleeps before it lands, so every writer's count runs while
-    // the others' inserts are still uncommitted. Without the per-workflow
-    // lock all of them read 99 and the workflow ends well past the ceiling.
-    await queryClient.unsafe(`
-      CREATE OR REPLACE FUNCTION ${PREFIX}slow_insert() RETURNS trigger AS $$
-      BEGIN PERFORM pg_sleep(0.2); RETURN NEW; END $$ LANGUAGE plpgsql;
-      CREATE TRIGGER ${PREFIX}slow_insert BEFORE INSERT ON workflow_state
-        FOR EACH ROW EXECUTE FUNCTION ${PREFIX}slow_insert();
-    `);
-
+    // Without the per-workflow lock every writer's count runs while the
+    // others' inserts are still uncommitted, all of them read 99, and the
+    // workflow ends well past the ceiling.
     const writers = 10;
-    let results: Awaited<ReturnType<typeof setWorkflowStateValue>>[];
-    try {
-      results = await Promise.all(
+    const results = await withSlowInserts(() =>
+      Promise.all(
         Array.from({ length: writers }, (_, i) =>
           setWorkflowStateValue(scope, `new-${i}`, { value: i }, db)
         )
-      );
-    } finally {
-      await queryClient.unsafe(`
-        DROP TRIGGER IF EXISTS ${PREFIX}slow_insert ON workflow_state;
-        DROP FUNCTION IF EXISTS ${PREFIX}slow_insert();
-      `);
-    }
+      )
+    );
 
     const [row] = await db
       .select({ count: sql<number>`count(*)::int` })

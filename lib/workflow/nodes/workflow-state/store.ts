@@ -61,7 +61,7 @@ export type WorkflowStateFailureReason =
 
 export type WorkflowStateGetResult =
   | { success: true; exists: true; value: unknown; version: number }
-  | { success: true; exists: false; value: null; version: null }
+  | { success: true; exists: false; value: null; version: 0 }
   | { success: false; error: string; reason: WorkflowStateFailureReason };
 
 export type WorkflowStateSetResult =
@@ -121,7 +121,9 @@ export function resolveTtlSeconds(
 
 /**
  * Resolve the `expectedVersion` compare-and-set value. Accepts numbers and
- * numeric strings; must be a positive integer. undefined means "no CAS".
+ * numeric strings; must be a non-negative integer. 0 means "the key must not
+ * exist", matching the version State Get reports for a missing key.
+ * undefined means "no CAS".
  */
 export function resolveExpectedVersion(
   expectedVersion: unknown
@@ -137,8 +139,8 @@ export function resolveExpectedVersion(
     typeof expectedVersion === "number"
       ? expectedVersion
       : Number(expectedVersion);
-  if (!Number.isInteger(parsed) || parsed < 1) {
-    return { error: "expectedVersion must be a positive integer" };
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    return { error: "expectedVersion must be a non-negative integer" };
   }
   return { version: parsed };
 }
@@ -239,11 +241,11 @@ export async function getWorkflowStateValue(
       .limit(1);
 
     if (!row) {
-      return { success: true, exists: false, value: null, version: null };
+      return { success: true, exists: false, value: null, version: 0 };
     }
 
     if (row.expiresAt && row.expiresAt.getTime() <= Date.now()) {
-      return { success: true, exists: false, value: null, version: null };
+      return { success: true, exists: false, value: null, version: 0 };
     }
 
     return {
@@ -261,11 +263,25 @@ export async function getWorkflowStateValue(
 }
 
 /**
- * Gate a write that is about to make `key` live. Takes a per-workflow lock
- * held until the transaction commits, so the count and the write that follows
- * are atomic together: without it, two writers at 99 keys both read 99 and
- * the workflow ends at 101. Counts live keys other than `key`, so a concurrent
- * write that made the same key live first is not mistaken for growth.
+ * Serialize every write that can make a key live in this workflow. The lock is
+ * held until the transaction commits and is re-entrant, so a caller may take
+ * it before its own checks and again through checkKeyCeiling.
+ */
+async function lockWorkflowState(
+  tx: Executor,
+  scope: WorkflowStateScope
+): Promise<void> {
+  await tx.execute(
+    sql`SELECT pg_advisory_xact_lock(hashtext(${scope.organizationId} || ':' || ${scope.workflowId}))`
+  );
+}
+
+/**
+ * Gate a write that is about to make `key` live. Takes the per-workflow lock,
+ * so the count and the write that follows are atomic together: without it,
+ * two writers at 99 keys both read 99 and the workflow ends at 101. Counts
+ * live keys other than `key`, so a concurrent write that made the same key
+ * live first is not mistaken for growth.
  */
 async function checkKeyCeiling(
   tx: Executor,
@@ -277,9 +293,7 @@ async function checkKeyCeiling(
   error: string;
   reason: WorkflowStateFailureReason;
 } | null> {
-  await tx.execute(
-    sql`SELECT pg_advisory_xact_lock(hashtext(${scope.organizationId} || ':' || ${scope.workflowId}))`
-  );
+  await lockWorkflowState(tx, scope);
   const [countRow] = await tx
     .select({ count: sql<number>`count(*)::int` })
     .from(workflowState)
@@ -303,6 +317,8 @@ async function checkKeyCeiling(
  * compare-and-set: the write applies only if the key's current version still
  * matches what the caller read; on mismatch (or a missing/expired key) the
  * call fails with a structured conflict error instead of losing the race.
+ * `expectedVersion: 0` writes only if the key does not exist (or has
+ * expired), so the first write of a read-modify-write is protected too.
  *
  * The key-count ceiling gates every write that makes a key live - a new key
  * or an expired one being revived. Overwriting a live key never grows the
@@ -344,6 +360,63 @@ export async function setWorkflowStateValue(
 
   try {
     return await executor.transaction(async (tx: Executor) => {
+      if (options.expectedVersion === 0) {
+        // Every write that makes a key live holds this lock, so once it is
+        // held no other writer can create the key before the insert below.
+        await lockWorkflowState(tx, scope);
+        const [current] = await tx
+          .select({
+            version: workflowState.version,
+            expiresAt: workflowState.expiresAt,
+          })
+          .from(workflowState)
+          .where(and(scopeFilter(scope), eq(workflowState.key, validated.key)))
+          .limit(1);
+
+        if (
+          current &&
+          !(current.expiresAt && current.expiresAt.getTime() <= now.getTime())
+        ) {
+          return failure(
+            `Compare-and-set failed: key "${validated.key}" already exists (expected version 0, current ${current.version}); the next run re-reads it with State Get`,
+            "conflict"
+          );
+        }
+
+        const overCeiling = await checkKeyCeiling(
+          tx,
+          scope,
+          validated.key,
+          now
+        );
+        if (overCeiling) {
+          return overCeiling;
+        }
+
+        // An expired row is overwritten in place, continuing its version.
+        const inserted = await tx
+          .insert(workflowState)
+          .values({
+            organizationId: scope.organizationId,
+            workflowId: scope.workflowId,
+            key: validated.key,
+            value: options.value,
+            version: 1,
+            expiresAt,
+            updatedByExecutionId: options.executionId ?? null,
+          })
+          .onConflictDoUpdate({
+            target: [
+              workflowState.organizationId,
+              workflowState.workflowId,
+              workflowState.key,
+            ],
+            set: writeSet,
+          })
+          .returning({ version: workflowState.version });
+        return { success: true, created: true, version: inserted[0].version };
+      }
+
       if (options.expectedVersion !== undefined) {
         const updated = await tx
           .update(workflowState)

@@ -228,7 +228,7 @@ export function getActionFields(node: WorkflowNode): FieldEntry[] | null {
     return [
       { field: "exists", description: "Whether the key has a live value" },
       { field: "value", description: "Stored value (null when missing)" },
-      { field: "version", description: "Key version (null when missing)" },
+      { field: "version", description: "Key version (0 when missing)" },
     ];
   }
 

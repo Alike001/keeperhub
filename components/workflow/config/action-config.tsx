@@ -709,8 +709,9 @@ function StateGetFields({
         Reads this workflow&apos;s own persistent state - it survives between
         runs and no other workflow can see it. Use @ to build the key from
         previous node values. The step outputs exists, value, and version
-        (version is empty when the key does not exist; feed it into State
-        Set&apos;s expectedVersion for a safe read-modify-write).
+        (version is 0 when the key does not exist; feed it into State
+        Set&apos;s expectedVersion for a safe read-modify-write, including the
+        first write).
       </p>
     </div>
   );
