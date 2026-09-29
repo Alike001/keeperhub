@@ -45,6 +45,7 @@ import {
 } from "@/lib/workflow/nodes/condition/builder-utils";
 import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
 import { validateConditionExpressionUI } from "@/lib/workflow/nodes/condition/validator";
+import { stateValueToEditorText } from "@/lib/workflow/nodes/workflow-state/utils";
 import { useFeatures } from "@/hooks/use-features";
 import type { FeatureDefinition } from "@/lib/features";
 import { resolveActionFeature } from "@/lib/features";
@@ -755,7 +756,7 @@ function StateSetFields({
           height="100px"
           language="json"
           onChange={(v) => onUpdateConfig("value", v)}
-          value={(config?.value as string) || ""}
+          value={stateValueToEditorText(config?.value)}
         />
         <p className="text-muted-foreground text-xs">
           JSON objects and arrays are stored parsed, true/false as booleans,
