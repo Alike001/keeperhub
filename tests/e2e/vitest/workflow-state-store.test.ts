@@ -224,6 +224,38 @@ describe.skipIf(SKIP)("workflow state store", () => {
     expect(stale).toMatchObject({ success: false, reason: "conflict" });
   });
 
+  it("counts reviving an expired key against the ceiling", async () => {
+    const max = WORKFLOW_STATE_LIMITS.MAX_KEYS_PER_WORKFLOW;
+    await db.insert(workflowState).values(
+      Array.from({ length: max }, (_, i) => ({
+        organizationId: orgId,
+        workflowId,
+        key: `seed-${i}`,
+        value: i,
+      }))
+    );
+    await expireKey("seed-0");
+
+    // The expired key freed a slot, and a new key takes it.
+    const fresh = await setWorkflowStateValue(scope, "fresh", { value: 1 }, db);
+    const revived = await setWorkflowStateValue(
+      scope,
+      "seed-0",
+      { value: 2 },
+      db
+    );
+    const overwrite = await setWorkflowStateValue(
+      scope,
+      "fresh",
+      { value: 3 },
+      db
+    );
+
+    expect(fresh).toMatchObject({ success: true, created: true });
+    expect(revived).toMatchObject({ success: false, reason: "limit" });
+    expect(overwrite).toMatchObject({ success: true, created: false });
+  });
+
   it("holds the key ceiling under concurrent new-key writers", async () => {
     const max = WORKFLOW_STATE_LIMITS.MAX_KEYS_PER_WORKFLOW;
     await db.insert(workflowState).values(

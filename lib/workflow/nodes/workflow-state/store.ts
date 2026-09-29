@@ -30,7 +30,7 @@
  */
 import "server-only";
 
-import { and, eq, gt, isNull, or, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, ne, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workflowState } from "@/lib/db/schema";
 
@@ -261,6 +261,42 @@ export async function getWorkflowStateValue(
 }
 
 /**
+ * Gate a write that is about to make `key` live. Takes a per-workflow lock
+ * held until the transaction commits, so the count and the write that follows
+ * are atomic together: without it, two writers at 99 keys both read 99 and
+ * the workflow ends at 101. Counts live keys other than `key`, so a concurrent
+ * write that made the same key live first is not mistaken for growth.
+ */
+async function checkKeyCeiling(
+  tx: Executor,
+  scope: WorkflowStateScope,
+  key: string,
+  now: Date
+): Promise<{
+  success: false;
+  error: string;
+  reason: WorkflowStateFailureReason;
+} | null> {
+  await tx.execute(
+    sql`SELECT pg_advisory_xact_lock(hashtext(${scope.organizationId} || ':' || ${scope.workflowId}))`
+  );
+  const [countRow] = await tx
+    .select({ count: sql<number>`count(*)::int` })
+    .from(workflowState)
+    .where(
+      and(scopeFilter(scope), liveFilter(now), ne(workflowState.key, key))
+    );
+
+  if ((countRow?.count ?? 0) >= WORKFLOW_STATE_LIMITS.MAX_KEYS_PER_WORKFLOW) {
+    return failure(
+      `Workflow state is limited to ${WORKFLOW_STATE_LIMITS.MAX_KEYS_PER_WORKFLOW} keys per workflow; reuse an existing key or let other keys expire`,
+      "limit"
+    );
+  }
+  return null;
+}
+
+/**
  * Write one key to a workflow's own state.
  *
  * Plain mode is an atomic upsert. With `expectedVersion` it becomes a
@@ -268,9 +304,9 @@ export async function getWorkflowStateValue(
  * matches what the caller read; on mismatch (or a missing/expired key) the
  * call fails with a structured conflict error instead of losing the race.
  *
- * The key-count ceiling only gates writes that create a new row - overwriting
- * an existing key (live or expired) never grows the store, so it is never
- * blocked.
+ * The key-count ceiling gates every write that makes a key live - a new key
+ * or an expired one being revived. Overwriting a live key never grows the
+ * store, so it is never blocked.
  */
 export async function setWorkflowStateValue(
   scope: WorkflowStateScope,
@@ -370,36 +406,16 @@ export async function setWorkflowStateValue(
       }
 
       // The key has no row at all, or its row is expired (invisible to the
-      // update). An expired row is about to be overwritten, so it does not
-      // count against the ceiling; only a genuinely new key can grow the
-      // store, and that is the path the limit gates.
+      // update). Either way this write makes the key live, so it is gated.
       const [existing] = await tx
         .select({ expiresAt: workflowState.expiresAt })
         .from(workflowState)
         .where(and(scopeFilter(scope), eq(workflowState.key, validated.key)))
         .limit(1);
 
-      if (!existing) {
-        // Serialize new-key inserts per workflow so the count below and the
-        // insert are atomic together: without it, two writers at 99 keys both
-        // read 99 and the workflow ends at 101. The lock is held until the
-        // transaction commits, and only this path takes it.
-        await tx.execute(
-          sql`SELECT pg_advisory_xact_lock(hashtext(${scope.organizationId} || ':' || ${scope.workflowId}))`
-        );
-        const [countRow] = await tx
-          .select({ count: sql<number>`count(*)::int` })
-          .from(workflowState)
-          .where(and(scopeFilter(scope), liveFilter(now)));
-
-        if (
-          (countRow?.count ?? 0) >= WORKFLOW_STATE_LIMITS.MAX_KEYS_PER_WORKFLOW
-        ) {
-          return failure(
-            `Workflow state is limited to ${WORKFLOW_STATE_LIMITS.MAX_KEYS_PER_WORKFLOW} keys per workflow; reuse an existing key or let expired keys be evicted`,
-            "limit"
-          );
-        }
+      const overCeiling = await checkKeyCeiling(tx, scope, validated.key, now);
+      if (overCeiling) {
+        return overCeiling;
       }
 
       const inserted = await tx
