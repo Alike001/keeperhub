@@ -68,7 +68,7 @@ describe("stateGetStep", () => {
     } as Parameters<typeof stateGetStep>[0]);
 
     expect(mockGet).toHaveBeenCalledWith(
-      { organizationId: "org_ctx", workflowId: "wf_ctx" },
+      { workflowId: "wf_ctx" },
       "lastScannedBlock"
     );
     expect(result).toEqual({
@@ -112,7 +112,7 @@ describe("stateGetStep", () => {
     expect(result).toEqual({
       success: false,
       error:
-        "State Get requires the workflow execution context (organization and workflow); it can only run inside a workflow",
+        "State Get requires the workflow execution context; it can only run inside a workflow",
     });
   });
 
@@ -127,10 +127,7 @@ describe("stateGetStep", () => {
 
     const result = await stateGetStep({ key: "  ", _context: context() });
 
-    expect(mockGet).toHaveBeenCalledWith(
-      { organizationId: "org_ctx", workflowId: "wf_ctx" },
-      "  "
-    );
+    expect(mockGet).toHaveBeenCalledWith({ workflowId: "wf_ctx" }, "  ");
     expect(result).toEqual({
       success: false,
       error: "State key must be a non-empty string",
@@ -162,7 +159,7 @@ describe("stateSetStep", () => {
     });
 
     expect(mockSet).toHaveBeenCalledWith(
-      { organizationId: "org_ctx", workflowId: "wf_ctx" },
+      { workflowId: "wf_ctx" },
       "lastScannedBlock",
       {
         value: 4219,
@@ -184,16 +181,12 @@ describe("stateSetStep", () => {
       _context: context({ executionId: "exec_1" }),
     });
 
-    expect(mockSet).toHaveBeenCalledWith(
-      { organizationId: "org_ctx", workflowId: "wf_ctx" },
-      "cursor",
-      {
-        value: 10,
-        ttlSeconds: null,
-        expectedVersion: 3,
-        executionId: "exec_1",
-      }
-    );
+    expect(mockSet).toHaveBeenCalledWith({ workflowId: "wf_ctx" }, "cursor", {
+      value: 10,
+      ttlSeconds: null,
+      expectedVersion: 3,
+      executionId: "exec_1",
+    });
   });
 
   it("surfaces a compare-and-set conflict as a step error", async () => {
@@ -222,14 +215,14 @@ describe("stateSetStep", () => {
     const result = await stateSetStep({
       key: "k",
       value: 1,
-      _context: context({ organizationId: undefined }),
+      _context: context({ workflowId: undefined }),
     });
 
     expect(mockSet).not.toHaveBeenCalled();
     expect(result).toEqual({
       success: false,
       error:
-        "State Set requires the workflow execution context (organization and workflow); it can only run inside a workflow",
+        "State Set requires the workflow execution context; it can only run inside a workflow",
     });
   });
 
@@ -254,7 +247,7 @@ describe("stateSetStep", () => {
     await stateSetStep({ key: "k", value: "4219", _context: context() });
 
     expect(mockSet).toHaveBeenCalledWith(
-      { organizationId: "org_ctx", workflowId: "wf_ctx" },
+      { workflowId: "wf_ctx" },
       "k",
       expect.objectContaining({ value: 4219 })
     );

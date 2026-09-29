@@ -10,11 +10,11 @@
  * commands), and a lost cursor is exactly the visible-failure case this store
  * exists to prevent.
  *
- * Isolation is structural: every operation scopes by (organizationId,
- * workflowId), and the step callers take both ids from the execution context,
- * never from node config - the same rule the circuit-breaker steps apply.
- * No API surface takes a workflow id, so one workflow cannot address another
- * workflow's keys and organizations cannot see each other.
+ * Isolation is structural: every operation scopes by workflowId, which the
+ * step callers take from the execution context, never from node config - the
+ * same rule the circuit-breaker steps apply. No API surface takes a workflow
+ * id, so one workflow cannot address another workflow's keys, and a workflow
+ * belongs to exactly one org.
  *
  * Concurrency: every write is a single atomic statement. For the
  * read-modify-write case (cursor += n), get returns `version` and set accepts
@@ -49,7 +49,6 @@ export const WORKFLOW_STATE_LIMITS = {
 } as const;
 
 export type WorkflowStateScope = {
-  organizationId: string;
   workflowId: string;
 };
 
@@ -203,10 +202,7 @@ export function serializedValueSize(
 }
 
 function scopeFilter(scope: WorkflowStateScope) {
-  return and(
-    eq(workflowState.organizationId, scope.organizationId),
-    eq(workflowState.workflowId, scope.workflowId)
-  );
+  return eq(workflowState.workflowId, scope.workflowId);
 }
 
 /** Only rows that have not expired. Expired rows are invisible to reads. */
@@ -272,7 +268,7 @@ async function lockWorkflowState(
   scope: WorkflowStateScope
 ): Promise<void> {
   await tx.execute(
-    sql`SELECT pg_advisory_xact_lock(hashtext(${scope.organizationId} || ':' || ${scope.workflowId}))`
+    sql`SELECT pg_advisory_xact_lock(hashtext(${scope.workflowId}))`
   );
 }
 
@@ -397,7 +393,6 @@ export async function setWorkflowStateValue(
         const inserted = await tx
           .insert(workflowState)
           .values({
-            organizationId: scope.organizationId,
             workflowId: scope.workflowId,
             key: validated.key,
             value: options.value,
@@ -406,11 +401,7 @@ export async function setWorkflowStateValue(
             updatedByExecutionId: options.executionId ?? null,
           })
           .onConflictDoUpdate({
-            target: [
-              workflowState.organizationId,
-              workflowState.workflowId,
-              workflowState.key,
-            ],
+            target: [workflowState.workflowId, workflowState.key],
             set: writeSet,
           })
           .returning({ version: workflowState.version });
@@ -494,7 +485,6 @@ export async function setWorkflowStateValue(
       const inserted = await tx
         .insert(workflowState)
         .values({
-          organizationId: scope.organizationId,
           workflowId: scope.workflowId,
           key: validated.key,
           value: options.value,
@@ -503,11 +493,7 @@ export async function setWorkflowStateValue(
           updatedByExecutionId: options.executionId ?? null,
         })
         .onConflictDoUpdate({
-          target: [
-            workflowState.organizationId,
-            workflowState.workflowId,
-            workflowState.key,
-          ],
+          target: [workflowState.workflowId, workflowState.key],
           set: writeSet,
         })
         .returning({ version: workflowState.version });

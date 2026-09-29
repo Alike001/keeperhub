@@ -36,17 +36,16 @@ type StateSetResult =
   | { success: false; error: string };
 
 /**
- * Resolve the (org, workflow) scope from the execution context. Config values
- * named organizationId/workflowId are deliberately ignored: the step can only
- * ever write the state of the workflow it runs in.
+ * Resolve the workflow scope from the execution context. A config value named
+ * workflowId is deliberately ignored: the step can only ever write the state
+ * of the workflow it runs in.
  */
 function scopeFromContext(input: StateSetInput): WorkflowStateScope | null {
-  const organizationId = input._context?.organizationId;
   const workflowId = input._context?.workflowId;
-  if (!(organizationId && workflowId)) {
+  if (!workflowId) {
     return null;
   }
-  return { organizationId, workflowId };
+  return { workflowId };
 }
 
 async function runSet(input: StateSetInput): Promise<StateSetResult> {
@@ -55,7 +54,7 @@ async function runSet(input: StateSetInput): Promise<StateSetResult> {
     return {
       success: false,
       error:
-        "State Set requires the workflow execution context (organization and workflow); it can only run inside a workflow",
+        "State Set requires the workflow execution context; it can only run inside a workflow",
     };
   }
 

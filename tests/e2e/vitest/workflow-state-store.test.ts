@@ -45,7 +45,7 @@ describe.skipIf(SKIP)("workflow state store", () => {
   const ownerId = `${PREFIX}user`;
   const orgId = `${PREFIX}org`;
   const workflowId = `${PREFIX}wf`;
-  const scope = { organizationId: orgId, workflowId };
+  const scope = { workflowId };
 
   async function cleanup(): Promise<void> {
     await queryClient`DELETE FROM workflows WHERE id LIKE ${`${PREFIX}%`}`;
@@ -139,6 +139,36 @@ describe.skipIf(SKIP)("workflow state store", () => {
       value: null,
       version: 0,
     });
+  });
+
+  it("keeps a workflow's state when the workflow moves to another org", async () => {
+    // Account linking re-parents an anonymous user's workflows to the new
+    // owner's org; the cursor must survive that.
+    const otherOrgId = `${PREFIX}org_other`;
+    await db.insert(organization).values({
+      id: otherOrgId,
+      name: otherOrgId,
+      slug: otherOrgId,
+      createdAt: new Date(),
+    });
+    await setWorkflowStateValue(scope, "cursor", { value: 7 }, db);
+
+    try {
+      await db
+        .update(workflows)
+        .set({ organizationId: otherOrgId })
+        .where(eq(workflows.id, workflowId));
+
+      expect(await getWorkflowStateValue(scope, "cursor", db)).toMatchObject({
+        exists: true,
+        value: 7,
+      });
+    } finally {
+      await db
+        .update(workflows)
+        .set({ organizationId: orgId })
+        .where(eq(workflows.id, workflowId));
+    }
   });
 
   it("creates, then overwrites with a version bump", async () => {
@@ -300,7 +330,6 @@ describe.skipIf(SKIP)("workflow state store", () => {
     const max = WORKFLOW_STATE_LIMITS.MAX_KEYS_PER_WORKFLOW;
     await db.insert(workflowState).values(
       Array.from({ length: max }, (_, i) => ({
-        organizationId: orgId,
         workflowId,
         key: `seed-${i}`,
         value: i,
@@ -332,7 +361,6 @@ describe.skipIf(SKIP)("workflow state store", () => {
     const max = WORKFLOW_STATE_LIMITS.MAX_KEYS_PER_WORKFLOW;
     await db.insert(workflowState).values(
       Array.from({ length: max - 1 }, (_, i) => ({
-        organizationId: orgId,
         workflowId,
         key: `seed-${i}`,
         value: i,

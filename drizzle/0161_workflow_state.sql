@@ -1,6 +1,5 @@
 CREATE TABLE "workflow_state" (
 	"id" text PRIMARY KEY NOT NULL,
-	"organization_id" text NOT NULL,
 	"workflow_id" text NOT NULL,
 	"key" text NOT NULL,
 	"value" jsonb NOT NULL,
@@ -10,6 +9,5 @@ CREATE TABLE "workflow_state" (
 	"updated_by_execution_id" text
 );
 --> statement-breakpoint
-ALTER TABLE "workflow_state" ADD CONSTRAINT "workflow_state_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "workflow_state" ADD CONSTRAINT "workflow_state_workflow_id_workflows_id_fk" FOREIGN KEY ("workflow_id") REFERENCES "public"."workflows"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-CREATE UNIQUE INDEX "idx_workflow_state_scope_key" ON "workflow_state" USING btree ("organization_id","workflow_id","key");
+CREATE UNIQUE INDEX "idx_workflow_state_scope_key" ON "workflow_state" USING btree ("workflow_id","key");
