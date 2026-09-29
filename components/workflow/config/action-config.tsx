@@ -698,10 +698,10 @@ function StateGetFields({
   return (
     <div className="space-y-2">
       <Label htmlFor="stateKey">Key</Label>
-      <Input
+      <TemplateBadgeInput
         disabled={disabled}
         id="stateKey"
-        onChange={(e) => onUpdateConfig("key", e.target.value)}
+        onChange={(value) => onUpdateConfig("key", value)}
         placeholder="lastScannedBlock"
         value={(config?.key as string) || ""}
       />
@@ -709,8 +709,8 @@ function StateGetFields({
         Reads this workflow&apos;s own persistent state - it survives between
         runs and no other workflow can see it. Use @ to build the key from
         previous node values. The step outputs exists, value, and version
-        (feed version into State Set&apos;s expectedVersion for a safe
-        read-modify-write).
+        (version is empty when the key does not exist; feed it into State
+        Set&apos;s expectedVersion for a safe read-modify-write).
       </p>
     </div>
   );
@@ -730,10 +730,10 @@ function StateSetFields({
     <>
       <div className="space-y-2">
         <Label htmlFor="stateSetKey">Key</Label>
-        <Input
+        <TemplateBadgeInput
           disabled={disabled}
           id="stateSetKey"
-          onChange={(e) => onUpdateConfig("key", e.target.value)}
+          onChange={(value) => onUpdateConfig("key", value)}
           placeholder="lastScannedBlock"
           value={(config?.key as string) || ""}
         />
@@ -757,23 +757,19 @@ function StateSetFields({
           value={(config?.value as string) || ""}
         />
         <p className="text-muted-foreground text-xs">
-          Objects and arrays from @ references are stored as-is; a JSON object
-          or array pasted here is stored parsed. Max 8 KB per value, 100 keys
-          per workflow.
+          JSON objects and arrays are stored parsed, true/false as booleans,
+          and numbers as numbers (a number too long to keep exactly, such as
+          a wei amount, stays text). Anything else is stored as text.
+          Max 8 KB per value, 100 keys per workflow.
         </p>
       </div>
       <div className="space-y-2">
         <Label htmlFor="stateTtl">TTL (seconds, optional)</Label>
-        <Input
+        <TemplateBadgeInput
           disabled={disabled}
           id="stateTtl"
-          min={1}
-          onChange={(e) => {
-            const raw = e.target.value.replace(/[^0-9]/g, "");
-            onUpdateConfig("ttl", raw);
-          }}
+          onChange={(value) => onUpdateConfig("ttl", value)}
           placeholder="No expiry"
-          type="number"
           value={(config?.ttl as string) || ""}
         />
         <p className="text-muted-foreground text-xs">
@@ -786,23 +782,19 @@ function StateSetFields({
         <Label htmlFor="stateExpectedVersion">
           expectedVersion (optional, advanced)
         </Label>
-        <Input
+        <TemplateBadgeInput
           disabled={disabled}
           id="stateExpectedVersion"
-          min={1}
-          onChange={(e) => {
-            const raw = e.target.value.replace(/[^0-9]/g, "");
-            onUpdateConfig("expectedVersion", raw);
-          }}
+          onChange={(value) => onUpdateConfig("expectedVersion", value)}
           placeholder="No compare-and-set"
-          type="number"
           value={(config?.expectedVersion as string) || ""}
         />
         <p className="text-muted-foreground text-xs">
           Advanced: compare-and-set for cursor updates. Pass the version
           returned by State Get (as @ reference); the write only applies if
-          the key has not changed since. On mismatch the step fails instead of
-          silently overwriting - re-read and retry.
+          the key has not changed since. On mismatch the step fails the run
+          instead of silently overwriting, and the next run re-reads the
+          current value.
         </p>
       </div>
     </>

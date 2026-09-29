@@ -99,10 +99,31 @@ describe("coerceStateValue", () => {
     expect(coerceStateValue("[1, 2, 3]")).toEqual([1, 2, 3]);
   });
 
-  it("stores non-JSON strings unchanged, including plain text and JSON scalars", () => {
+  it("parses numeric and boolean strings, since the editor resolves every template to text", () => {
+    expect(coerceStateValue("4219")).toBe(4219);
+    expect(coerceStateValue(" 4219 ")).toBe(4219);
+    expect(coerceStateValue("-1.5")).toBe(-1.5);
+    expect(coerceStateValue("0")).toBe(0);
+    expect(coerceStateValue("true")).toBe(true);
+    expect(coerceStateValue("false")).toBe(false);
+  });
+
+  it("keeps numeric strings that would not round-trip exactly", () => {
+    // A wei amount past 2^53 would lose digits as a number.
+    expect(coerceStateValue("1000000000000000000001")).toBe(
+      "1000000000000000000001"
+    );
+    expect(coerceStateValue("007")).toBe("007");
+    expect(coerceStateValue("1.50")).toBe("1.50");
+    expect(coerceStateValue("1e3")).toBe("1e3");
+  });
+
+  it("stores other strings unchanged", () => {
     expect(coerceStateValue("0xabc123")).toBe("0xabc123");
     expect(coerceStateValue("{not json")).toBe("{not json");
-    expect(coerceStateValue("123")).toBe("123");
+    expect(coerceStateValue("TRUE")).toBe("TRUE");
+    expect(coerceStateValue("null")).toBe("null");
+    expect(coerceStateValue("")).toBe("");
   });
 });
 

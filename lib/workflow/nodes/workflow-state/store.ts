@@ -1,5 +1,5 @@
 /**
- * Workflow-scoped key-value state (KEEP-1036, #2288).
+ * Workflow-scoped key-value state (#2288).
  *
  * Durable per-workflow store for the values a workflow computes and needs on
  * its next run - the monitor cursor pattern ("last block I scanned", "the
@@ -22,8 +22,9 @@
  * error instead of silently losing the race.
  *
  * Eviction: expires_at is filtered on read and expired rows are deleted on
- * touch, so abandoned keys do not accumulate and no background job is needed
- * for correctness. Size/count limits are enforced here, not documented.
+ * touch. An expired key that is never touched again keeps its row, but it is
+ * invisible to reads and does not count against the key ceiling; there is no
+ * sweeper. Size/count limits are enforced here, not documented.
  */
 import "server-only";
 
@@ -58,7 +59,7 @@ export type WorkflowStateFailureReason =
 
 export type WorkflowStateGetResult =
   | { success: true; exists: true; value: unknown; version: number }
-  | { success: true; exists: false; value: null }
+  | { success: true; exists: false; value: null; version: null }
   | { success: false; error: string; reason: WorkflowStateFailureReason };
 
 export type WorkflowStateSetResult =
@@ -141,23 +142,36 @@ export function resolveExpectedVersion(
 }
 
 /**
- * Coerce an editor-supplied value into the stored JSON value. Objects, arrays,
- * numbers and booleans from template references to node outputs are stored
- * as-is. A string that is JSON object/array text (a literal pasted into the
- * editor, or a template that resolved to JSON text) is stored parsed; strings
- * that do not parse are stored as-is.
+ * Coerce an editor-supplied value into the stored JSON value. Non-string
+ * values (MCP callers) are stored as-is. The editor resolves every template
+ * to text, so a string is parsed back when it is unambiguous: JSON
+ * object/array text is stored parsed, "true"/"false" as booleans, and a
+ * numeric string as a number only when the number prints back as the same
+ * text - "4219" becomes 4219, while a wei amount past 2^53 or "007" stays a
+ * string rather than losing digits. Anything else is stored as-is.
  */
 export function coerceStateValue(value: unknown): unknown {
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-      try {
-        return JSON.parse(trimmed);
-      } catch {
-        return value;
-      }
-    }
+  if (typeof value !== "string") {
     return value;
+  }
+  const trimmed = value.trim();
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return value;
+    }
+  }
+  if (trimmed === "true" || trimmed === "false") {
+    return trimmed === "true";
+  }
+  const asNumber = Number(trimmed);
+  if (
+    trimmed !== "" &&
+    Number.isFinite(asNumber) &&
+    String(asNumber) === trimmed
+  ) {
+    return asNumber;
   }
   return value;
 }
@@ -222,14 +236,14 @@ export async function getWorkflowStateValue(
       .limit(1);
 
     if (!row) {
-      return { success: true, exists: false, value: null };
+      return { success: true, exists: false, value: null, version: null };
     }
 
     if (row.expiresAt && row.expiresAt.getTime() <= Date.now()) {
       await executor
         .delete(workflowState)
         .where(and(scopeFilter(scope), eq(workflowState.key, validated.key)));
-      return { success: true, exists: false, value: null };
+      return { success: true, exists: false, value: null, version: null };
     }
 
     return {
@@ -333,7 +347,7 @@ export async function setWorkflowStateValue(
           );
         }
         return failure(
-          `Compare-and-set failed: key "${validated.key}" changed since it was read (expected version ${options.expectedVersion}, current ${current.version}); re-read with State Get and retry`,
+          `Compare-and-set failed: key "${validated.key}" changed since it was read (expected version ${options.expectedVersion}, current ${current.version}); the next run re-reads it with State Get`,
           "conflict"
         );
       }
@@ -360,12 +374,19 @@ export async function setWorkflowStateValue(
       // count against the ceiling; only a genuinely new key can grow the
       // store, and that is the path the limit gates.
       const [existing] = await tx
-        .select({ key: workflowState.key })
+        .select({ expiresAt: workflowState.expiresAt })
         .from(workflowState)
         .where(and(scopeFilter(scope), eq(workflowState.key, validated.key)))
         .limit(1);
 
       if (!existing) {
+        // Serialize new-key inserts per workflow so the count below and the
+        // insert are atomic together: without it, two writers at 99 keys both
+        // read 99 and the workflow ends at 101. The lock is held until the
+        // transaction commits, and only this path takes it.
+        await tx.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtext(${scope.organizationId} || ':' || ${scope.workflowId}))`
+        );
         const [countRow] = await tx
           .select({ count: sql<number>`count(*)::int` })
           .from(workflowState)
@@ -404,10 +425,15 @@ export async function setWorkflowStateValue(
 
       // The conflict arm covers a concurrent insert of the same key between
       // our UPDATE and INSERT (read committed): the DO UPDATE applies to the
-      // winning row, so the write is still atomic and versioned.
+      // winning row, so the write is still atomic and versioned. Overwriting
+      // an expired row counts as creating the key, since a read just before
+      // reported it as not existing; losing the insert race does not.
+      const replacedExpired =
+        existing?.expiresAt != null &&
+        existing.expiresAt.getTime() <= now.getTime();
       return {
         success: true,
-        created: !existing,
+        created: inserted[0].version === 1 || replacedExpired,
         version: inserted[0].version,
       };
     });

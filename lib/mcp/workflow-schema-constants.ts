@@ -178,7 +178,7 @@ export const SYSTEM_ACTIONS = {
       exists: "boolean - Whether a live (non-expired) value exists for the key",
       value: "unknown - The stored value (null when the key does not exist)",
       version:
-        "number - Current version of the key; pass it as expectedVersion to State Set for a race-free read-modify-write",
+        "number | null - Current version of the key (null when it does not exist); pass it as expectedVersion to State Set for a race-free read-modify-write",
     },
   },
   "State Set": {
@@ -190,17 +190,17 @@ export const SYSTEM_ACTIONS = {
     requiredFields: {
       key: 'string - The state key to write (e.g. "lastScannedBlock")',
       value:
-        "unknown - The value to store. Objects and arrays from template references are stored as-is; a string that is JSON object/array text is stored parsed. Max 8 KB serialized.",
+        'unknown - The value to store; must not be null or an empty string. Non-string values are stored as-is. A string is parsed when unambiguous: JSON object/array text is stored parsed, "true"/"false" as booleans, and a numeric string as a number only when it round-trips exactly (so a wei amount beyond 2^53 stays a string). Any other string is stored as-is. Max 8 KB serialized.',
     },
     optionalFields: {
       ttl: "number - Seconds until the key expires (min 1, clamped to 365 days). Omit for no expiry; expired keys read as not-existing and are evicted.",
       expectedVersion:
-        "number - Compare-and-set: only write if the key's current version matches this. On mismatch the step fails; re-read with State Get and retry.",
+        "number - Compare-and-set: only write if the key's current version matches this. On mismatch the step fails the run rather than overwriting; the next run re-reads the current version with State Get.",
     },
     outputFields: {
       success: "boolean - Always true on a successful write",
       created:
-        "boolean - True when this call created the key rather than overwriting it",
+        "boolean - True when this call created the key (including replacing an expired one) rather than overwriting a live value",
       version:
         "number - The key's version after this write; feed it back as expectedVersion for the next compare-and-set",
     },

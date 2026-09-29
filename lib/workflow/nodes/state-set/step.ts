@@ -1,5 +1,5 @@
 /**
- * Executable step function for the State Set action (KEEP-1036, #2288).
+ * Executable step function for the State Set action (#2288).
  *
  * Writes one key to the executing workflow's own persistent state. The write
  * is an atomic upsert; with `expectedVersion` (from State Get) it is a
@@ -59,7 +59,13 @@ async function runSet(input: StateSetInput): Promise<StateSetResult> {
     };
   }
 
-  if (input.value === undefined) {
+  // The editor sends "" for an untouched value field, and the column is NOT
+  // NULL, so both are rejected here rather than stored or failing in the insert.
+  if (
+    input.value === undefined ||
+    input.value === null ||
+    (typeof input.value === "string" && input.value.trim() === "")
+  ) {
     return { success: false, error: 'State Set requires a "value"' };
   }
 

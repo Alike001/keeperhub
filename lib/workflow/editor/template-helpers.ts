@@ -224,6 +224,21 @@ export function getActionFields(node: WorkflowNode): FieldEntry[] | null {
     ];
   }
 
+  if (actionType === "State Get") {
+    return [
+      { field: "exists", description: "Whether the key has a live value" },
+      { field: "value", description: "Stored value (null when missing)" },
+      { field: "version", description: "Key version (null when missing)" },
+    ];
+  }
+
+  if (actionType === "State Set") {
+    return [
+      { field: "created", description: "Whether this write created the key" },
+      { field: "version", description: "Key version after this write" },
+    ];
+  }
+
   if (actionType) {
     const action = findActionById(actionType);
     if (action?.outputFields && action.outputFields.length > 0) {

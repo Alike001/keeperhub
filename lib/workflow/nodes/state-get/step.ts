@@ -1,5 +1,5 @@
 /**
- * Executable step function for the State Get action (KEEP-1036, #2288).
+ * Executable step function for the State Get action (#2288).
  *
  * Reads one key from the executing workflow's own persistent state. The scope
  * comes from the execution context, never from config - the same rule the
@@ -23,7 +23,7 @@ export type StateGetInput = StepInput & {
 
 type StateGetResult =
   | { success: true; exists: true; value: unknown; version: number }
-  | { success: true; exists: false; value: null }
+  | { success: true; exists: false; value: null; version: null }
   | { success: false; error: string };
 
 /**
@@ -55,7 +55,9 @@ async function runGet(input: StateGetInput): Promise<StateGetResult> {
     return { success: false, error: result.error };
   }
   if (!result.exists) {
-    return { success: true, exists: false, value: null };
+    // version is present (as null) on a miss so a downstream
+    // {{@...:State Get.version}} reference resolves instead of aborting the run.
+    return { success: true, exists: false, value: null, version: null };
   }
   return {
     success: true,

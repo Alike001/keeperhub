@@ -79,15 +79,27 @@ describe("stateGetStep", () => {
     });
   });
 
-  it("passes through a missing key as exists=false", async () => {
-    mockGet.mockResolvedValue({ success: true, exists: false, value: null });
+  it("passes through a missing key as exists=false with a null version", async () => {
+    mockGet.mockResolvedValue({
+      success: true,
+      exists: false,
+      value: null,
+      version: null,
+    });
 
     const result = await stateGetStep({
       key: "never-set",
       _context: context(),
     });
 
-    expect(result).toEqual({ success: true, exists: false, value: null });
+    // version must be present so a downstream State Get.version reference
+    // resolves on the first run, before the key exists.
+    expect(result).toEqual({
+      success: true,
+      exists: false,
+      value: null,
+      version: null,
+    });
   });
 
   it("fails the step when there is no workflow context", async () => {
@@ -188,7 +200,7 @@ describe("stateSetStep", () => {
     mockSet.mockResolvedValue({
       success: false,
       error:
-        'Compare-and-set failed: key "cursor" changed since it was read (expected version 3, current 4); re-read with State Get and retry',
+        'Compare-and-set failed: key "cursor" changed since it was read (expected version 3, current 4); the next run re-reads it with State Get',
       reason: "conflict",
     });
 
@@ -202,7 +214,7 @@ describe("stateSetStep", () => {
     expect(result).toEqual({
       success: false,
       error:
-        'Compare-and-set failed: key "cursor" changed since it was read (expected version 3, current 4); re-read with State Get and retry',
+        'Compare-and-set failed: key "cursor" changed since it was read (expected version 3, current 4); the next run re-reads it with State Get',
     });
   });
 
@@ -221,14 +233,31 @@ describe("stateSetStep", () => {
     });
   });
 
-  it("requires a value", async () => {
-    const result = await stateSetStep({ key: "k", _context: context() });
+  it.each([
+    ["missing", undefined],
+    ["null", null],
+    ["empty", ""],
+    ["blank", "   "],
+  ])("requires a value (%s)", async (_label, value) => {
+    const result = await stateSetStep({ key: "k", value, _context: context() });
 
     expect(mockSet).not.toHaveBeenCalled();
     expect(result).toEqual({
       success: false,
       error: 'State Set requires a "value"',
     });
+  });
+
+  it("stores an editor-resolved numeric string as a number", async () => {
+    mockSet.mockResolvedValue({ success: true, created: true, version: 1 });
+
+    await stateSetStep({ key: "k", value: "4219", _context: context() });
+
+    expect(mockSet).toHaveBeenCalledWith(
+      { organizationId: "org_ctx", workflowId: "wf_ctx" },
+      "k",
+      expect.objectContaining({ value: 4219 })
+    );
   });
 
   it("rejects an invalid ttl before touching storage", async () => {
