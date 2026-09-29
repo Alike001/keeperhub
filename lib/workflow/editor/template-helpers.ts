@@ -2,6 +2,10 @@ import type { NodeExecutionStatus } from "@/lib/errors/execution-status";
 import { getReadContractOutputFields } from "@/lib/workflow/editor/action-output-fields";
 import { getInputSchemaFields } from "@/lib/workflow/editor/input-schema-fields";
 import { getTriggerOutputFields } from "@/lib/workflow/editor/trigger-output-fields";
+import {
+  STATE_GET_OUTPUT_FIELDS,
+  STATE_SET_OUTPUT_FIELDS,
+} from "@/lib/workflow/nodes/workflow-state/utils";
 import type { ExecutionLogEntry, WorkflowNode } from "@/lib/workflow/store";
 import { WorkflowTriggerEnum } from "@/lib/workflow/store";
 import { findActionById } from "@/plugins/registry";
@@ -225,18 +229,11 @@ export function getActionFields(node: WorkflowNode): FieldEntry[] | null {
   }
 
   if (actionType === "State Get") {
-    return [
-      { field: "exists", description: "Whether the key has a live value" },
-      { field: "value", description: "Stored value (null when missing)" },
-      { field: "version", description: "Key version (0 when missing)" },
-    ];
+    return STATE_GET_OUTPUT_FIELDS;
   }
 
   if (actionType === "State Set") {
-    return [
-      { field: "created", description: "Whether this write created the key" },
-      { field: "version", description: "Key version after this write" },
-    ];
+    return STATE_SET_OUTPUT_FIELDS;
   }
 
   if (actionType) {

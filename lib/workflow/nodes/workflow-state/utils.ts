@@ -17,3 +17,16 @@ export function stateValueToEditorText(value: unknown): string {
   }
   return String(value);
 }
+
+/** Output fields the builder's @ menu offers for a State Get node. */
+export const STATE_GET_OUTPUT_FIELDS = [
+  { field: "exists", description: "Whether the key has a live value" },
+  { field: "value", description: "Stored value (null when missing)" },
+  { field: "version", description: "Key version (0 when missing)" },
+];
+
+/** Output fields the builder's @ menu offers for a State Set node. */
+export const STATE_SET_OUTPUT_FIELDS = [
+  { field: "created", description: "Whether this write created the key" },
+  { field: "version", description: "Key version after this write" },
+];

@@ -34,6 +34,7 @@ import { and, eq, gt, isNull, ne, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workflowState } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import type { StepContext } from "@/lib/workflow/executor/step-handler";
 
 // biome-ignore lint/suspicious/noExplicitAny: accept either the app db handle or an open transaction, mirroring value-ledger's Executor alias
 type Executor = any;
@@ -67,6 +68,21 @@ export type WorkflowStateGetResult =
 export type WorkflowStateSetResult =
   | { success: true; created: boolean; version: number }
   | { success: false; error: string; reason: WorkflowStateFailureReason };
+
+/**
+ * Resolve the workflow scope from a step's execution context. Steps call this
+ * rather than reading config, so a config value named workflowId is ignored
+ * and a step can only ever touch the state of the workflow it runs in.
+ */
+export function scopeFromStepContext(
+  context: StepContext | undefined
+): WorkflowStateScope | null {
+  const workflowId = context?.workflowId;
+  if (!workflowId) {
+    return null;
+  }
+  return { workflowId };
+}
 
 function failure(
   error: string,

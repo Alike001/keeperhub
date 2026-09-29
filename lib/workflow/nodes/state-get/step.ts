@@ -14,7 +14,7 @@ import {
 } from "@/lib/workflow/executor/step-handler";
 import {
   getWorkflowStateValue,
-  type WorkflowStateScope,
+  scopeFromStepContext,
 } from "@/lib/workflow/nodes/workflow-state/store";
 
 export type StateGetInput = StepInput & {
@@ -26,21 +26,8 @@ type StateGetResult =
   | { success: true; exists: false; value: null; version: 0 }
   | { success: false; error: string };
 
-/**
- * Resolve the workflow scope from the execution context. A config value named
- * workflowId is deliberately ignored: the step can only ever read the state
- * of the workflow it runs in.
- */
-function scopeFromContext(input: StateGetInput): WorkflowStateScope | null {
-  const workflowId = input._context?.workflowId;
-  if (!workflowId) {
-    return null;
-  }
-  return { workflowId };
-}
-
 async function runGet(input: StateGetInput): Promise<StateGetResult> {
-  const scope = scopeFromContext(input);
+  const scope = scopeFromStepContext(input._context);
   if (!scope) {
     return {
       success: false,

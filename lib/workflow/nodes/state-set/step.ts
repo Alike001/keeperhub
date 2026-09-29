@@ -18,8 +18,8 @@ import {
   coerceStateValue,
   resolveExpectedVersion,
   resolveTtlSeconds,
+  scopeFromStepContext,
   setWorkflowStateValue,
-  type WorkflowStateScope,
 } from "@/lib/workflow/nodes/workflow-state/store";
 
 export type StateSetInput = StepInput & {
@@ -35,21 +35,8 @@ type StateSetResult =
   | { success: true; created: boolean; version: number }
   | { success: false; error: string };
 
-/**
- * Resolve the workflow scope from the execution context. A config value named
- * workflowId is deliberately ignored: the step can only ever write the state
- * of the workflow it runs in.
- */
-function scopeFromContext(input: StateSetInput): WorkflowStateScope | null {
-  const workflowId = input._context?.workflowId;
-  if (!workflowId) {
-    return null;
-  }
-  return { workflowId };
-}
-
 async function runSet(input: StateSetInput): Promise<StateSetResult> {
-  const scope = scopeFromContext(input);
+  const scope = scopeFromStepContext(input._context);
   if (!scope) {
     return {
       success: false,
