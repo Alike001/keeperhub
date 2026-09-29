@@ -26,22 +26,57 @@ type ArrayInputFieldProps = {
   components?: AbiComponent[];
 };
 
+const COMMA_SAFE_SCALAR_TYPE_PATTERN = /^(?:address|bool|(?:u?int|bytes)\d*)$/;
+
 function isTemplateValue(value: string): boolean {
   return /^\{\{[^{}]+\}\}$/.test(value.trim());
 }
 
-function makeArrayItem(value: unknown, nextId: () => number): ArrayItem {
-  return { id: nextId(), value: value ?? "" };
+function scalarItemText(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "object" && value !== null) {
+    try {
+      return JSON.stringify(value) ?? String(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
+}
+
+function makeArrayItem(
+  value: unknown,
+  nextId: () => number,
+  components?: AbiComponent[]
+): ArrayItem {
+  return {
+    id: nextId(),
+    value: components?.length ? (value ?? "") : scalarItemText(value),
+  };
+}
+
+function canMigrateCommaSeparatedValue(
+  itemType: string | undefined,
+  components?: AbiComponent[]
+): boolean {
+  return (
+    !components?.length &&
+    itemType !== undefined &&
+    COMMA_SAFE_SCALAR_TYPE_PATTERN.test(itemType)
+  );
 }
 
 function parseArrayValueWithMigration(
   value: unknown,
   nextId: () => number,
-  components?: AbiComponent[]
+  components?: AbiComponent[],
+  itemType?: string
 ): ParsedArrayValue {
   if (Array.isArray(value) && value.length > 0) {
     return {
-      items: value.map((item) => makeArrayItem(item, nextId)),
+      items: value.map((item) => makeArrayItem(item, nextId, components)),
       shouldMigrateLegacyValue: false,
     };
   }
@@ -51,7 +86,9 @@ function parseArrayValueWithMigration(
       const parsed: unknown = JSON.parse(value);
       if (Array.isArray(parsed)) {
         return {
-          items: parsed.map((item) => makeArrayItem(item, nextId)),
+          items: parsed.map((item) =>
+            makeArrayItem(item, nextId, components)
+          ),
           shouldMigrateLegacyValue: false,
         };
       }
@@ -65,13 +102,20 @@ function parseArrayValueWithMigration(
           ? parsed
           : value.trim();
       return {
-        items: [makeArrayItem(itemValue, nextId)],
+        items: [makeArrayItem(itemValue, nextId, components)],
         shouldMigrateLegacyValue: false,
       };
     } catch {
       if (isTemplateValue(value)) {
         return {
-          items: [makeArrayItem(value.trim(), nextId)],
+          items: [makeArrayItem(value.trim(), nextId, components)],
+          shouldMigrateLegacyValue: false,
+        };
+      }
+
+      if (!canMigrateCommaSeparatedValue(itemType, components)) {
+        return {
+          items: [makeArrayItem(value.trim(), nextId, components)],
           shouldMigrateLegacyValue: false,
         };
       }
@@ -85,7 +129,7 @@ function parseArrayValueWithMigration(
         .split(",")
         .map((item) => item.trim())
         .filter(Boolean)
-        .map((item) => makeArrayItem(item, nextId));
+        .map((item) => makeArrayItem(item, nextId, components));
       return {
         items,
         shouldMigrateLegacyValue: value.includes(","),
@@ -99,9 +143,11 @@ function parseArrayValueWithMigration(
 export function parseArrayValue(
   value: unknown,
   nextId: () => number,
-  components?: AbiComponent[]
+  components?: AbiComponent[],
+  itemType?: string
 ): ArrayItem[] {
-  return parseArrayValueWithMigration(value, nextId, components).items;
+  return parseArrayValueWithMigration(value, nextId, components, itemType)
+    .items;
 }
 
 function serializeItems(items: ArrayItem[]): unknown[] {
@@ -156,11 +202,16 @@ export function ArrayInputField({
   };
 
   const [items, setItems] = useState<ArrayItem[]>(() =>
-    parseArrayValue(value, nextId, components)
+    parseArrayValue(value, nextId, components, itemType)
   );
 
   useEffect(() => {
-    const parsed = parseArrayValueWithMigration(value, nextId, components);
+    const parsed = parseArrayValueWithMigration(
+      value,
+      nextId,
+      components,
+      itemType
+    );
     const incoming = parsed.items;
     setItems((current) => preserveRowIds(current, incoming));
 
@@ -173,7 +224,7 @@ export function ArrayInputField({
       migratedLegacyValue.current = String(value);
       onChange(serializeItems(incoming));
     }
-  }, [components, disabled, value]);
+  }, [components, disabled, itemType, value]);
 
   function updateItems(updated: ArrayItem[]): void {
     setItems(updated);

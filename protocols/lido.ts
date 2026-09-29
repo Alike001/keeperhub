@@ -238,7 +238,7 @@ export default defineAbiProtocol({
     "1": {
       setup: {
         minNativeHuman: "0.01",
-        requiredTokens: [{ symbol: "WSTETH", human: "1" }],
+        requiredTokens: [],
         approvals: [],
       },
       actions: {
@@ -280,9 +280,9 @@ export default defineAbiProtocol({
         unwrap:
           "requires wstETH balance - not provisioned in fork setup (wrap is skipped, so no wstETH position exists)",
         "request-withdrawals":
-          "requires a separately approved stETH balance; the focused fixture provisions wstETH for the canonical queue write instead",
+          "requires a separately approved stETH balance, which the fork fixture does not provision",
         "request-withdrawals-wsteth":
-          "requires an approval of the Withdrawal Queue after the fixture's wstETH funding step; added once the queue request receipt is covered",
+          "requires a funded wstETH balance and Withdrawal Queue approval; added once the queue request receipt is covered",
         "claim-withdrawals":
           "requires an oracle-finalized request owned by the test wallet; unit tests cover the owner-only ABI shape",
         "get-wsteth-balance-l2":

@@ -58,6 +58,26 @@ describe("ArrayInputField legacy migration", () => {
     expect(onChange).toHaveBeenCalledWith(["0xpool1", "0xpool2"]);
   });
 
+  it("keeps a comma inside a string-array item without rewriting it", async () => {
+    const onChange = vi.fn();
+
+    await act(async () =>
+      root.render(
+        <ArrayInputField
+          fieldKey="messages"
+          itemType="string"
+          onChange={onChange}
+          value="Hello, world"
+        />
+      )
+    );
+
+    expect(container.querySelector('[role="textbox"]')?.textContent).toBe(
+      "Hello, world"
+    );
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it("does not rewrite a legacy value while disabled", async () => {
     const onChange = vi.fn();
 

@@ -257,6 +257,18 @@ describe("Lido Protocol Definition", () => {
     });
   });
 
+  it("does not fund wstETH while every consuming write remains skipped", () => {
+    const mainnetTestData = lidoDef.testData?.["1"];
+
+    expect(mainnetTestData?.setup?.requiredTokens).toEqual([]);
+    expect(mainnetTestData?.skipped?.unwrap).toContain(
+      "wstETH balance - not provisioned"
+    );
+    expect(mainnetTestData?.skipped?.["request-withdrawals-wsteth"]).toContain(
+      "funded wstETH balance"
+    );
+  });
+
   it("warns request builders about approval and owner requirements", () => {
     for (const slug of ["request-withdrawals", "request-withdrawals-wsteth"]) {
       const action = lidoDef.actions.find(
