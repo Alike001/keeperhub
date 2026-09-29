@@ -21,10 +21,12 @@
  * `expectedVersion` - a compare-and-set that fails with a structured conflict
  * error instead of silently losing the race.
  *
- * Eviction: expires_at is filtered on read and expired rows are deleted on
- * touch. An expired key that is never touched again keeps its row, but it is
- * invisible to reads and does not count against the key ceiling; there is no
- * sweeper. Size/count limits are enforced here, not documented.
+ * Expiry: expires_at is filtered on read, so an expired key reads as
+ * missing. Its row is kept until the next write to that key overwrites it:
+ * deleting on read could remove a value a concurrent write had just revived,
+ * and would restart the key's version at 1, letting a stale compare-and-set
+ * match again. There is no sweeper. Size/count limits are enforced here, not
+ * documented.
  */
 import "server-only";
 
@@ -211,8 +213,9 @@ function liveFilter(now: Date) {
 }
 
 /**
- * Read one key from a workflow's own state. An expired row is evicted on
- * touch and reported as not-existing, so a caller never sees stale data.
+ * Read one key from a workflow's own state. An expired row is reported as
+ * not-existing, so a caller never sees stale data; the row itself is left for
+ * the next write to overwrite.
  */
 export async function getWorkflowStateValue(
   scope: WorkflowStateScope,
@@ -240,9 +243,6 @@ export async function getWorkflowStateValue(
     }
 
     if (row.expiresAt && row.expiresAt.getTime() <= Date.now()) {
-      await executor
-        .delete(workflowState)
-        .where(and(scopeFilter(scope), eq(workflowState.key, validated.key)));
       return { success: true, exists: false, value: null, version: null };
     }
 

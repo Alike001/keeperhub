@@ -53,6 +53,18 @@ describe.skipIf(SKIP)("workflow state store", () => {
     await queryClient`DELETE FROM users WHERE id LIKE ${`${PREFIX}%`}`;
   }
 
+  async function expireKey(key: string): Promise<void> {
+    await db
+      .update(workflowState)
+      .set({ expiresAt: new Date(Date.now() - 1000) })
+      .where(
+        and(
+          eq(workflowState.workflowId, workflowId),
+          eq(workflowState.key, key)
+        )
+      );
+  }
+
   beforeAll(async () => {
     queryClient = postgres(DATABASE_URL, { max: 20 });
     db = drizzle(queryClient);
@@ -162,15 +174,7 @@ describe.skipIf(SKIP)("workflow state store", () => {
       { value: 1, ttlSeconds: 60 },
       db
     );
-    await db
-      .update(workflowState)
-      .set({ expiresAt: new Date(Date.now() - 1000) })
-      .where(
-        and(
-          eq(workflowState.workflowId, workflowId),
-          eq(workflowState.key, "cursor")
-        )
-      );
+    await expireKey("cursor");
 
     const result = await setWorkflowStateValue(
       scope,
@@ -180,6 +184,44 @@ describe.skipIf(SKIP)("workflow state store", () => {
     );
 
     expect(result).toMatchObject({ success: true, created: true });
+  });
+
+  it("keeps an expired row on read so a re-created key continues its version", async () => {
+    await setWorkflowStateValue(scope, "cursor", { value: 1 }, db);
+    await setWorkflowStateValue(scope, "cursor", { value: 2 }, db);
+    await expireKey("cursor");
+
+    expect(await getWorkflowStateValue(scope, "cursor", db)).toMatchObject({
+      exists: false,
+    });
+    const [kept] = await db
+      .select({ version: workflowState.version })
+      .from(workflowState)
+      .where(
+        and(
+          eq(workflowState.workflowId, workflowId),
+          eq(workflowState.key, "cursor")
+        )
+      );
+    expect(kept?.version).toBe(2);
+
+    // A holder of version 2 from before the expiry must not match the
+    // re-created key.
+    const recreated = await setWorkflowStateValue(
+      scope,
+      "cursor",
+      { value: 3 },
+      db
+    );
+    const stale = await setWorkflowStateValue(
+      scope,
+      "cursor",
+      { value: 4, expectedVersion: 2 },
+      db
+    );
+
+    expect(recreated).toEqual({ success: true, created: true, version: 3 });
+    expect(stale).toMatchObject({ success: false, reason: "conflict" });
   });
 
   it("holds the key ceiling under concurrent new-key writers", async () => {
