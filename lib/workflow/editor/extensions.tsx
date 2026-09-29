@@ -46,13 +46,16 @@ import { SponsorGasField } from "@/components/workflow/config/sponsor-gas-field"
 import { TokenSelectField } from "@/components/workflow/config/token-select-field";
 import { integrationsAtom } from "@/lib/integrations-store";
 import {
+  normalizeProtocolArrayValue,
+  serializeProtocolArrayValue,
+  solidityArrayItemType,
+} from "@/lib/protocol-array-value";
+import {
   registerBranding,
   registerFieldRenderer,
   registerIntegrationFormHandler,
 } from "@/lib/workflow/editor/extension-registry";
 import { nodesAtom } from "@/lib/workflow/store";
-
-const ARRAY_SUFFIX_RE = /\[\d*\]$/;
 
 // ============================================================================
 // Register Custom Field Renderers
@@ -589,19 +592,13 @@ registerFieldRenderer(
 registerFieldRenderer(
   "protocol-array",
   ({ field, config, onUpdateConfig, disabled }) => {
-    const rawValue = config[field.key];
-    let value: unknown = rawValue;
-    if (typeof rawValue === "string" && rawValue.trim() !== "") {
-      try {
-        const parsedValue: unknown = JSON.parse(rawValue);
-        value = Array.isArray(parsedValue) ? parsedValue : rawValue;
-      } catch {
-        value = rawValue;
-      }
-    }
-
-    const itemType =
-      field.solidityType?.replace(ARRAY_SUFFIX_RE, "") ?? "value";
+    const value = normalizeProtocolArrayValue(
+      config[field.key],
+      field.solidityType
+    );
+    const itemType = field.solidityType
+      ? solidityArrayItemType(field.solidityType)
+      : "value";
 
     return (
       <div className="space-y-2" key={field.key}>
@@ -611,7 +608,7 @@ registerFieldRenderer(
           fieldKey={field.key}
           itemType={itemType}
           onChange={(val: unknown[]) =>
-            onUpdateConfig(field.key, JSON.stringify(val))
+            onUpdateConfig(field.key, serializeProtocolArrayValue(val))
           }
           value={value}
         />
@@ -629,22 +626,13 @@ registerFieldRenderer(
 registerFieldRenderer(
   "protocol-tuple-array",
   ({ field, config, onUpdateConfig, disabled }) => {
-    const { ArrayInputField } =
-      require("@/components/workflow/config/array-input-field") as typeof import("@/components/workflow/config/array-input-field");
-
-    const rawValue = config[field.key];
-    let value: unknown = rawValue;
-    if (typeof rawValue === "string" && rawValue.trim() !== "") {
-      try {
-        value = JSON.parse(rawValue);
-      } catch {
-        value = rawValue;
-      }
-    }
-
+    const value = normalizeProtocolArrayValue(
+      config[field.key],
+      field.solidityType
+    );
     const components = field.tupleComponents ?? [];
-    const itemType = field.solidityType?.endsWith("[]")
-      ? field.solidityType.slice(0, -2)
+    const itemType = field.solidityType
+      ? solidityArrayItemType(field.solidityType)
       : "tuple";
 
     return (
@@ -656,7 +644,7 @@ registerFieldRenderer(
           fieldKey={field.key}
           itemType={itemType}
           onChange={(val: unknown[]) =>
-            onUpdateConfig(field.key, JSON.stringify(val))
+            onUpdateConfig(field.key, serializeProtocolArrayValue(val))
           }
           value={value}
         />

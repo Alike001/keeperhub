@@ -7,6 +7,10 @@ import {
   readContractCore,
 } from "@/plugins/web3/steps/read-contract-core";
 import { resolveAbi } from "@/lib/abi/cache";
+import {
+  isSolidityArrayType,
+  normalizeProtocolArrayValue,
+} from "@/lib/protocol-array-value";
 import { getProtocol, resolveContractAddress } from "@/lib/protocol-registry";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { applyEncodeTransformsNamed } from "@/lib/protocol-encode-transforms";
@@ -22,19 +26,6 @@ type ProtocolReadInput = StepInput & {
   _actionType?: string;
   [key: string]: unknown;
 };
-
-function normalizeProtocolInput(raw: unknown, solidityType: string): unknown {
-  if (!solidityType.endsWith("]") || typeof raw !== "string") {
-    return raw;
-  }
-
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : raw;
-  } catch {
-    return raw;
-  }
-}
 
 function buildFunctionArgs(
   input: ProtocolReadInput,
@@ -58,10 +49,17 @@ function buildFunctionArgs(
     if (raw === undefined || raw === "") {
       return {
         name: inp.name,
-        value: normalizeProtocolInput(inp.default ?? "", inp.type),
+        value: isSolidityArrayType(inp.type)
+          ? normalizeProtocolArrayValue(String(inp.default ?? ""), inp.type)
+          : (inp.default ?? ""),
       };
     }
-    const value = normalizeProtocolInput(raw, inp.type);
+    // Array inputs normalise; everything else keeps the coercion the ABI encoder expects.
+    const value = isSolidityArrayType(inp.type)
+      ? normalizeProtocolArrayValue(raw, inp.type)
+      : typeof raw === "object"
+        ? JSON.stringify(raw)
+        : String(raw);
     return { name: inp.name, value };
   });
 

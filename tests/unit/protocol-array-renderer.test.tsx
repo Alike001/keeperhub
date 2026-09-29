@@ -151,4 +151,112 @@ describe("registered protocol-array renderer", () => {
       JSON.stringify(["135184", ""])
     );
   });
+  it("splits a legacy comma-separated value into rows", async () => {
+    const renderer = getCustomFieldRenderer("protocol-array");
+    const onUpdateConfig = vi.fn();
+
+    await act(async () =>
+      root.render(
+        renderer?.({
+          config: { gauges: "0xpool1, 0xpool2" },
+          field: {
+            key: "gauges",
+            label: "Gauge Addresses",
+            solidityType: "address[]",
+            type: "protocol-array",
+          },
+          onUpdateConfig,
+        })
+      )
+    );
+
+    expect(
+      Array.from(
+        container.querySelectorAll('[role="textbox"]'),
+        (input) => input.textContent
+      )
+    ).toEqual(["0xpool1", "0xpool2"]);
+    expect(onUpdateConfig).not.toHaveBeenCalled();
+  });
+
+  // The PR's own headline composition: one Lido action's array output feeds
+  // the next action's array input. Stored as ["{{...}}"] the reference
+  // resolves to an array spliced inside the quotes, which cannot encode.
+  it("round-trips a whole-field reference through an edit", async () => {
+    const renderer = getCustomFieldRenderer("protocol-array");
+    const onUpdateConfig = vi.fn();
+    const reference = "{{@n1:Get Withdrawal Requests.requestsIds}}";
+    const field = {
+      key: "requestIds",
+      label: "Request IDs",
+      solidityType: "uint256[]",
+      type: "protocol-array" as const,
+    };
+
+    await act(async () =>
+      root.render(
+        renderer?.({ config: { requestIds: reference }, field, onUpdateConfig })
+      )
+    );
+
+    expect(container.querySelectorAll('[role="textbox"]')).toHaveLength(1);
+
+    const addButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Add Item")
+    );
+    await act(async () => addButton?.click());
+
+    expect(onUpdateConfig).toHaveBeenLastCalledWith(
+      "requestIds",
+      JSON.stringify([reference, ""])
+    );
+
+    await act(async () =>
+      root.render(
+        renderer?.({
+          config: { requestIds: JSON.stringify([reference, ""]) },
+          field,
+          onUpdateConfig,
+        })
+      )
+    );
+
+    const removeButtons = Array.from(
+      container.querySelectorAll("button")
+    ).filter((button) => !button.textContent?.includes("Add Item"));
+    await act(async () => removeButtons.at(-1)?.click());
+
+    expect(onUpdateConfig).toHaveBeenLastCalledWith("requestIds", reference);
+  });
+});
+
+describe("registered protocol-tuple-array renderer", () => {
+  it("shows a legacy stored object as one row", async () => {
+    const renderer = getCustomFieldRenderer("protocol-tuple-array");
+    const onUpdateConfig = vi.fn();
+
+    expect(renderer).toBeDefined();
+    await act(async () =>
+      root.render(
+        renderer?.({
+          config: { tokenAmounts: '{"token":"0xA","amount":"1"}' },
+          field: {
+            key: "tokenAmounts",
+            label: "Token Amounts",
+            solidityType: "tuple[]",
+            tupleComponents: [
+              { name: "token", type: "address" },
+              { name: "amount", type: "uint256" },
+            ],
+            type: "protocol-tuple-array",
+          },
+          onUpdateConfig,
+        })
+      )
+    );
+
+    expect(container.textContent).toContain("[0]");
+    expect(container.textContent).not.toContain("Empty array");
+    expect(onUpdateConfig).not.toHaveBeenCalled();
+  });
 });

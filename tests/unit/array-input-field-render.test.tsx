@@ -34,8 +34,8 @@ afterEach(async () => {
   container.remove();
 });
 
-describe("ArrayInputField legacy migration", () => {
-  it("writes a reopened comma-separated value back as a valid array", async () => {
+describe("ArrayInputField legacy values", () => {
+  it("renders a reopened comma-separated value as rows without rewriting it", async () => {
     const onChange = vi.fn();
 
     await act(async () =>
@@ -55,7 +55,7 @@ describe("ArrayInputField legacy migration", () => {
         (input) => input.textContent
       )
     ).toEqual(["0xpool1", "0xpool2"]);
-    expect(onChange).toHaveBeenCalledWith(["0xpool1", "0xpool2"]);
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it("keeps a comma inside a string-array item without rewriting it", async () => {
@@ -122,7 +122,7 @@ describe("ArrayInputField legacy migration", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it("does not overwrite an empty comma-only legacy value", async () => {
+  it("keeps a comma-only legacy value as one row instead of dropping it", async () => {
     const onChange = vi.fn();
 
     await act(async () =>
@@ -136,7 +136,7 @@ describe("ArrayInputField legacy migration", () => {
       )
     );
 
-    expect(container.textContent).toContain("Empty array");
+    expect(container.querySelector('[role="textbox"]')?.textContent).toBe(",");
     expect(onChange).not.toHaveBeenCalled();
   });
 
@@ -170,7 +170,7 @@ describe("ArrayInputField legacy migration", () => {
         (input) => input.textContent
       )
     ).toEqual(["0xpool2", "0xpool3"]);
-    expect(onChange).toHaveBeenLastCalledWith(["0xpool2", "0xpool3"]);
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it("shows a whole-field template as an editable row", async () => {

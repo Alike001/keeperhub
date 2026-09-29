@@ -6,15 +6,11 @@ import { Button } from "@/components/ui/button";
 import { TemplateBadgeInput } from "@/components/ui/template-badge-input";
 import type { AbiComponent } from "@/components/workflow/config/abi-types";
 import { TupleInputField } from "@/components/workflow/config/tuple-input-field";
+import { normalizeProtocolArrayValue } from "@/lib/protocol-array-value";
 
 type ArrayItem = {
   id: number;
   value: unknown;
-};
-
-type ParsedArrayValue = {
-  items: ArrayItem[];
-  shouldMigrateLegacyValue: boolean;
 };
 
 type ArrayInputFieldProps = {
@@ -25,12 +21,6 @@ type ArrayInputFieldProps = {
   fieldKey: string;
   components?: AbiComponent[];
 };
-
-const COMMA_SAFE_SCALAR_TYPE_PATTERN = /^(?:address|bool|(?:u?int|bytes)\d*)$/;
-
-function isTemplateValue(value: string): boolean {
-  return /^\{\{[^{}]+\}\}$/.test(value.trim());
-}
 
 function scalarItemText(value: unknown): string {
   if (typeof value === "string") {
@@ -57,97 +47,27 @@ function makeArrayItem(
   };
 }
 
-function canMigrateCommaSeparatedValue(
-  itemType: string | undefined,
-  components?: AbiComponent[]
-): boolean {
-  return (
-    !components?.length &&
-    itemType !== undefined &&
-    COMMA_SAFE_SCALAR_TYPE_PATTERN.test(itemType)
-  );
-}
-
-function parseArrayValueWithMigration(
-  value: unknown,
-  nextId: () => number,
-  components?: AbiComponent[],
-  itemType?: string
-): ParsedArrayValue {
-  if (Array.isArray(value) && value.length > 0) {
-    return {
-      items: value.map((item) => makeArrayItem(item, nextId, components)),
-      shouldMigrateLegacyValue: false,
-    };
-  }
-
-  if (typeof value === "string" && value.trim() !== "") {
-    try {
-      const parsed: unknown = JSON.parse(value);
-      if (Array.isArray(parsed)) {
-        return {
-          items: parsed.map((item) =>
-            makeArrayItem(item, nextId, components)
-          ),
-          shouldMigrateLegacyValue: false,
-        };
-      }
-
-      // Before scalar arrays had a structured editor, a single scalar could be
-      // stored directly. Keep it visible as one row rather than presenting a
-      // misleading empty array. Only tuple arrays can edit parsed objects;
-      // scalar arrays must show and preserve the original JSON text.
-      const itemValue =
-        typeof parsed === "object" && parsed !== null && components?.length
-          ? parsed
-          : value.trim();
-      return {
-        items: [makeArrayItem(itemValue, nextId, components)],
-        shouldMigrateLegacyValue: false,
-      };
-    } catch {
-      if (isTemplateValue(value)) {
-        return {
-          items: [makeArrayItem(value.trim(), nextId, components)],
-          shouldMigrateLegacyValue: false,
-        };
-      }
-
-      if (!canMigrateCommaSeparatedValue(itemType, components)) {
-        return {
-          items: [makeArrayItem(value.trim(), nextId, components)],
-          shouldMigrateLegacyValue: false,
-        };
-      }
-
-      // Before scalar arrays had a structured editor, protocol inputs such as
-      // Aerodrome gauge lists were entered as comma-separated text. Preserve
-      // those saved values when the workflow is opened in the new editor. A
-      // single legacy value stays visible but is not rewritten just by opening
-      // the configuration panel.
-      const items = value
-        .split(",")
-        .map((item) => item.trim())
-        .filter(Boolean)
-        .map((item) => makeArrayItem(item, nextId, components));
-      return {
-        items,
-        shouldMigrateLegacyValue: value.includes(","),
-      };
-    }
-  }
-
-  return { items: [], shouldMigrateLegacyValue: false };
-}
-
+/**
+ * Rows for one stored value, read through the shared protocol-array parse so
+ * the editor, the validator and the steps agree on what a legacy value means.
+ */
 export function parseArrayValue(
   value: unknown,
   nextId: () => number,
   components?: AbiComponent[],
   itemType?: string
 ): ArrayItem[] {
-  return parseArrayValueWithMigration(value, nextId, components, itemType)
-    .items;
+  const solidityType = `${components?.length ? "tuple" : (itemType ?? "string")}[]`;
+  const normalized = normalizeProtocolArrayValue(value, solidityType);
+
+  if (Array.isArray(normalized)) {
+    return normalized.map((item) => makeArrayItem(item, nextId, components));
+  }
+  // A whole-field reference stays a bare string; it edits as a single row.
+  if (typeof normalized === "string" && normalized.trim() !== "") {
+    return [makeArrayItem(normalized.trim(), nextId, components)];
+  }
+  return [];
 }
 
 function serializeItems(items: ArrayItem[]): unknown[] {
@@ -195,7 +115,6 @@ export function ArrayInputField({
   components,
 }: ArrayInputFieldProps): React.ReactNode {
   const idCounter = useRef(0);
-  const migratedLegacyValue = useRef<string | null>(null);
   const nextId = (): number => {
     idCounter.current += 1;
     return idCounter.current;
@@ -206,25 +125,9 @@ export function ArrayInputField({
   );
 
   useEffect(() => {
-    const parsed = parseArrayValueWithMigration(
-      value,
-      nextId,
-      components,
-      itemType
-    );
-    const incoming = parsed.items;
+    const incoming = parseArrayValue(value, nextId, components, itemType);
     setItems((current) => preserveRowIds(current, incoming));
-
-    if (
-      !disabled &&
-      parsed.shouldMigrateLegacyValue &&
-      incoming.length > 0 &&
-      migratedLegacyValue.current !== value
-    ) {
-      migratedLegacyValue.current = String(value);
-      onChange(serializeItems(incoming));
-    }
-  }, [components, disabled, itemType, value]);
+  }, [components, itemType, value]);
 
   function updateItems(updated: ArrayItem[]): void {
     setItems(updated);

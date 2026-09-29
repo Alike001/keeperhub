@@ -1,4 +1,5 @@
 import { ADDRESS_BOOK_SELECTION_KEY } from "@/lib/address-book-selection";
+import { normalizeProtocolArrayValue } from "@/lib/protocol-array-value";
 import { stripControlChars } from "@/lib/utils/control-chars";
 import { EVM_ADDRESS_RE } from "@/lib/web3/address";
 import {
@@ -99,17 +100,20 @@ function arrayValueHasExpectedLength(
   if (expectedLength === undefined || valueContainsTemplate(value)) {
     return true;
   }
-  const parsed =
-    typeof value === "string"
-      ? (() => {
-          try {
-            return JSON.parse(value) as unknown;
-          } catch {
-            return value;
-          }
-        })()
-      : value;
+  const parsed = normalizeProtocolArrayValue(value, solidityType);
   return Array.isArray(parsed) && parsed.length === expectedLength;
+}
+
+// A value stored before array inputs had a structured editor: one scalar for
+// the whole array, or a comma-separated list. normalizeProtocolArrayValue
+// reads both as an array, so rejecting them here would make a config that
+// saved yesterday unsaveable today over a field the user never touched.
+function isLegacyScalarArrayValue(value: unknown): boolean {
+  return (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  );
 }
 
 function sanitiseNodeLabel(label: string): string {
@@ -520,7 +524,36 @@ function validateFieldValue(
         (valueContainsTemplate(value) || DECIMAL_PATTERN.test(value))
         ? { valid: true }
         : { valid: false, expected: "decimal ETH amount", received: value };
-    case "protocol-array":
+    case "protocol-array": {
+      const isStructured = Array.isArray(value) || isJsonArrayString(value);
+      if (
+        !(
+          isStructured ||
+          valueContainsTemplate(value) ||
+          isLegacyScalarArrayValue(value)
+        )
+      ) {
+        return {
+          valid: false,
+          expected: field.solidityType ?? "array",
+          received: value,
+        };
+      }
+      // Length is only enforced on a value the array editor wrote. A legacy
+      // scalar that never encoded against a fixed-size input still fails at
+      // execution, where it failed before, instead of blocking the save.
+      if (
+        isStructured &&
+        !arrayValueHasExpectedLength(value, field.solidityType)
+      ) {
+        return {
+          valid: false,
+          expected: `${field.solidityType} with ${fixedArrayLength(field.solidityType)} items`,
+          received: value,
+        };
+      }
+      return { valid: true };
+    }
     case "protocol-tuple-array":
       if (
         !(

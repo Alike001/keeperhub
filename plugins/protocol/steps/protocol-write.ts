@@ -8,6 +8,10 @@ import {
   writeContractCore,
 } from "@/plugins/web3/steps/write-contract-core";
 import { resolveAbi } from "@/lib/abi/cache";
+import {
+  isSolidityArrayType,
+  normalizeProtocolArrayValue,
+} from "@/lib/protocol-array-value";
 import { type AbiItem, findAbiFunction } from "@/lib/abi/utils";
 import { withStepValueCap } from "@/lib/execute/value-ledger";
 import { ErrorCategory, logUserError } from "@/lib/logging";
@@ -186,19 +190,6 @@ function findProtocolAction(meta: ProtocolMeta): ProtocolAction | undefined {
   );
 }
 
-function normalizeProtocolInput(raw: unknown, solidityType: string): unknown {
-  if (!solidityType.endsWith("]") || typeof raw !== "string") {
-    return raw;
-  }
-
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : raw;
-  } catch {
-    return raw;
-  }
-}
-
 function buildFunctionArgs(
   input: ProtocolWriteInput,
   meta: ProtocolMeta
@@ -213,10 +204,17 @@ function buildFunctionArgs(
     if (raw === undefined || raw === "") {
       return {
         name: inp.name,
-        value: normalizeProtocolInput(inp.default ?? "", inp.type),
+        value: isSolidityArrayType(inp.type)
+          ? normalizeProtocolArrayValue(String(inp.default ?? ""), inp.type)
+          : (inp.default ?? ""),
       };
     }
-    const value = normalizeProtocolInput(raw, inp.type);
+    // Array inputs normalise; everything else keeps the coercion the ABI encoder expects.
+    const value = isSolidityArrayType(inp.type)
+      ? normalizeProtocolArrayValue(raw, inp.type)
+      : typeof raw === "object"
+        ? JSON.stringify(raw)
+        : String(raw);
     return { name: inp.name, value };
   });
 

@@ -451,6 +451,43 @@ describe("protocolWriteStep", () => {
       expect(JSON.parse(coreCall.functionArgs)).toEqual([["12", "34"]]);
     });
 
+    // The step reads array inputs through the same helper as the editor and
+    // the validator, so a value saved before the array editor existed still
+    // encodes without the user reopening the node.
+    it("reads a legacy comma-separated value as an array", async () => {
+      const queueMeta: ProtocolMeta = {
+        protocolSlug: "compound",
+        contractKey: "comet",
+        functionName: "claimMany",
+        actionType: "write",
+      };
+      const protocolWithArray = {
+        ...COMPOUND_PROTOCOL,
+        actions: [
+          {
+            slug: "claim-many",
+            label: "Claim Many",
+            type: "write" as const,
+            contract: "comet",
+            function: "claimMany",
+            inputs: [{ name: "gauges", type: "address[]", label: "Gauges" }],
+          },
+        ],
+      };
+
+      mockResolveProtocolMeta.mockReturnValue(queueMeta);
+      mockGetProtocol.mockReturnValue(protocolWithArray);
+      mockResolveAbi.mockResolvedValue({ abi: "[]" });
+      mockWriteContractCore.mockResolvedValue({ success: true });
+
+      await protocolWriteStep(makeInput({ gauges: "0xpool1, 0xpool2" }));
+
+      const coreCall = (mockWriteContractCore as Mock).mock.calls[0][0];
+      expect(JSON.parse(coreCall.functionArgs)).toEqual([
+        ["0xpool1", "0xpool2"],
+      ]);
+    });
+
     it("propagates writeContractCore failure result", async () => {
       mockResolveProtocolMeta.mockReturnValue(COMPOUND_SUPPLY_META);
       mockGetProtocol.mockReturnValue(COMPOUND_PROTOCOL);
