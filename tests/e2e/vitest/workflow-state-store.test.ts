@@ -171,6 +171,22 @@ describe.skipIf(SKIP)("workflow state store", () => {
     }
   });
 
+  it("reports a database failure without the driver's message", async () => {
+    // A workflow deleted mid-run: the insert violates the workflow foreign key.
+    const result = await setWorkflowStateValue(
+      { workflowId: `${PREFIX}deleted_wf` },
+      "cursor",
+      { value: 1 },
+      db
+    );
+
+    expect(result).toEqual({
+      success: false,
+      error: "Failed to write workflow state",
+      reason: "storage",
+    });
+  });
+
   it("creates, then overwrites with a version bump", async () => {
     const first = await setWorkflowStateValue(
       scope,

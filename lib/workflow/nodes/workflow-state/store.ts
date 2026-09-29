@@ -33,6 +33,7 @@ import "server-only";
 import { and, eq, gt, isNull, ne, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workflowState } from "@/lib/db/schema";
+import { ErrorCategory, logSystemError } from "@/lib/logging";
 
 // biome-ignore lint/suspicious/noExplicitAny: accept either the app db handle or an open transaction, mirroring value-ledger's Executor alias
 type Executor = any;
@@ -251,10 +252,15 @@ export async function getWorkflowStateValue(
       version: row.version,
     };
   } catch (error) {
-    return failure(
-      error instanceof Error ? error.message : "Failed to read workflow state",
-      "storage"
+    // The driver's message names tables and constraints; it goes to logs,
+    // not to the step output the workflow author sees.
+    logSystemError(
+      ErrorCategory.DATABASE,
+      "[WorkflowState] Failed to read workflow state",
+      error,
+      { operation: "get" }
     );
+    return failure("Failed to read workflow state", "storage");
   }
 }
 
@@ -513,9 +519,12 @@ export async function setWorkflowStateValue(
       };
     });
   } catch (error) {
-    return failure(
-      error instanceof Error ? error.message : "Failed to write workflow state",
-      "storage"
+    logSystemError(
+      ErrorCategory.DATABASE,
+      "[WorkflowState] Failed to write workflow state",
+      error,
+      { operation: "set" }
     );
+    return failure("Failed to write workflow state", "storage");
   }
 }
