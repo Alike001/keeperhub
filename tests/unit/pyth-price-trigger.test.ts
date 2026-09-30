@@ -180,14 +180,33 @@ describe("Pyth threshold semantics", () => {
     }
   );
 
-  it("rebaselines after disconnect or a long gap instead of inventing missed crossings", () => {
+  it("fires on the update after a reconnect baseline when the price crossed during the outage", () => {
+    const armed = { lastPublishTime: 1000, armed: true };
+    const rebaseline = evaluatePythPrice(
+      config,
+      armed,
+      update("101", 1001),
+      1001,
+      true
+    );
+    expect(rebaseline.outcome).toBe("baseline");
+    expect(
+      evaluatePythPrice(
+        config,
+        rebaseline.checkpoint,
+        update("101", 1002),
+        1002
+      ).outcome
+    ).toBe("crossed");
+  });
+
+  // Sampling slower than maxAgeSeconds must degrade to coarser sampling, not
+  // to a trigger that never fires because every sample is a baseline.
+  it("evaluates a fresh update after a long gap instead of rebaselining", () => {
     const armed = { lastPublishTime: 1000, armed: true };
     expect(
-      evaluatePythPrice(config, armed, update("101", 1001), 1001, true).outcome
-    ).toBe("baseline");
-    expect(
-      evaluatePythPrice(config, armed, update("101", 1030), 1030).outcome
-    ).toBe("baseline");
+      evaluatePythPrice(config, armed, update("101", 1060), 1060).outcome
+    ).toBe("crossed");
   });
 
   it("preserves the source identity, expiry and speculative flag through JSON persistence", () => {

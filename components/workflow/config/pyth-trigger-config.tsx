@@ -103,9 +103,11 @@ export function PythTriggerConfig({
           }
         />
         <p className="text-muted-foreground text-xs">
-          Old updates and queued signals expire after this time. Starting or
-          reconnecting establishes a fresh baseline; crossings missed during an
-          outage are not replayed. Failover may take up to 45 seconds.
+          Old updates and queued signals expire after this time. After a
+          restart or reconnect the first update only re-establishes the
+          baseline; if the price crossed during the outage and is still past
+          the threshold, the next update fires. Failover may take up to 45
+          seconds.
         </p>
       </div>
       {error && (

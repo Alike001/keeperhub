@@ -191,10 +191,10 @@ export function evaluatePythPrice(
   const rearmOrder = compare(coefficient, expo, config.rearmThreshold);
   const isRearmed =
     config.direction === "above" ? rearmOrder <= 0 : rearmOrder >= 0;
-  const gap =
-    checkpoint.lastPublishTime === null ||
-    publishTime - checkpoint.lastPublishTime >= config.maxAgeSeconds;
-  if (resetBaseline || gap) {
+  // A slow gap between samples is not a reason to rebaseline: under load
+  // every sample would be a baseline and the trigger could never fire.
+  // Freshness is enforced by the stale check above.
+  if (resetBaseline || checkpoint.lastPublishTime === null) {
     const thresholdOrder = compare(coefficient, expo, config.threshold);
     const startsArmed =
       config.direction === "above" ? thresholdOrder < 0 : thresholdOrder > 0;

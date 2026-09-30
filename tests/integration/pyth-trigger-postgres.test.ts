@@ -294,6 +294,15 @@ describe.skipIf(!process.env.PYTH_TEST_DATABASE_URL)(
       expect((await pending()).pending).toBeUndefined();
     });
 
+    it("evaluates normally when the same session's lease has lapsed", async () => {
+      await observe("94", 0);
+      await db
+        .update(pythTriggerCheckpoints)
+        .set({ leaseUntil: new Date(0) })
+        .where(eq(pythTriggerCheckpoints.workflowId, workflowId));
+      expect((await observe("101", 1)).pending).toBeDefined();
+    });
+
     it("keeps the lease across a reconnect and rebaselines only on request", async () => {
       await observe("94", 0);
       const rebaselined = await observePythPrice(

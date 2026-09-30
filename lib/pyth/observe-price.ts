@@ -195,11 +195,12 @@ export async function observePythPrice(
     ) {
       return { outcome: "leased" };
     }
+    // A new owner (takeover, restart, config reset) or an explicit reconnect
+    // rebaselines. A lapsed lease under the same session does not: nobody
+    // else wrote in between, and treating it as a baseline would stop a
+    // slowly sampled workflow from ever firing.
     const resetBaseline =
-      command.rebaseline === true ||
-      checkpoint.sessionId !== command.sessionId ||
-      !checkpoint.leaseUntil ||
-      checkpoint.leaseUntil <= now;
+      command.rebaseline === true || checkpoint.sessionId !== command.sessionId;
     const evaluated = evaluatePythPrice(
       config,
       checkpoint,

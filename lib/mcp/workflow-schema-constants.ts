@@ -216,7 +216,7 @@ export const TRIGGERS = {
     triggerType: "Pyth Price",
     label: "Pyth Price",
     description:
-      "Native Pyth Hermes price threshold crossing. Upstream signals are speculative, consume the normal execution allowance, and do not guarantee transaction ordering. Startup and reconnect establish a fresh baseline; missed crossings are not replayed. Requires the operator to configure a Pyth API key on the event worker.",
+      "Native Pyth Hermes price threshold crossing. Upstream signals are speculative, consume the normal execution allowance, and do not guarantee transaction ordering. After startup or a reconnect the first update only re-establishes the baseline; an armed trigger whose price crossed during the gap and is still past the threshold fires on the next update. Requires the operator to configure a Pyth API key on the event worker.",
     requiredFields: {
       feedId:
         "string - Pyth feed ID, 64 hexadecimal characters, optional 0x prefix",
