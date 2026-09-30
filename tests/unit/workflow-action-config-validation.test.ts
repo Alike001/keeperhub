@@ -2029,7 +2029,6 @@ describe("protocol array fields", () => {
     ["a single scalar", "135184"],
     ["a comma-separated list", "135184, 135185"],
     ["a large integer", "1000000000000000000000"],
-    ["an uninterpretable value", "not json"],
   ];
 
   it.each(legacyCases)(
@@ -2086,5 +2085,84 @@ describe("protocol array fields", () => {
         field: "requestIds",
       }),
     ]);
+  });
+});
+
+describe("protocol-array element validation", () => {
+  const claim = (config: Record<string, unknown>) =>
+    validateWorkflowActionConfigs([
+      actionNode("lido/claim-withdrawals", {
+        network: "1",
+        requestIds: "1",
+        hints: "1",
+        ...config,
+      }),
+    ]);
+
+  it("rejects a non-numeric scalar on a uint256[] field", () => {
+    const result = claim({ requestIds: "abc" });
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual([
+      expect.objectContaining({
+        code: "INVALID_FIELD_TYPE",
+        field: "requestIds",
+        expected: "uint256[]",
+      }),
+    ]);
+  });
+
+  it("rejects a non-numeric element inside a JSON array", () => {
+    const result = claim({ requestIds: '["135184","abc"]' });
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual([
+      expect.objectContaining({
+        code: "INVALID_FIELD_TYPE",
+        field: "requestIds",
+      }),
+    ]);
+  });
+
+  it("rejects a non-numeric element in a legacy comma-separated value", () => {
+    const result = claim({ requestIds: "135184, abc" });
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual([
+      expect.objectContaining({
+        code: "INVALID_FIELD_TYPE",
+        field: "requestIds",
+      }),
+    ]);
+  });
+
+  it("keeps a legacy single scalar saveable", () => {
+    expect(claim({ requestIds: "135184" })).toEqual({
+      valid: true,
+      issues: [],
+    });
+  });
+
+  it("keeps a legacy comma-separated list saveable", () => {
+    expect(claim({ requestIds: "135184, 135185" })).toEqual({
+      valid: true,
+      issues: [],
+    });
+  });
+
+  it("accepts a JSON array and a whole-field template", () => {
+    expect(claim({ requestIds: '["135184","135185"]' })).toEqual({
+      valid: true,
+      issues: [],
+    });
+    expect(
+      claim({ requestIds: "{{@n1:Get Withdrawal Requests.requestsIds}}" })
+    ).toEqual({ valid: true, issues: [] });
+  });
+
+  it("accepts a template inside one element", () => {
+    expect(
+      claim({ requestIds: '["{{@n1:Get Requests.first}}","135185"]' })
+    ).toEqual({ valid: true, issues: [] });
   });
 });

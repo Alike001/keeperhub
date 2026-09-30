@@ -1,8 +1,13 @@
 import { ADDRESS_BOOK_SELECTION_KEY } from "@/lib/address-book-selection";
-import { normalizeProtocolArrayValue } from "@/lib/protocol-array-value";
+import {
+  isSolidityArrayType,
+  normalizeProtocolArrayValue,
+  solidityArrayItemType,
+} from "@/lib/protocol-array-value";
 import { stripControlChars } from "@/lib/utils/control-chars";
 import { EVM_ADDRESS_RE } from "@/lib/web3/address";
 import {
+  checkSolidityValue,
   HEX_BYTES_PATTERN,
   INTEGER_PATTERN,
   UNSIGNED_INTEGER_PATTERN,
@@ -104,16 +109,48 @@ function arrayValueHasExpectedLength(
   return Array.isArray(parsed) && parsed.length === expectedLength;
 }
 
+// The scalar item types checkSolidityValue decides. A tuple or any other
+// type it has no shape for is left to the encoder.
+const CHECKED_ITEM_TYPE_RE = /^(?:address|bool|string|(?:u?int|bytes)\d*)$/;
+
+function arrayItemMatchesType(item: unknown, itemType: string): boolean {
+  if (valueContainsTemplate(item)) {
+    return true;
+  }
+  if (!CHECKED_ITEM_TYPE_RE.test(itemType)) {
+    return true;
+  }
+  return checkSolidityValue(itemType, String(item)).valid;
+}
+
 // A value stored before array inputs had a structured editor: one scalar for
 // the whole array, or a comma-separated list. normalizeProtocolArrayValue
-// reads both as an array, so rejecting them here would make a config that
-// saved yesterday unsaveable today over a field the user never touched.
-function isLegacyScalarArrayValue(value: unknown): boolean {
+// reads both as an array, so rejecting the shape here would make a config
+// that saved yesterday unsaveable today over a field the user never touched.
+function isLegacyScalarArrayShape(value: unknown): boolean {
   return (
     typeof value === "string" ||
     typeof value === "number" ||
     typeof value === "boolean"
   );
+}
+
+// The shape above is accepted, but the elements are still checked against the
+// item type. That is the check these fields had before every type ending in
+// `]` was mapped to protocol-array.
+function arrayElementsMatchItemType(
+  value: unknown,
+  solidityType: string | undefined
+): boolean {
+  if (!isSolidityArrayType(solidityType)) {
+    return true;
+  }
+  const normalised = normalizeProtocolArrayValue(value, solidityType);
+  if (!Array.isArray(normalised)) {
+    return true;
+  }
+  const itemType = solidityArrayItemType(solidityType);
+  return normalised.every((item) => arrayItemMatchesType(item, itemType));
 }
 
 function sanitiseNodeLabel(label: string): string {
@@ -530,9 +567,16 @@ function validateFieldValue(
         !(
           isStructured ||
           valueContainsTemplate(value) ||
-          isLegacyScalarArrayValue(value)
+          isLegacyScalarArrayShape(value)
         )
       ) {
+        return {
+          valid: false,
+          expected: field.solidityType ?? "array",
+          received: value,
+        };
+      }
+      if (!arrayElementsMatchItemType(value, field.solidityType)) {
         return {
           valid: false,
           expected: field.solidityType ?? "array",
