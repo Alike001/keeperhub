@@ -32,6 +32,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
   await registry.stopAll();
+  vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
@@ -97,6 +98,49 @@ describe("Pyth stream lifecycle", () => {
       true,
       false,
     ]);
+  });
+
+  it("bounds concurrent observations on a crowded feed", async () => {
+    const crowd = Array.from({ length: 10 }, (_, index) => ({
+      ...first,
+      workflowId: `workflow-${index}`,
+    }));
+    let inFlight = 0;
+    let peak = 0;
+    submit.mockImplementation(async () => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await Promise.resolve();
+      inFlight--;
+      return "observed";
+    });
+    await registry.reconcile(crowd);
+    await consume.mock.calls[0][0].onPrice({
+      id: first.feedId,
+      price: { price: "100", conf: "1", expo: 0, publish_time: 1000 },
+    });
+    expect(submit).toHaveBeenCalledTimes(10);
+    expect(peak).toBe(4);
+  });
+
+  it("backs off a feed that drops right after delivering a price", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const price = {
+      id: first.feedId,
+      price: { price: "100", conf: "1", expo: 0, publish_time: 1000 },
+    };
+    consume.mockImplementation(
+      async ({ onPrice }: { onPrice: (value: unknown) => Promise<void> }) => {
+        await onPrice(price);
+      },
+    );
+    await registry.reconcile([first]);
+    // Connections at 0s, 1s, 3s and 7s: the delivered price does not reset
+    // the backoff to its 1s floor.
+    await vi.advanceTimersByTimeAsync(6900);
+    expect(consume).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(consume).toHaveBeenCalledTimes(4);
   });
 
   it("does not create replacement streams if shutdown races with reconciliation", async () => {

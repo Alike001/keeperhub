@@ -1,3 +1,5 @@
+import { logger } from "../../lib/utils/logger";
+
 const MAX_EVENT_CHARS = 262_144;
 
 /** Incremental SSE decoder: supports CR, LF, CRLF and multiline data fields. */
@@ -58,7 +60,7 @@ export function decodeHermesMessage(
     .map((update) => ({ id: update.id, price: update.price }));
 }
 
-/** One connection; the registry owns retries and gives each connection a new identity. */
+/** One connection; the registry owns retries and what a reconnect means. */
 export async function consumeHermesStream(options: {
   apiKey: string;
   feedId: string;
@@ -78,6 +80,25 @@ export async function consumeHermesStream(options: {
     controller.abort();
   }
   let timeout = setTimeout(abort, 10_000);
+  // Reading never waits on delivery. Prices that arrive while one is being
+  // delivered replace each other, so a slow fan-out resumes on the freshest
+  // price instead of backing up the socket and ageing a queue past
+  // maxAgeSeconds.
+  let latest: HermesPrice | null = null;
+  let delivering = false;
+  let delivery: Promise<void> | undefined;
+  const deliver = async (): Promise<void> => {
+    delivering = true;
+    try {
+      while (latest && !controller.signal.aborted) {
+        const price: HermesPrice = latest;
+        latest = null;
+        await options.onPrice(price);
+      }
+    } finally {
+      delivering = false;
+    }
+  };
   try {
     const response = await fetch(url, {
       headers: {
@@ -98,18 +119,30 @@ export async function consumeHermesStream(options: {
     const events = new SseDecoder();
     try {
       while (!controller.signal.aborted) {
+        // The idle timeout measures Hermes silence, never delivery time.
         clearTimeout(timeout);
         timeout = setTimeout(abort, 20_000);
         const { done, value } = await reader.read();
+        clearTimeout(timeout);
         if (done) {
           return;
         }
         for (const data of events.push(
           decoder.decode(value, { stream: true }),
         )) {
-          for (const price of decodeHermesMessage(data, options.feedId)) {
-            await options.onPrice(price);
+          try {
+            for (const price of decodeHermesMessage(data, options.feedId)) {
+              latest = price;
+            }
+          } catch {
+            // One bad frame must not tear down every workflow on the feed.
+            logger.warn(
+              `[Pyth] skipped a malformed Hermes message on feed ${options.feedId}`,
+            );
           }
+        }
+        if (latest && !delivering) {
+          delivery = deliver().catch(abort);
         }
       }
     } finally {
@@ -120,5 +153,8 @@ export async function consumeHermesStream(options: {
     clearTimeout(timeout);
     options.signal.removeEventListener("abort", abort);
     controller.abort();
+    // Never return while a fan-out is in flight: the next connection would
+    // interleave observations for the same workflows.
+    await delivery;
   }
 }

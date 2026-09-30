@@ -2,13 +2,23 @@ import { randomUUID } from "node:crypto";
 import { logger } from "../../lib/utils/logger";
 import { abortableSleep } from "../listener/shutdown";
 import { type PythRegistration, submitPythObservation } from "./client";
-import { consumeHermesStream } from "./hermes-stream";
+import { type HermesPrice, consumeHermesStream } from "./hermes-stream";
 
 type Subscription = {
   registrations: PythRegistration[];
   controller: AbortController;
   task: Promise<void>;
 };
+
+// Each observation is an HTTP round trip plus a row-locking transaction on the
+// app, so a crowded feed delivers in parallel but never takes an unbounded
+// share of the app's connection pool.
+const OBSERVATION_CONCURRENCY = 4;
+
+// Only a connection that stayed up this long resets the reconnect backoff. A
+// feed that delivers one price and drops would otherwise reconnect at the
+// floor delay forever.
+const STABLE_CONNECTION_MS = 60_000;
 
 export class PythRegistry {
   private readonly subscriptions = new Map<string, Subscription>();
@@ -90,39 +100,13 @@ export class PythRegistry {
     while (!subscription.controller.signal.aborted) {
       // Workflows whose checkpoint has taken a baseline on this connection.
       const baselined = new Set<string>();
+      const connectedAt = Date.now();
       try {
         await consumeHermesStream({
           apiKey: this.apiKey,
           feedId,
           signal: subscription.controller.signal,
-          onPrice: async (price) => {
-            failures = 0;
-            for (const registration of subscription.registrations) {
-              if (subscription.controller.signal.aborted) {
-                return;
-              }
-              const { workflowId } = registration;
-              try {
-                // Until the server records a baseline for this workflow on
-                // this connection, the price must not be compared with the
-                // one before the reconnect.
-                const outcome = await submitPythObservation(
-                  registration,
-                  this.sessionId,
-                  price,
-                  !baselined.has(workflowId),
-                );
-                if (outcome === "baseline") {
-                  baselined.add(workflowId);
-                }
-              } catch {
-                // Do not let one workflow's dispatch failure drop other subscriptions.
-                logger.warn(
-                  `[Pyth] observation failed for ${workflowId}; pending signals remain recoverable`,
-                );
-              }
-            }
-          },
+          onPrice: (price) => this.deliver(subscription, price, baselined),
         });
       } catch {
         if (!subscription.controller.signal.aborted) {
@@ -131,12 +115,55 @@ export class PythRegistry {
           );
         }
       }
+      if (Date.now() - connectedAt >= STABLE_CONNECTION_MS) {
+        failures = 0;
+      }
       const delay = Math.min(30_000, 1000 * 2 ** Math.min(failures++, 5));
       await abortableSleep(
         delay + Math.floor(Math.random() * 500),
         subscription.controller.signal,
       );
     }
+  }
+
+  private async deliver(
+    subscription: Subscription,
+    price: HermesPrice,
+    baselined: Set<string>,
+  ): Promise<void> {
+    const queue = [...subscription.registrations];
+    const worker = async (): Promise<void> => {
+      let registration = queue.shift();
+      while (registration && !subscription.controller.signal.aborted) {
+        const { workflowId } = registration;
+        try {
+          // Until the server records a baseline for this workflow on this
+          // connection, the price must not be compared with the one before
+          // the reconnect.
+          const outcome = await submitPythObservation(
+            registration,
+            this.sessionId,
+            price,
+            !baselined.has(workflowId),
+          );
+          if (outcome === "baseline") {
+            baselined.add(workflowId);
+          }
+        } catch {
+          // Do not let one workflow's dispatch failure drop other subscriptions.
+          logger.warn(
+            `[Pyth] observation failed for ${workflowId}; pending signals remain recoverable`,
+          );
+        }
+        registration = queue.shift();
+      }
+    };
+    await Promise.all(
+      Array.from(
+        { length: Math.min(OBSERVATION_CONCURRENCY, queue.length) },
+        worker,
+      ),
+    );
   }
 
   async stopAll(): Promise<void> {
