@@ -33,8 +33,7 @@ const BARE_LAYOUT_PATHS: ReadonlySet<string> = new Set([
 const BARE_LAYOUT_PREFIXES: readonly string[] = ["/welcome", "/executions"];
 
 function isBareLayoutPath(pathname: string): boolean {
-  // The Pyth feature page has its own navigation and workflow entry point.
-  if (pathname === "/pyth" || BARE_LAYOUT_PATHS.has(pathname)) {
+  if (BARE_LAYOUT_PATHS.has(pathname)) {
     return true;
   }
   return BARE_LAYOUT_PREFIXES.some((prefix) => pathname.startsWith(prefix));
