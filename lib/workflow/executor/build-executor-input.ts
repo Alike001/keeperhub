@@ -1,4 +1,3 @@
-import { pythDispatchRefusal } from "@/lib/pyth/validate-dispatch";
 import type { WorkflowExecutionInput } from "@/lib/workflow/executor/executor.workflow";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
@@ -20,6 +19,11 @@ export type ExecutorInputWorkflow = {
  * as the ORG principal (this organizationId). `createdBy` is
  * the workflow creator for audit attribution only - it confers no
  * credential access.
+ *
+ * Never refuse here based on triggerInput. It is caller-writable on the MCP
+ * call and webhook paths, and every runner calls this after the executor has
+ * claimed the row, so a refusal would strand or fail a run instead of
+ * skipping it. Pyth signal expiry is enforced by the executor before claim.
  */
 export function buildExecutorInput(
   workflow: ExecutorInputWorkflow,
@@ -31,12 +35,6 @@ export function buildExecutorInput(
     organizationPlan?: string;
   }
 ): WorkflowExecutionInput {
-  if (params.triggerInput?.triggerType === "upstream") {
-    const refusal = pythDispatchRefusal(workflow.nodes, params.triggerInput);
-    if (refusal) {
-      throw new Error(refusal);
-    }
-  }
   return {
     nodes: workflow.nodes as WorkflowNode[],
     edges: workflow.edges as WorkflowEdge[],

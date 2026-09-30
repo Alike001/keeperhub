@@ -53,13 +53,18 @@ describe("buildExecutorInput", () => {
   });
 });
 
-describe("Pyth runner startup", () => {
-  it("refuses an upstream signal that expired while waiting for its runner", () => {
-    expect(() =>
-      buildExecutorInput(WORKFLOW, {
-        executionId: "expired-pyth",
-        triggerInput: { triggerType: "upstream", expiresAt: Date.now() - 1 },
-      })
-    ).toThrow("expired");
+describe("caller-supplied trigger input", () => {
+  // The MCP call route builds this synchronously after committing the
+  // execution row (and payment), so a throw strands the run.
+  it("never refuses based on triggerInput content", () => {
+    const triggerInput = {
+      triggerType: "upstream",
+      expiresAt: Date.now() - 1,
+    };
+    const input = buildExecutorInput(WORKFLOW, {
+      executionId: "caller-input",
+      triggerInput,
+    });
+    expect(input.triggerInput).toEqual(triggerInput);
   });
 });
