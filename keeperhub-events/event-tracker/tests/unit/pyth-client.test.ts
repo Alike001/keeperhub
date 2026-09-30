@@ -95,6 +95,21 @@ describe("Pyth durable dispatch client", () => {
     expect(sent[0]).toEqual(sent[2]);
   });
 
+  it("sends the rebaseline request with the observation and reports the outcome", async () => {
+    fetchMock
+      .mockResolvedValueOnce(respond({ outcome: "baseline" }))
+      .mockResolvedValueOnce(respond({ outcome: "idle" }));
+    await expect(
+      submitPythObservation(registration, "session", update, true),
+    ).resolves.toBe("baseline");
+    await expect(submitPythObservation(registration, "session")).resolves.toBe(
+      "idle",
+    );
+    const [observe, recovery] = commands();
+    expect(observe).toMatchObject({ action: "observe", rebaseline: true });
+    expect(recovery).not.toHaveProperty("rebaseline");
+  });
+
   it("rejects a pending dispatch for another workflow", async () => {
     fetchMock.mockResolvedValueOnce(
       respond({

@@ -57,19 +57,46 @@ describe("Pyth stream lifecycle", () => {
     expect(submit).toHaveBeenCalledWith(first, expect.any(String));
   });
 
-  it("uses a new observation session after reconnect", async () => {
+  it("keeps its lease identity across reconnects and asks for a fresh baseline", async () => {
     consume.mockResolvedValueOnce(undefined);
+    submit.mockResolvedValue("baseline");
     await registry.reconcile([first]);
     const price = {
       id: first.feedId,
       price: { price: "100", conf: "1", expo: 0, publish_time: 1000 },
     };
     await consume.mock.calls[0][0].onPrice(price);
-    const initialSession = submit.mock.calls[0][1];
     await vi.advanceTimersByTimeAsync(1500);
     expect(consume).toHaveBeenCalledTimes(2);
-    await consume.mock.calls[1][0].onPrice(price);
-    expect(submit.mock.calls[1][1]).not.toBe(initialSession);
+    const onPrice = consume.mock.calls[1][0].onPrice;
+    await onPrice(price);
+    submit.mockResolvedValue("observed");
+    await onPrice(price);
+    const sessions = submit.mock.calls.map((call) => call[1]);
+    expect(new Set(sessions).size).toBe(1);
+    expect(submit.mock.calls.map((call) => call[3])).toEqual([
+      true,
+      true,
+      false,
+    ]);
+  });
+
+  it("keeps requesting a baseline until the server records one", async () => {
+    submit.mockResolvedValueOnce("out_of_order").mockResolvedValue("baseline");
+    await registry.reconcile([first]);
+    const price = {
+      id: first.feedId,
+      price: { price: "100", conf: "1", expo: 0, publish_time: 1000 },
+    };
+    const { onPrice } = consume.mock.calls[0][0];
+    await onPrice(price);
+    await onPrice(price);
+    await onPrice(price);
+    expect(submit.mock.calls.map((call) => call[3])).toEqual([
+      true,
+      true,
+      false,
+    ]);
   });
 
   it("does not create replacement streams if shutdown races with reconciliation", async () => {

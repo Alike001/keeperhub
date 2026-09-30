@@ -8,12 +8,14 @@ type Subscription = {
   registrations: PythRegistration[];
   controller: AbortController;
   task: Promise<void>;
-  sessionId: string;
 };
 
 export class PythRegistry {
   private readonly subscriptions = new Map<string, Subscription>();
   private readonly timer: ReturnType<typeof setInterval>;
+  // The lease identity is per process, not per connection: a reconnect is the
+  // same owner, so it keeps the lease and requests a fresh baseline explicitly.
+  private readonly sessionId = randomUUID();
   private pendingTask: Promise<void> | null = null;
   private stopped = false;
 
@@ -57,7 +59,6 @@ export class PythRegistry {
         registrations: group,
         controller: new AbortController(),
         task: Promise.resolve(),
-        sessionId: randomUUID(),
       };
       this.subscriptions.set(feedId, subscription);
       subscription.task = this.listen(feedId, subscription);
@@ -71,7 +72,7 @@ export class PythRegistry {
           return;
         }
         try {
-          await submitPythObservation(registration, subscription.sessionId);
+          await submitPythObservation(registration, this.sessionId);
         } catch {
           logger.warn(
             `[Pyth] pending dispatch recovery failed for ${registration.workflowId}; will retry`,
@@ -87,7 +88,8 @@ export class PythRegistry {
   ): Promise<void> {
     let failures = 0;
     while (!subscription.controller.signal.aborted) {
-      subscription.sessionId = randomUUID();
+      // Workflows whose checkpoint has taken a baseline on this connection.
+      const baselined = new Set<string>();
       try {
         await consumeHermesStream({
           apiKey: this.apiKey,
@@ -99,16 +101,24 @@ export class PythRegistry {
               if (subscription.controller.signal.aborted) {
                 return;
               }
+              const { workflowId } = registration;
               try {
-                await submitPythObservation(
+                // Until the server records a baseline for this workflow on
+                // this connection, the price must not be compared with the
+                // one before the reconnect.
+                const outcome = await submitPythObservation(
                   registration,
-                  subscription.sessionId,
+                  this.sessionId,
                   price,
+                  !baselined.has(workflowId),
                 );
+                if (outcome === "baseline") {
+                  baselined.add(workflowId);
+                }
               } catch {
                 // Do not let one workflow's dispatch failure drop other subscriptions.
                 logger.warn(
-                  `[Pyth] observation failed for ${registration.workflowId}; pending signals remain recoverable`,
+                  `[Pyth] observation failed for ${workflowId}; pending signals remain recoverable`,
                 );
               }
             }

@@ -89,7 +89,7 @@ describe.skipIf(!process.env.PYTH_TEST_DATABASE_URL)(
       price: string,
       offset: number,
       session = sessionId
-    ): PythObservationRequest {
+    ): Extract<PythObservationRequest, { action: "observe" }> {
       return {
         action: "observe",
         workflowId,
@@ -292,6 +292,16 @@ describe.skipIf(!process.env.PYTH_TEST_DATABASE_URL)(
         .where(eq(pythTriggerCheckpoints.workflowId, workflowId));
       expect((await observe("100", 1, replacement)).outcome).toBe("baseline");
       expect((await pending()).pending).toBeUndefined();
+    });
+
+    it("keeps the lease across a reconnect and rebaselines only on request", async () => {
+      await observe("94", 0);
+      const rebaselined = await observePythPrice(
+        { ...command("100", 1), rebaseline: true },
+        request
+      );
+      expect(rebaselined.outcome).toBe("baseline");
+      expect((await observe("101", 2)).pending).toBeDefined();
     });
 
     it("expires pending signals without executing or billing them", async () => {

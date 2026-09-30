@@ -137,8 +137,21 @@ describe("Pyth internal route authorization", () => {
     expect(observe).toHaveBeenCalledWith(command, request);
   });
 
+  it("forwards an explicit rebaseline request", async () => {
+    const request = signed(
+      "POST",
+      JSON.stringify({ ...command, rebaseline: true })
+    );
+    expect((await POST(request)).status).toBe(200);
+    expect(observe).toHaveBeenCalledWith(
+      { ...command, rebaseline: true },
+      request
+    );
+  });
+
   it.each([
     { ...command, sessionId: "not-a-session" },
+    { ...command, rebaseline: "yes" },
     {
       ...command,
       update: {

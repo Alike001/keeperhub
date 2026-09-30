@@ -58,11 +58,13 @@ export async function fetchPythRegistrations(): Promise<PythRegistration[]> {
   return data.workflows;
 }
 
+/** Resolves to the outcome of the last observe or pending command sent. */
 export async function submitPythObservation(
   registration: PythRegistration,
   sessionId: string,
   update?: HermesPrice,
-): Promise<void> {
+  rebaseline = false,
+): Promise<string> {
   const identity = {
     workflowId: registration.workflowId,
     configHash: registration.configHash,
@@ -71,8 +73,9 @@ export async function submitPythObservation(
   const command = {
     ...identity,
     action: update ? "observe" : "pending",
-    ...(update ? { update } : {}),
+    ...(update ? { update, rebaseline } : {}),
   };
+  let outcome = "";
   // If an earlier pending dispatch blocks this observation, flush it then
   // offer the same price again. A replay is harmless: matching is durable.
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -80,8 +83,9 @@ export async function submitPythObservation(
     if (!response || typeof response.outcome !== "string") {
       throw new Error("Invalid Pyth observation response");
     }
+    outcome = response.outcome;
     if (!response.pending) {
-      return;
+      return outcome;
     }
     const pending = response.pending;
     if (
@@ -103,7 +107,8 @@ export async function submitPythObservation(
       executionId: pending.executionId,
     });
     if (!update || response.outcome !== "pending") {
-      return;
+      return outcome;
     }
   }
+  return outcome;
 }

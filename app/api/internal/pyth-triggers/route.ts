@@ -21,7 +21,12 @@ const identity = {
   sessionId: z.string().uuid(),
 };
 const commandSchema = z.discriminatedUnion("action", [
-  z.object({ ...identity, action: z.literal("observe"), update: z.unknown() }),
+  z.object({
+    ...identity,
+    action: z.literal("observe"),
+    update: z.unknown(),
+    rebaseline: z.boolean().optional(),
+  }),
   z.object({ ...identity, action: z.literal("pending") }),
   z.object({
     ...identity,

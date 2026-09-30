@@ -21,7 +21,7 @@ export type PythObservationRequest = {
   configHash: string;
   sessionId: string;
 } & (
-  | { action: "observe"; update: PythPriceUpdate }
+  | { action: "observe"; update: PythPriceUpdate; rebaseline?: boolean }
   | { action: "pending" }
   | { action: "ack"; executionId: string }
 );
@@ -196,6 +196,7 @@ export async function observePythPrice(
       return { outcome: "leased" };
     }
     const resetBaseline =
+      command.rebaseline === true ||
       checkpoint.sessionId !== command.sessionId ||
       !checkpoint.leaseUntil ||
       checkpoint.leaseUntil <= now;
