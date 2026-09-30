@@ -1,5 +1,5 @@
 {
-  "id": "8465527d-7e74-4756-a447-2327e0f28606",
+  "id": "7f95c00f-9196-451c-a2e3-167dc176d1c7",
   "prevId": "4aef163f-14c3-49e7-b071-f41d1ccd94a3",
   "version": "7",
   "dialect": "postgresql",
@@ -4777,83 +4777,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.pyth_trigger_checkpoints": {
-      "name": "pyth_trigger_checkpoints",
-      "schema": "",
-      "columns": {
-        "workflow_id": {
-          "name": "workflow_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "config_hash": {
-          "name": "config_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "session_id": {
-          "name": "session_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "lease_until": {
-          "name": "lease_until",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "last_publish_time": {
-          "name": "last_publish_time",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "armed": {
-          "name": "armed",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "pending": {
-          "name": "pending",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "pyth_trigger_checkpoints_workflow_id_workflows_id_fk": {
-          "name": "pyth_trigger_checkpoints_workflow_id_workflows_id_fk",
-          "tableFrom": "pyth_trigger_checkpoints",
-          "tableTo": "workflows",
-          "columnsFrom": [
-            "workflow_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.safe_role_allowances": {
       "name": "safe_role_allowances",
       "schema": "",
@@ -8832,6 +8755,60 @@
           ]
         }
       },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.workflow_step_claims": {
+      "name": "workflow_step_claims",
+      "schema": "",
+      "columns": {
+        "execution_id": {
+          "name": "execution_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "node_id": {
+          "name": "node_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "claimed_at": {
+          "name": "claimed_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "workflow_step_claims_execution_id_workflow_executions_id_fk": {
+          "name": "workflow_step_claims_execution_id_workflow_executions_id_fk",
+          "tableFrom": "workflow_step_claims",
+          "tableTo": "workflow_executions",
+          "columnsFrom": [
+            "execution_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "workflow_step_claims_pk": {
+          "name": "workflow_step_claims_pk",
+          "columns": [
+            "execution_id",
+            "node_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false

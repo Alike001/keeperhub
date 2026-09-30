@@ -122,7 +122,7 @@ The backend demo uses the actual event worker, authenticated route handlers, Pos
 Prerequisites:
 
 - Node.js 24; root dependencies installed with `pnpm install --frozen-lockfile`, and event dependencies with `pnpm --dir keeperhub-events install --frozen-lockfile`.
-- An isolated **local** PostgreSQL database whose name ends in `_pyth`, initialized with this branch's schema, including migration `0153_pyth_trigger_checkpoints`. For a fresh disposable database, the existing local `pnpm db:push` setup is sufficient.
+- An isolated **local** PostgreSQL database whose name ends in `_pyth`, initialized with this branch's schema, including migration `0162_pyth_trigger_checkpoints`. For a fresh disposable database, the existing local `pnpm db:push` setup is sufficient.
 - Running local Redis and an SQS-compatible emulator. The runner creates or verifies the configured queue on every start, including after emulator restarts.
 - A private environment file, such as `.env.pyth-demo`, containing the normal local backend authentication/encryption settings plus `DATABASE_URL`, `AWS_ENDPOINT_URL`, `SQS_QUEUE_URL`, `REDIS_HOST`, `REDIS_PORT`, `PYTH_API_KEY`, `INTERNAL_SERVICE_HMAC_SECRET`, and `AGENTIC_WALLET_HMAC_KMS_KEY` (32 random bytes encoded as base64). Existing encrypted internal-auth records must match those keys. Do not commit the file.
 - Ports 3110, 3180 and 3181 available. Stop another demo before starting this one.

@@ -319,7 +319,12 @@ export async function POST(request: Request) {
       workflowId: newWorkflow.id,
       before: null,
       after: newWorkflow,
-      actor: { userId, organizationId, authMethod: authContext.authMethod },
+      actor: {
+        userId,
+        organizationId,
+        authMethod: authContext.authMethod,
+        apiKeyId: authContext.apiKeyId,
+      },
       source: "create",
     });
 

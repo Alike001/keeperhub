@@ -978,7 +978,12 @@ export async function PATCH(
       workflowId,
       before: existingWorkflow,
       after: updatedWorkflow,
-      actor: { userId, organizationId, authMethod: authContext.authMethod },
+      actor: {
+        userId,
+        organizationId,
+        authMethod: authContext.authMethod,
+        apiKeyId: authContext.apiKeyId,
+      },
       source: "update",
     });
 
