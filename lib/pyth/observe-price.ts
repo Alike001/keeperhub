@@ -1,5 +1,8 @@
 import { and, eq } from "drizzle-orm";
-import { checkDispatchAdmission } from "@/lib/billing/dispatch-admission";
+import {
+  checkDispatchAdmission,
+  type DispatchRefusal,
+} from "@/lib/billing/dispatch-admission";
 import { db } from "@/lib/db";
 import {
   organization,
@@ -34,6 +37,33 @@ export type PythObservationResult = {
 const LEASE_MS = 45_000;
 
 /**
+ * Admission reads plan and usage through the default pool. Resolving it before
+ * the transaction keeps an observation to one pooled connection at a time and
+ * keeps those reads out of the workflow row lock. The executor re-runs
+ * admission before it claims the row, so a decision that goes stale before the
+ * lock is taken is harmless.
+ */
+async function resolveAdmission(
+  workflowId: string,
+  database: typeof db
+): Promise<DispatchRefusal | null> {
+  const [workflow] = await database
+    .select({
+      organizationId: workflows.organizationId,
+      nodes: workflows.nodes,
+    })
+    .from(workflows)
+    .where(eq(workflows.id, workflowId));
+  if (!workflow) {
+    return null;
+  }
+  return await checkDispatchAdmission({
+    organizationId: workflow.organizationId,
+    nodes: workflow.nodes as unknown[],
+  });
+}
+
+/**
  * The checkpoint and phantom row commit together before anything is enqueued.
  * A lost HTTP reply or SQS acknowledgement leaves the same pending execution
  * available for redelivery; only the executor's existing CAS starts it.
@@ -43,6 +73,10 @@ export async function observePythPrice(
   request: Request,
   database: typeof db = db
 ): Promise<PythObservationResult> {
+  const refusal =
+    command.action === "observe"
+      ? await resolveAdmission(command.workflowId, database)
+      : null;
   return await database.transaction(async (tx) => {
     const [workflow] = await tx
       .select()
@@ -182,10 +216,6 @@ export async function observePythPrice(
     let pending: PythPendingDispatch | null = null;
     let outcome: string = evaluated.outcome;
     if (evaluated.signal) {
-      const refusal = await checkDispatchAdmission({
-        organizationId: workflow.organizationId,
-        nodes: workflow.nodes as unknown[],
-      });
       const dispatchKey = `${evaluated.signal.sourceUpdateId}:${workflow.id}:${command.configHash}`;
       const [execution] = await tx
         .insert(workflowExecutions)
