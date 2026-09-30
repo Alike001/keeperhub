@@ -299,6 +299,40 @@ describe("PATCH /api/workflows/[workflowId] schedule registration", () => {
     }
   });
 
+  it("refuses to enable a Pyth trigger when PYTH_API_KEY is unset", async () => {
+    const originalPythApiKey = process.env.PYTH_API_KEY;
+    delete process.env.PYTH_API_KEY;
+    try {
+      mockWorkflowsFindFirst.mockResolvedValue({
+        ...existingWorkflow(),
+        enabled: false,
+        nodes: [
+          {
+            id: "trigger-1",
+            data: {
+              type: "trigger",
+              config: {
+                triggerType: "Pyth Price",
+                feedId: "a".repeat(64),
+                direction: "above",
+                threshold: "100",
+                rearmThreshold: "95",
+              },
+            },
+          },
+        ],
+      });
+      const response = await PATCH(makeRequest({ enabled: true }), { params });
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toBe("PYTH_TRIGGER_DISABLED");
+      expect(mockUpdateReturning).not.toHaveBeenCalled();
+    } finally {
+      if (originalPythApiKey !== undefined) {
+        process.env.PYTH_API_KEY = originalPythApiKey;
+      }
+    }
+  });
+
   it("registers the schedule on an enable-only PATCH", async () => {
     const response = await PATCH(makeRequest({ enabled: true }), { params });
 

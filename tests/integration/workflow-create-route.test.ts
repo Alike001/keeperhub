@@ -461,3 +461,51 @@ describe("POST /api/workflows/create schedule registration", () => {
     expect(mockSyncPersistedSchedule).not.toHaveBeenCalled();
   });
 });
+
+describe("POST /api/workflows/create Pyth availability", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetDualAuthContext.mockResolvedValue({
+      userId: "user-123",
+      organizationId: "org-123",
+      authMethod: "session",
+    });
+    mockValidateWorkflowIntegrations.mockResolvedValue({ valid: true });
+  });
+
+  it("refuses a Pyth trigger when PYTH_API_KEY is unset", async () => {
+    const originalPythApiKey = process.env.PYTH_API_KEY;
+    delete process.env.PYTH_API_KEY;
+    try {
+      const response = await POST(
+        request(
+          workflowBody([
+            {
+              id: "trigger-1",
+              type: "trigger",
+              data: {
+                type: "trigger",
+                label: "Pyth Price",
+                config: {
+                  triggerType: "Pyth Price",
+                  feedId: "a".repeat(64),
+                  direction: "above",
+                  threshold: "100",
+                  rearmThreshold: "95",
+                },
+              },
+            },
+          ])
+        )
+      );
+
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toBe("PYTH_TRIGGER_DISABLED");
+      expect(mockInsert).not.toHaveBeenCalled();
+    } finally {
+      if (originalPythApiKey !== undefined) {
+        process.env.PYTH_API_KEY = originalPythApiKey;
+      }
+    }
+  });
+});
