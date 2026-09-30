@@ -10,6 +10,7 @@ import {
   hasPythPriceTrigger,
   isPythPriceTriggerEnabled,
 } from "@/lib/pyth/feature-flag";
+import { findPythConfig } from "@/lib/pyth/trigger-config";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 import { recordWorkflowSnapshot } from "@/lib/workflow/history";
 import { db } from "@/lib/db";
@@ -169,6 +170,23 @@ export async function POST(request: Request) {
         },
         { status: 400 }
       );
+    }
+
+    // Same rule as enabling through PATCH: a draft may be incomplete, but a
+    // workflow created enabled must carry a config the listener can register.
+    if (body.enabled === true) {
+      try {
+        findPythConfig(nodes);
+      } catch (error) {
+        return NextResponse.json(
+          {
+            error: "INVALID_PYTH_TRIGGER",
+            message:
+              error instanceof Error ? error.message : "Invalid Pyth trigger",
+          },
+          { status: 400 }
+        );
+      }
     }
 
     // A 201 from this endpoint does not mean the workflow will run. The gate
