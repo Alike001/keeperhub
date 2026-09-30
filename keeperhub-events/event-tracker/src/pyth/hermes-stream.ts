@@ -85,6 +85,7 @@ export async function consumeHermesStream(options: {
   // price instead of backing up the socket and ageing a queue past
   // maxAgeSeconds.
   let latest: HermesPrice | null = null;
+  let latestPublishTime = 0;
   let delivering = false;
   let delivery: Promise<void> | undefined;
   const deliver = async (): Promise<void> => {
@@ -132,7 +133,13 @@ export async function consumeHermesStream(options: {
         )) {
           try {
             for (const price of decodeHermesMessage(data, options.feedId)) {
-              latest = price;
+              // Hermes sends several updates per publish_time, and evaluation
+              // rejects all but the first as out_of_order, so the rest would
+              // only cost a round trip and a transaction per workflow.
+              if (price.price.publish_time > latestPublishTime) {
+                latestPublishTime = price.price.publish_time;
+                latest = price;
+              }
             }
           } catch {
             // One bad frame must not tear down every workflow on the feed.

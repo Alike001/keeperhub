@@ -106,6 +106,22 @@ describe("Hermes stream delivery", () => {
     expect(await outcome).toBe("rejected");
   });
 
+  it("delivers only the first update for each publish time", async () => {
+    const delivered: string[] = [];
+    const { stop, stream } = await open(async (price) => {
+      delivered.push(`${price.price.publish_time}:${price.price.price}`);
+    });
+    push(frame(5));
+    await vi.advanceTimersByTimeAsync(0);
+    push(frame(5).replace('"price":"5"', '"price":"6"'));
+    push(frame(4));
+    push(frame(6));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(delivered).toEqual(["5:5", "6:6"]);
+    stop.abort();
+    await stream.catch(() => undefined);
+  });
+
   it("skips a malformed frame without dropping the connection", async () => {
     const delivered: number[] = [];
     const { stop, stream } = await open(async (price) => {
