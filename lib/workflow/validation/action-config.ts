@@ -583,13 +583,10 @@ function validateFieldValue(
           received: value,
         };
       }
-      // Length is only enforced on a value the array editor wrote. A legacy
-      // scalar that never encoded against a fixed-size input still fails at
-      // execution, where it failed before, instead of blocking the save.
-      if (
-        isStructured &&
-        !arrayValueHasExpectedLength(value, field.solidityType)
-      ) {
+      // Enforced on a legacy scalar too: no protocol input declares a
+      // fixed-size array, so a scalar in one can only arrive from a new write,
+      // and this reads through the same normaliser the steps encode from.
+      if (!arrayValueHasExpectedLength(value, field.solidityType)) {
         return {
           valid: false,
           expected: `${field.solidityType} with ${fixedArrayLength(field.solidityType)} items`,

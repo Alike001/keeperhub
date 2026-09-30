@@ -6,7 +6,10 @@ import { Button } from "@/components/ui/button";
 import { TemplateBadgeInput } from "@/components/ui/template-badge-input";
 import type { AbiComponent } from "@/components/workflow/config/abi-types";
 import { TupleInputField } from "@/components/workflow/config/tuple-input-field";
-import { normalizeProtocolArrayValue } from "@/lib/protocol-array-value";
+import {
+  isWholeFieldTemplate,
+  normalizeProtocolArrayValue,
+} from "@/lib/protocol-array-value";
 
 type ArrayItem = {
   id: number;
@@ -157,6 +160,11 @@ export function ArrayInputField({
   }
 
   const isTuple = components !== undefined && components.length > 0;
+  // A lone reference is stored bare and resolves to the whole array. A second
+  // row turns the value into JSON with the resolved array inside one element,
+  // which cannot encode.
+  const holdsWholeFieldReference =
+    items.length === 1 && isWholeFieldTemplate(items[0].value);
 
   return (
     <div className="space-y-1.5">
@@ -227,15 +235,26 @@ export function ArrayInputField({
       ))}
       <Button
         className="w-full"
-        disabled={disabled}
+        disabled={disabled || holdsWholeFieldReference}
         onClick={addItem}
         size="sm"
+        title={
+          holdsWholeFieldReference
+            ? "This reference already supplies the whole array. Remove it to list items individually."
+            : undefined
+        }
         type="button"
         variant="outline"
       >
         <Plus className="mr-1.5 h-3.5 w-3.5" />
         {isTuple ? "Add Object" : "Add Item"}
       </Button>
+      {holdsWholeFieldReference && (
+        <p className="text-muted-foreground text-xs">
+          This reference already supplies the whole array. Remove it to list
+          items individually.
+        </p>
+      )}
     </div>
   );
 }

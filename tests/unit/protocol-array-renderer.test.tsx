@@ -179,10 +179,11 @@ describe("registered protocol-array renderer", () => {
     expect(onUpdateConfig).not.toHaveBeenCalled();
   });
 
-  // The PR's own headline composition: one Lido action's array output feeds
-  // the next action's array input. Stored as ["{{...}}"] the reference
-  // resolves to an array spliced inside the quotes, which cannot encode.
-  it("round-trips a whole-field reference through an edit", async () => {
+  // One Lido action's array output feeds the next action's array input. A lone
+  // reference is stored bare and resolves to the whole array; a second row
+  // would splice the resolved array inside one quoted element, which cannot
+  // encode, so the editor refuses it.
+  it("refuses a second row beside a whole-field reference", async () => {
     const renderer = getCustomFieldRenderer("protocol-array");
     const onUpdateConfig = vi.fn();
     const reference = "{{@n1:Get Withdrawal Requests.requestsIds}}";
@@ -203,13 +204,11 @@ describe("registered protocol-array renderer", () => {
 
     const addButton = Array.from(container.querySelectorAll("button")).find(
       (button) => button.textContent?.includes("Add Item")
-    );
-    await act(async () => addButton?.click());
+    ) as HTMLButtonElement | undefined;
+    expect(addButton?.disabled).toBe(true);
 
-    expect(onUpdateConfig).toHaveBeenLastCalledWith(
-      "requestIds",
-      JSON.stringify([reference, ""])
-    );
+    await act(async () => addButton?.click());
+    expect(onUpdateConfig).not.toHaveBeenCalled();
 
     await act(async () =>
       root.render(

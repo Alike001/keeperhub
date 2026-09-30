@@ -255,3 +255,63 @@ describe("ArrayInputField legacy values", () => {
     expect(container.querySelectorAll('[role="textbox"]')).toHaveLength(1);
   });
 });
+
+describe("ArrayInputField whole-field reference", () => {
+  const addButton = (): HTMLButtonElement | undefined =>
+    [...container.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("Add Item")
+    ) as HTMLButtonElement | undefined;
+
+  it("refuses a second row while the only row supplies the whole array", async () => {
+    await act(async () =>
+      root.render(
+        <ArrayInputField
+          fieldKey="requestIds"
+          itemType="uint256"
+          onChange={vi.fn()}
+          value="{{@n1:Get Requests.requestsIds}}"
+        />
+      )
+    );
+
+    expect(addButton()?.disabled).toBe(true);
+    expect(container.textContent).toContain("already supplies the whole array");
+  });
+
+  it("keeps Remove enabled so the reference can be cleared", async () => {
+    await act(async () =>
+      root.render(
+        <ArrayInputField
+          fieldKey="requestIds"
+          itemType="uint256"
+          onChange={vi.fn()}
+          value="{{@n1:Get Requests.requestsIds}}"
+        />
+      )
+    );
+
+    const removes = [...container.querySelectorAll("button")].filter(
+      (b) => !b.textContent?.includes("Add Item")
+    );
+    expect(removes.length).toBeGreaterThan(0);
+    expect(removes.every((b) => (b as HTMLButtonElement).disabled)).toBe(false);
+  });
+
+  it("allows adding rows for an ordinary value", async () => {
+    await act(async () =>
+      root.render(
+        <ArrayInputField
+          fieldKey="requestIds"
+          itemType="uint256"
+          onChange={vi.fn()}
+          value="135184"
+        />
+      )
+    );
+
+    expect(addButton()?.disabled).toBe(false);
+    expect(container.textContent).not.toContain(
+      "already supplies the whole array"
+    );
+  });
+});
