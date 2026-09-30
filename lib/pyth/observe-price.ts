@@ -37,46 +37,57 @@ export type PythObservationResult = {
 const LEASE_MS = 45_000;
 
 /**
- * Admission reads plan and usage through the default pool. Resolving it before
- * the transaction keeps an observation to one pooled connection at a time and
- * keeps those reads out of the workflow row lock. The executor re-runs
- * admission before it claims the row, so a decision that goes stale before the
- * lock is taken is harmless.
+ * Thrown inside the observation transaction to roll it back when a crossing
+ * needs an admission decision that has not been resolved yet.
  */
-async function resolveAdmission(
-  workflowId: string,
-  database: typeof db
-): Promise<DispatchRefusal | null> {
-  const [workflow] = await database
-    .select({
-      organizationId: workflows.organizationId,
-      nodes: workflows.nodes,
-    })
-    .from(workflows)
-    .where(eq(workflows.id, workflowId));
-  if (!workflow) {
-    return null;
+export class PythAdmissionRequired extends Error {
+  readonly organizationId: string;
+  readonly nodes: unknown[];
+
+  constructor(organizationId: string, nodes: unknown[]) {
+    super("Pyth dispatch admission required");
+    this.organizationId = organizationId;
+    this.nodes = nodes;
   }
-  return await checkDispatchAdmission({
-    organizationId: workflow.organizationId,
-    nodes: workflow.nodes as unknown[],
-  });
 }
 
 /**
  * The checkpoint and phantom row commit together before anything is enqueued.
  * A lost HTTP reply or SQS acknowledgement leaves the same pending execution
  * available for redelivery; only the executor's existing CAS starts it.
+ *
+ * Admission reads plan and usage through the default pool, so it must not run
+ * while the transaction holds a connection and the workflow row lock. Only a
+ * crossing needs it, so ordinary ticks skip it: a crossing rolls the
+ * transaction back, admission resolves outside it, and the observation is
+ * replayed once with the answer. The executor re-runs admission before it
+ * claims the row, so a decision that goes stale in between is harmless.
  */
 export async function observePythPrice(
   command: PythObservationRequest,
   request: Request,
   database: typeof db = db
 ): Promise<PythObservationResult> {
-  const refusal =
-    command.action === "observe"
-      ? await resolveAdmission(command.workflowId, database)
-      : null;
+  try {
+    return await observeInTransaction(command, request, database);
+  } catch (error) {
+    if (!(error instanceof PythAdmissionRequired)) {
+      throw error;
+    }
+    const refusal = await checkDispatchAdmission({
+      organizationId: error.organizationId,
+      nodes: error.nodes,
+    });
+    return await observeInTransaction(command, request, database, refusal);
+  }
+}
+
+async function observeInTransaction(
+  command: PythObservationRequest,
+  request: Request,
+  database: typeof db,
+  admission?: DispatchRefusal | null
+): Promise<PythObservationResult> {
   return await database.transaction(async (tx) => {
     const [workflow] = await tx
       .select()
@@ -127,6 +138,7 @@ export async function observePythPrice(
       .from(pythTriggerCheckpoints)
       .where(eq(pythTriggerCheckpoints.workflowId, workflow.id));
     let checkpoint = stored;
+    let changed = false;
     const invalidPending =
       checkpoint.pending &&
       (checkpoint.pending.triggerData.expiresAt <= now.getTime() ||
@@ -153,6 +165,7 @@ export async function observePythPrice(
         armed: false,
         lastPublishTime: null,
       };
+      changed = true;
     }
     if (checkpoint.configHash !== command.configHash) {
       checkpoint = {
@@ -164,17 +177,23 @@ export async function observePythPrice(
         armed: false,
         pending: null,
       };
+      changed = true;
     }
     if (
       command.action === "ack" &&
       checkpoint.pending?.executionId === command.executionId
     ) {
       checkpoint = { ...checkpoint, pending: null };
+      changed = true;
     }
-    await tx
-      .update(pythTriggerCheckpoints)
-      .set({ ...checkpoint, updatedAt: now })
-      .where(eq(pythTriggerCheckpoints.workflowId, workflow.id));
+    // Every tick and recovery sweep reaches this point, most of them with
+    // nothing to change; only write when something did.
+    if (changed) {
+      await tx
+        .update(pythTriggerCheckpoints)
+        .set({ ...checkpoint, updatedAt: now })
+        .where(eq(pythTriggerCheckpoints.workflowId, workflow.id));
+    }
     if (checkpoint.pending) {
       return {
         outcome: "pending",
@@ -218,6 +237,13 @@ export async function observePythPrice(
     let pending: PythPendingDispatch | null = null;
     let outcome: string = evaluated.outcome;
     if (evaluated.signal) {
+      if (admission === undefined) {
+        throw new PythAdmissionRequired(
+          workflow.organizationId,
+          workflow.nodes as unknown[]
+        );
+      }
+      const refusal = admission;
       const dispatchKey = `${evaluated.signal.sourceUpdateId}:${workflow.id}:${command.configHash}`;
       const [execution] = await tx
         .insert(workflowExecutions)

@@ -12,6 +12,7 @@ import {
   it,
   vi,
 } from "vitest";
+import { checkDispatchAdmission } from "@/lib/billing/dispatch-admission";
 import { db } from "@/lib/db";
 import {
   organization,
@@ -37,6 +38,14 @@ import { claimPhantomForExecution } from "../../keeperhub-executor/lib/db-helper
 // below exercises real Postgres locks, unique indexes and transactions.
 vi.unmock("@/lib/db");
 vi.mock("server-only", () => ({}));
+vi.mock("@/lib/billing/dispatch-admission", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/billing/dispatch-admission")>();
+  return {
+    ...actual,
+    checkDispatchAdmission: vi.fn(actual.checkDispatchAdmission),
+  };
+});
 vi.hoisted(() => {
   if (process.env.PYTH_TEST_DATABASE_URL) {
     const url = new URL(process.env.PYTH_TEST_DATABASE_URL);
@@ -301,6 +310,41 @@ describe.skipIf(!process.env.PYTH_TEST_DATABASE_URL)(
         .set({ leaseUntil: new Date(0) })
         .where(eq(pythTriggerCheckpoints.workflowId, workflowId));
       expect((await observe("101", 1)).pending).toBeDefined();
+    });
+
+    it("resolves admission only when a crossing needs it", async () => {
+      const admission = vi.mocked(checkDispatchAdmission);
+      admission.mockClear();
+      await observe("94", 0);
+      await observe("96", 1);
+      expect(admission).not.toHaveBeenCalled();
+      expect((await observe("101", 2)).pending).toBeDefined();
+      expect(admission).toHaveBeenCalledTimes(1);
+    });
+
+    it("records a refused crossing as skipped and consumes the arming", async () => {
+      vi.mocked(checkDispatchAdmission).mockResolvedValueOnce({
+        reason: "execution_limit",
+        message: "Execution skipped: limit reached.",
+      });
+      await observe("94", 0);
+      const refused = await observe("101", 1);
+      expect(refused.outcome).toBe("refused");
+      expect(refused.pending).toBeUndefined();
+      const [execution] = await db
+        .select()
+        .from(workflowExecutions)
+        .where(eq(workflowExecutions.workflowId, workflowId));
+      expect(execution).toMatchObject({
+        status: "skipped",
+        billable: false,
+        error: "Execution skipped: limit reached.",
+      });
+      const [checkpoint] = await db
+        .select()
+        .from(pythTriggerCheckpoints)
+        .where(eq(pythTriggerCheckpoints.workflowId, workflowId));
+      expect(checkpoint).toMatchObject({ armed: false, pending: null });
     });
 
     it("keeps the lease across a reconnect and rebaselines only on request", async () => {
