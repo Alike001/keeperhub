@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  fetchPendingPythWorkflows,
   fetchPythRegistrations,
   submitPythObservation,
 } from "../../src/pyth/client";
@@ -132,6 +133,36 @@ describe("Pyth durable dispatch client", () => {
       submitPythObservation(registration, "session", update),
     ).rejects.toThrow("HTTP 503");
     expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it("reports whether the app has Pyth enabled alongside its registrations", async () => {
+    fetchMock.mockResolvedValueOnce(
+      respond({ enabled: true, workflows: [registration] }),
+    );
+    await expect(fetchPythRegistrations()).resolves.toEqual({
+      enabled: true,
+      registrations: [registration],
+    });
+  });
+
+  it("looks up pending dispatches through the signed discovery path", async () => {
+    fetchMock
+      .mockResolvedValueOnce(respond({ pending: ["workflow"] }))
+      .mockResolvedValueOnce(respond({ pending: [7] }));
+    await expect(fetchPendingPythWorkflows()).resolves.toEqual(
+      new Set(["workflow"]),
+    );
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "http://localhost/api/internal/pyth-triggers?view=pending",
+    );
+    expect(sign).toHaveBeenCalledWith(
+      "GET",
+      "http://localhost/api/internal/pyth-triggers?view=pending",
+      "",
+    );
+    await expect(fetchPendingPythWorkflows()).rejects.toThrow(
+      "Invalid pending Pyth workflows",
+    );
   });
 
   it("authenticates discovery and rejects malformed registrations", async () => {

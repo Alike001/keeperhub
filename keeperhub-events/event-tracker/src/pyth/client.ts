@@ -22,8 +22,9 @@ const API_PATH = "/api/internal/pyth-triggers";
 async function callApi(
   method: "GET" | "POST",
   command?: unknown,
+  query = "",
 ): Promise<unknown> {
-  const url = `${KEEPERHUB_API_URL}${API_PATH}`;
+  const url = `${KEEPERHUB_API_URL}${API_PATH}${query}`;
   const body = command === undefined ? "" : JSON.stringify(command);
   const response = await fetch(url, {
     method,
@@ -41,8 +42,14 @@ async function callApi(
   return await response.json();
 }
 
-export async function fetchPythRegistrations(): Promise<PythRegistration[]> {
-  const data = (await callApi("GET")) as { workflows?: PythRegistration[] };
+export async function fetchPythRegistrations(): Promise<{
+  enabled: boolean;
+  registrations: PythRegistration[];
+}> {
+  const data = (await callApi("GET")) as {
+    enabled?: boolean;
+    workflows?: PythRegistration[];
+  };
   if (
     !Array.isArray(data.workflows) ||
     data.workflows.some(
@@ -55,7 +62,21 @@ export async function fetchPythRegistrations(): Promise<PythRegistration[]> {
   ) {
     throw new Error("Invalid Pyth workflow registrations");
   }
-  return data.workflows;
+  return { enabled: data.enabled === true, registrations: data.workflows };
+}
+
+/** Workflows whose checkpoint holds a dispatch still waiting to be enqueued. */
+export async function fetchPendingPythWorkflows(): Promise<Set<string>> {
+  const data = (await callApi("GET", undefined, "?view=pending")) as {
+    pending?: unknown;
+  };
+  if (
+    !Array.isArray(data.pending) ||
+    data.pending.some((workflowId) => typeof workflowId !== "string")
+  ) {
+    throw new Error("Invalid pending Pyth workflows");
+  }
+  return new Set(data.pending as string[]);
 }
 
 /** Resolves to the outcome of the last observe or pending command sent. */

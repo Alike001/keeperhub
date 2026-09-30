@@ -1,8 +1,12 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { organization, workflows } from "@/lib/db/schema";
+import {
+  organization,
+  pythTriggerCheckpoints,
+  workflows,
+} from "@/lib/db/schema";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
 import { logWarn } from "@/lib/logging";
 import { isPythPriceTriggerEnabled } from "@/lib/pyth/feature-flag";
@@ -48,19 +52,46 @@ async function authenticate(
     : NextResponse.json({ error: "Events service required" }, { status: 403 });
 }
 
+// Any trigger node carrying a Pyth config. A superset of what registers:
+// findPythConfig still narrows each match to the workflow's first trigger node.
+const PYTH_TRIGGER_NODE = JSON.stringify([
+  { data: { type: "trigger", config: { triggerType: "Pyth Price" } } },
+]);
+
 export async function GET(request: Request): Promise<NextResponse> {
   const denied = await authenticate(request);
   if (denied) {
     return denied;
   }
-  if (!isPythPriceTriggerEnabled()) {
-    return NextResponse.json({ workflows: [] });
+  const enabled = isPythPriceTriggerEnabled();
+  // The recovery sweep asks only for workflows with a dispatch awaiting
+  // enqueue, so an idle sweep costs one read instead of a transaction per
+  // registered workflow.
+  if (new URL(request.url).searchParams.get("view") === "pending") {
+    if (!enabled) {
+      return NextResponse.json({ pending: [] });
+    }
+    const rows = await db
+      .select({ workflowId: pythTriggerCheckpoints.workflowId })
+      .from(pythTriggerCheckpoints)
+      .where(isNotNull(pythTriggerCheckpoints.pending));
+    return NextResponse.json({ pending: rows.map((row) => row.workflowId) });
+  }
+  // `enabled` lets the event worker report a PYTH_API_KEY set on only one of
+  // the two services, which otherwise fails silently in either direction.
+  if (!enabled) {
+    return NextResponse.json({ enabled: false, workflows: [] });
   }
   const active = await db
     .select({ id: workflows.id, nodes: workflows.nodes })
     .from(workflows)
     .innerJoin(organization, eq(organization.id, workflows.organizationId))
-    .where(workflowExecutableConditions());
+    .where(
+      and(
+        workflowExecutableConditions(),
+        sql`${workflows.nodes} @> ${PYTH_TRIGGER_NODE}::jsonb`
+      )
+    );
   const registrations: {
     workflowId: string;
     feedId: string;
@@ -82,7 +113,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       });
     }
   }
-  return NextResponse.json({ workflows: registrations });
+  return NextResponse.json({ enabled: true, workflows: registrations });
 }
 
 export async function POST(request: Request): Promise<NextResponse> {

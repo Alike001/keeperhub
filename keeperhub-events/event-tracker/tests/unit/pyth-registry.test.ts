@@ -1,14 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PythRegistry } from "../../src/pyth/registry";
 
-const { consume, submit } = vi.hoisted(() => ({
+const { consume, submit, pendingLookup } = vi.hoisted(() => ({
   consume: vi.fn(),
   submit: vi.fn(),
+  pendingLookup: vi.fn(),
 }));
 vi.mock("../../src/pyth/hermes-stream", () => ({
   consumeHermesStream: consume,
 }));
-vi.mock("../../src/pyth/client", () => ({ submitPythObservation: submit }));
+vi.mock("../../src/pyth/client", () => ({
+  submitPythObservation: submit,
+  fetchPendingPythWorkflows: pendingLookup,
+}));
 vi.mock("../../lib/utils/logger", () => ({ logger: { warn: vi.fn() } }));
 const first = {
   workflowId: "first",
@@ -28,6 +32,7 @@ beforeEach(() => {
       }),
   );
   submit.mockResolvedValue(undefined);
+  pendingLookup.mockResolvedValue(new Set<string>());
   registry = new PythRegistry("test-only-key");
 });
 afterEach(async () => {
@@ -53,9 +58,24 @@ describe("Pyth stream lifecycle", () => {
   });
 
   it("recovers pending deliveries even when no price is arriving", async () => {
+    pendingLookup.mockResolvedValue(new Set([first.workflowId]));
     await registry.reconcile([first]);
     await vi.advanceTimersByTimeAsync(5000);
     expect(submit).toHaveBeenCalledWith(first, expect.any(String));
+  });
+
+  it("recovers only workflows that have a dispatch pending", async () => {
+    pendingLookup.mockResolvedValue(new Set([second.workflowId]));
+    await registry.reconcile([first, second]);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(submit.mock.calls.map((call) => call[0].workflowId)).toEqual([
+      "second",
+    ]);
+  });
+
+  it("skips the pending lookup while nothing is registered", async () => {
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(pendingLookup).not.toHaveBeenCalled();
   });
 
   it("keeps its lease identity across reconnects and asks for a fresh baseline", async () => {

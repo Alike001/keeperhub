@@ -31,8 +31,13 @@ const command = {
     price: { price: "100", conf: "1", expo: 0, publish_time: 1000 },
   },
 };
-function signed(method: "GET" | "POST", body = "", caller = "events") {
-  return new Request(url, {
+function signed(
+  method: "GET" | "POST",
+  body = "",
+  caller = "events",
+  query = ""
+) {
+  return new Request(`${url}${query}`, {
     method,
     headers: signInternalServiceHeaders({ method, url, body, caller, secret }),
     ...(method === "POST" ? { body } : {}),
@@ -52,7 +57,10 @@ describe("Pyth internal route authorization", () => {
 
     const discovery = await GET(signed("GET"));
     expect(discovery.status).toBe(200);
-    expect(await discovery.json()).toEqual({ workflows: [] });
+    expect(await discovery.json()).toEqual({ enabled: false, workflows: [] });
+
+    const recovery = await GET(signed("GET", "", "events", "?view=pending"));
+    expect(await recovery.json()).toEqual({ pending: [] });
 
     const mutation = await POST(signed("POST", JSON.stringify(command)));
     expect(mutation.status).toBe(503);
@@ -87,6 +95,7 @@ describe("Pyth internal route authorization", () => {
     const response = await GET(signed("GET"));
     expect(response.status).toBe(200);
     const body = await response.json();
+    expect(body.enabled).toBe(true);
     expect(body.workflows).toEqual([
       {
         workflowId: "valid",
@@ -94,6 +103,15 @@ describe("Pyth internal route authorization", () => {
         configHash: expect.any(String),
       },
     ]);
+    expect(where).toHaveBeenCalledOnce();
+  });
+
+  it("lists only workflows with a dispatch awaiting enqueue for recovery", async () => {
+    const where = vi.fn().mockResolvedValue([{ workflowId: "waiting" }]);
+    select.mockReturnValue({ from: () => ({ where }) });
+    const response = await GET(signed("GET", "", "events", "?view=pending"));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ pending: ["waiting"] });
     expect(where).toHaveBeenCalledOnce();
   });
 

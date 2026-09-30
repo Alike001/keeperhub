@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { logger } from "../../lib/utils/logger";
 import { abortableSleep } from "../listener/shutdown";
-import { type PythRegistration, submitPythObservation } from "./client";
+import {
+  type PythRegistration,
+  fetchPendingPythWorkflows,
+  submitPythObservation,
+} from "./client";
 import { type HermesPrice, consumeHermesStream } from "./hermes-stream";
 
 type Subscription = {
@@ -76,10 +80,23 @@ export class PythRegistry {
   }
 
   private async recoverPending(): Promise<void> {
+    if (this.subscriptions.size === 0) {
+      return;
+    }
+    let pending: Set<string>;
+    try {
+      pending = await fetchPendingPythWorkflows();
+    } catch {
+      logger.warn("[Pyth] pending dispatch lookup failed; will retry");
+      return;
+    }
     for (const subscription of this.subscriptions.values()) {
       for (const registration of subscription.registrations) {
         if (this.stopped) {
           return;
+        }
+        if (!pending.has(registration.workflowId)) {
+          continue;
         }
         try {
           await submitPythObservation(registration, this.sessionId);
